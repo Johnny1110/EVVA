@@ -1,7 +1,7 @@
 // Package fs exposes filesystem tools (Read, Write, Edit) as stateless
 // singletons. The names live in tools.READ_FILE / WRITE_FILE / EDIT_FILE;
 // init() registers them with the central tools registry so callers can
-// resolve by name via tools.Build.
+// resolve by name via tools.build.
 package fs
 
 import "github.com/johnny1110/evva/internal/tools"

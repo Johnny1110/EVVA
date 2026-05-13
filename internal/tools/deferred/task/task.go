@@ -2,8 +2,8 @@ package task
 
 import "github.com/johnny1110/evva/internal/tools"
 
-// taskNames is the canonical order for the task subsystem. The Group's Build
-// must return instances in the same order — Build resolves a tool by its
+// taskNames is the canonical order for the task subsystem. The Group's build
+// must return instances in the same order — build resolves a tool by its
 // member index, so order is load-bearing.
 var taskNames = []tools.ToolName{
 	tools.TASK_CREATE,
@@ -16,8 +16,8 @@ var taskNames = []tools.ToolName{
 
 func init() {
 	tools.RegisterGroup(tools.Group{
-		Names: taskNames,
-		Build: buildTaskTools,
+		ToolNames: taskNames,
+		Build:     buildTaskTools,
 	})
 }
 
@@ -25,7 +25,7 @@ func init() {
 func Names() []tools.ToolName { return taskNames }
 
 // buildTaskTools allocates a fresh Store and returns the six task tools all
-// bound to it. Called once per tools.Build, so each agent gets isolated state.
+// bound to it. Called once per tools.build, so each agent gets isolated state.
 func buildTaskTools() []tools.Tool {
 	s := NewStore()
 	return []tools.Tool{

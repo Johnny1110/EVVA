@@ -2,7 +2,7 @@
 //
 // Profiles declare which tool *names* belong to each kind of agent — they
 // never name individual tool instances or constructors. Resolution from
-// names to instances happens once at agent init, inside tools.Build, which
+// names to instances happens once at agent init, inside tools.build, which
 // owns the state-allocation rules for stateful tool groups.
 //
 // Adding a new profile = one function that picks bundles.

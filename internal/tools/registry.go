@@ -8,8 +8,9 @@ type Registry struct {
 	tools map[string]Tool
 }
 
+// NewRegistry expose ToolRegistry for agent.Agent
 func NewRegistry(tools ...ToolName) (*Registry, error) {
-	toolList, err := Build(tools)
+	toolList, err := build(tools) // tool instance
 	if err != nil {
 		return nil, err
 	}

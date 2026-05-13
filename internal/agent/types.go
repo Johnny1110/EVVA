@@ -37,9 +37,9 @@ func (t AgentType) String() string {
 // dispatch, and lifecycle are shared in the Agent type; only configuration
 // varies.
 //
-// Resolution from name → instance happens once at agent init, via tools.Build.
+// Resolution from name → instance happens once at agent init, via tools.build.
 // Stateful tool groups (e.g. the six task tools sharing one *Store) get fresh
-// state per Build call, so two agents constructed from the same Profile end
+// state per build call, so two agents constructed from the same Profile end
 // up with isolated state. See internal/agent/profiles for preset builders.
 type Profile struct {
 	// about agent

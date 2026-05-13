@@ -3,14 +3,15 @@ package tools
 import "fmt"
 
 // Group is a unit of registration: a list of tool names whose instances are
-// produced together by a single Build call. Stateless tools form one-name
+// produced together by a single build call. Stateless tools form one-name
 // groups; tools that share backing state (e.g. the six task tools sharing one
-// *Store) form a multi-name group whose Build allocates that state once.
+// *Store) form a multi-name group whose build allocates that state once.
 //
-// Build MUST return exactly len(Names) tools, in the same order as Names.
+// build MUST return exactly len(ToolNames) tools, in the same order as ToolNames.
 type Group struct {
-	Names []ToolName
-	Build func() []Tool
+	GroupName string
+	ToolNames []ToolName
+	Build     func() []Tool
 }
 
 var (
@@ -29,7 +30,7 @@ type groupRef struct {
 func RegisterGroup(g Group) {
 	idx := len(groups)
 	groups = append(groups, g)
-	for i, n := range g.Names {
+	for i, n := range g.ToolNames {
 		if _, dup := memberOf[n]; dup {
 			panic(fmt.Sprintf("tools: duplicate registration for %q", n))
 		}
@@ -37,37 +38,46 @@ func RegisterGroup(g Group) {
 	}
 }
 
-// Register is sugar for a single stateless tool. The group's Build returns
+// Register is sugar for a single stateless tool. The group's build returns
 // the same instance every call, so no state is allocated.
 func Register(name ToolName, t Tool) {
 	RegisterGroup(Group{
-		Names: []ToolName{name},
-		Build: func() []Tool { return []Tool{t} },
+		ToolNames: []ToolName{name},
+		Build:     func() []Tool { return []Tool{t} },
 	})
 }
 
-// Build resolves a list of tool names to fresh instances. Tools that belong
+// build resolves a list of tool names to fresh instances. Tools that belong
 // to the same Group share the backing state allocated for this call; a
 // separate call yields independent state, so each agent gets isolated tools.
 //
 // Returns an error if any name has no registered group.
-func Build(names []ToolName) ([]Tool, error) {
-	cache := map[int][]Tool{}
-	out := make([]Tool, 0, len(names))
-	for _, n := range names {
-		ref, ok := memberOf[n]
-		if !ok {
-			return nil, fmt.Errorf("tools: no factory for %q", n)
-		}
-		instances, ok := cache[ref.group]
-		if !ok {
-			instances = groups[ref.group].Build()
-			if got, want := len(instances), len(groups[ref.group].Names); got != want {
-				return nil, fmt.Errorf("tools: group for %q returned %d tools, want %d", n, got, want)
-			}
-			cache[ref.group] = instances
-		}
-		out = append(out, instances[ref.member])
+func build(names []ToolName) ([]Tool, error) {
+	if len(names) == 0 {
+		return []Tool{}, nil
 	}
+
+	out := make([]Tool, 0, len(names))
+
+	// cache id is toolRef.group, like Task Tool Group contain many tools, they are in same group.
+	groupCache := map[int][]Tool{}
+
+	for _, toolName := range names {
+		toolRef, ok := memberOf[toolName]
+		if !ok {
+			return nil, fmt.Errorf("tools: no factory for %q", toolName)
+		}
+		instances, ok := groupCache[toolRef.group] // find other members tool in group
+		if !ok {                                   // not in cache (stateful tool)
+			instances = groups[toolRef.group].Build() // new tool instance (for stateful tools)
+			if got, want := len(instances), len(groups[toolRef.group].ToolNames); got != want {
+				return nil, fmt.Errorf("tools: group for %q returned %d tools, want %d", names, got, want)
+			}
+			// store group tools in cache
+			groupCache[toolRef.group] = instances
+		}
+		out = append(out, instances[toolRef.member])
+	}
+
 	return out, nil
 }

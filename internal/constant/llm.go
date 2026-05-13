@@ -7,6 +7,7 @@ type LLMProvider struct {
 }
 
 // Use var for struct "constants"
+// Models are ordered by price
 var (
 	OLLAMA    = LLMProvider{Name: "ollama", ApiUrl: "http://localhost:11434", Models: []Model{QWEN_3_6}}
 	ANTHROPIC = LLMProvider{Name: "anthropic", ApiUrl: "https://api.anthropic.com", Models: []Model{SONNET_4_6, OPUS_4_7}}
@@ -44,4 +45,24 @@ func GetProvider(name string) (LLMProvider, bool) {
 	}
 
 	return LLMProvider{}, false
+}
+
+// ModelForLevel returns the model to use at a given capability tier:
+//
+//   - level 1 (default) → the smallest / cheapest model the provider lists
+//     (Models[0]). Suitable for routine work; "normal" tier.
+//   - level 2 → the largest model the provider lists (Models[len-1]).
+//     Suitable for hard reasoning; "big" tier. More expensive — the LLM
+//     should only pick this when the task genuinely needs deeper thinking.
+//
+// Providers with only one configured model collapse both tiers to that
+// model. Levels outside {1, 2} clamp to the nearest valid tier.
+func (p LLMProvider) ModelForLevel(level int) Model {
+	if len(p.Models) == 0 {
+		return ""
+	}
+	if level >= 2 {
+		return p.Models[len(p.Models)-1]
+	}
+	return p.Models[0]
 }

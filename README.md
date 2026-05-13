@@ -15,3 +15,4 @@ A ReAct coding agent.
 * TUI style plugin. (TUI able to switch)
 * Different agents can adapt to different llm.
 * Veronica space (a strong spaceship live in 8080 port).
+* 2 level compact (micro, full).

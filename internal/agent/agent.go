@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/internal/llm"
 	"github.com/johnny1110/evva/internal/llmfactory"
 	"github.com/johnny1110/evva/internal/logger"
@@ -33,9 +35,12 @@ import (
 //     the active map, executed, and remains available (with its schema sent
 //     to the LLM) on every subsequent turn.
 //
-// builders holds the shared state container toolset.Build threads into
+// toolState holds the shared state container toolset.Build threads into
 // stateful tool constructors. The TUI and session-persist layer read state
-// through it (e.g. agent.Builders().TaskStore().List()).
+// through it (e.g. agent.ToolState().TaskStore().List()).
+//
+// sink is the event consumer (nil => Discard). parent is empty for the root
+// agent and the root's AgentID for subagents — see Option asSubagent.
 type Agent struct {
 	ID     string
 	logger *slog.Logger
@@ -45,27 +50,31 @@ type Agent struct {
 	llm     llm.Client
 	session *session.Session
 
-	builders          *toolset.Builders
+	toolState         *toolset.ToolState
 	active            map[string]tools.Tool
 	deferredAllowlist map[tools.ToolName]struct{}
+
+	sink     event.Sink
+	parent   string
+	maxIters int
 }
 
 // New constructs an agent with a fresh ID, a per-agent logger, and the given
 // profile applied. ActiveTools are built immediately; DeferredTools are
-// recorded as an allowlist and only built on the first LoadDeferred call.
+// recorded as an allowlist and only built on the first ResolveTool call.
 //
-// Returns an error rather than calling log.Fatal so callers (TUI, CLI) decide
-// how to handle init failure.
-func New(profile Profile) (*Agent, error) {
+// Options run after the agent struct is populated from the profile and before
+// the LLM client is constructed, so they can influence either layer.
+func New(profile Profile, opts ...Option) (*Agent, error) {
 	ID := common.GenUUID()
 	lgr, err := logger.OfAgent("", ID)
 	if err != nil {
 		return nil, fmt.Errorf("agent: init logger: %w", err)
 	}
 
-	builders := &toolset.Builders{}
+	toolState := &toolset.ToolState{}
 
-	activeTools, err := toolset.Build(profile.ActiveTools, builders)
+	activeTools, err := toolset.Build(profile.ActiveTools, toolState)
 	if err != nil {
 		lgr.Error("agent: build active tools failed", "error", err)
 		return nil, fmt.Errorf("agent: build active tools: %w", err)
@@ -80,27 +89,61 @@ func New(profile Profile) (*Agent, error) {
 		deferred[n] = struct{}{}
 	}
 
+	a := &Agent{
+		ID:                ID,
+		logger:            lgr,
+		profile:           profile,
+		session:           session.New(),
+		toolState:         toolState,
+		active:            active,
+		deferredAllowlist: deferred,
+		maxIters:          DefaultMaxIterations,
+	}
+	for _, opt := range opts {
+		opt(a)
+	}
+
+	// Wire task store mutations to the event stream. Done after options so
+	// the closure captures the final sink. TaskStore() lazy-allocates on
+	// first call; this also forces that allocation when tasks are in scope.
+	if a.hasAnyTaskTool() {
+		a.toolState.TaskStore().OnChange = func(id, status, subject string) {
+			a.emit(event.KindTaskUpdate, func(e *event.Event) {
+				e.TaskUpdate = &event.TaskUpdatePayload{
+					TaskID:  id,
+					Status:  status,
+					Subject: subject,
+				}
+			})
+		}
+	}
+
+	// Install ourselves as the subagent spawner and the deferred-tool
+	// lookup. Only the root agent does this — subagents leave the slots
+	// nil, so the corresponding tools (AGENT, TOOL_SEARCH) surface clear
+	// errors instead of recursing or exposing the wrong agent's allowlist.
+	if !a.IsSubagent() {
+		a.toolState.SetSubagentSpawner(a)
+		a.toolState.SetDeferredLookup(a)
+	}
+
 	llmClient, err := llmfactory.Of(profile.LLMProvider, profile.LLMModel, profile.LLMOptions)
 	if err != nil {
 		return nil, fmt.Errorf("agent: init llm client: %w", err)
 	}
-	lgr.Info("agent: init llm client success.", "provider", llmClient.Name(), "model", llmClient.Model())
-
-	return &Agent{
-		ID:                ID,
-		logger:            lgr,
-		profile:           profile,
-		llm:               llmClient,
-		session:           session.New(),
-		builders:          builders,
-		active:            active,
-		deferredAllowlist: deferred,
-	}, nil
+	a.llm = llmClient
+	lgr.Info("agent: init llm client success.",
+		"provider", llmClient.Name(),
+		"model", llmClient.Model(),
+		"is_subagent", a.parent != "",
+		"max_iters", a.maxIters,
+	)
+	return a, nil
 }
 
 // Send issues a single user turn and returns the assistant response.
-// Every currently-built tool (initial actives + any lazily loaded since) is
-// sent to the model. Cancellation honors ctx — see llm.ErrInterrupted.
+// This is the primitive used by smoke tests; production code should call
+// Run or Continue (see loop.go).
 func (a *Agent) Send(ctx context.Context, prompt string) (llm.Response, error) {
 	a.session.Append(llm.Message{Role: llm.RoleUser, Content: prompt})
 
@@ -141,7 +184,8 @@ func (a *Agent) Send(ctx context.Context, prompt string) (llm.Response, error) {
 //   - Otherwise, if the name is in the deferred allowlist, the tool is built
 //     via toolset.Build, cached in active, and returned. Its schema will be
 //     advertised to the LLM from the next turn forward.
-//   - Otherwise, the name is rejected.
+//   - Otherwise, the name is rejected — the agent never silently expands
+//     beyond the profile's declared authority.
 //
 // Note: TOOL_SEARCH should NOT call this — it only fetches descriptors via
 // toolset.Describe. The build is triggered by the first actual invocation.
@@ -152,7 +196,7 @@ func (a *Agent) ResolveTool(name tools.ToolName) (tools.Tool, error) {
 	if _, ok := a.deferredAllowlist[name]; !ok {
 		return nil, fmt.Errorf("agent: tool %q not in active set or deferred allowlist", name)
 	}
-	built, err := toolset.Build([]tools.ToolName{name}, a.builders)
+	built, err := toolset.Build([]tools.ToolName{name}, a.toolState)
 	if err != nil {
 		return nil, err
 	}
@@ -171,12 +215,27 @@ func (a *Agent) Tool(name string) (tools.Tool, bool) {
 // DeferredNames returns the canonical list of tool names the profile allows
 // to be lazy-loaded. TOOL_SEARCH uses this to know which names it may
 // describe (and the system-prompt builder uses it to advertise them).
+//
+// Part of the meta.DeferredLookup interface; the agent installs itself
+// as the lookup target via toolState.SetDeferredLookup in New().
 func (a *Agent) DeferredNames() []tools.ToolName {
 	out := make([]tools.ToolName, 0, len(a.deferredAllowlist))
 	for n := range a.deferredAllowlist {
 		out = append(out, n)
 	}
 	return out
+}
+
+// Describe returns the metadata for a deferred tool by name. Delegates to
+// toolset.Describe, which constructs a throwaway instance to read its
+// static fields — no agent state is mutated and no tool is "loaded".
+//
+// Part of the meta.DeferredLookup interface, used by TOOL_SEARCH.
+func (a *Agent) Describe(name tools.ToolName) (tools.Descriptor, error) {
+	if _, ok := a.deferredAllowlist[name]; !ok {
+		return tools.Descriptor{}, fmt.Errorf("agent: %q is not in the deferred allowlist", name)
+	}
+	return toolset.Describe(name)
 }
 
 // Session exposes the conversation history for inspection or TUI rendering.
@@ -189,16 +248,77 @@ func (a *Agent) Logger() *slog.Logger { return a.logger }
 // Profile returns the profile this agent was constructed with.
 func (a *Agent) Profile() Profile { return a.profile }
 
-// Builders exposes the shared state container so the TUI / session-persist
+// ToolState exposes the shared state container so the TUI / session-persist
 // layer can read tool state through typed accessors (e.g. TaskStore.List()).
-func (a *Agent) Builders() *toolset.Builders { return a.builders }
+func (a *Agent) ToolState() *toolset.ToolState { return a.toolState }
+
+// Sink returns the agent's event sink. Used by the AGENT tool to wrap with
+// BubbleUp when spawning a subagent. Returns event.Discard if no sink was
+// installed.
+func (a *Agent) Sink() event.Sink {
+	if a.sink == nil {
+		return event.Discard
+	}
+	return a.sink
+}
+
+// IsSubagent reports whether this agent was constructed with asSubagent.
+// The AGENT tool checks this to enforce the "subagents cannot spawn
+// subagents" invariant.
+func (a *Agent) IsSubagent() bool { return a.parent != "" }
+
+// emit sends an event to the agent's sink (no-op if none installed). The
+// envelope's AgentID, ParentID, and Time are filled in here so call sites
+// only carry the kind-specific payload.
+func (a *Agent) emit(kind event.Kind, build func(*event.Event)) {
+	if a.sink == nil {
+		return
+	}
+	e := event.Event{
+		Kind:     kind,
+		AgentID:  a.ID,
+		ParentID: a.parent,
+		Time:     time.Now(),
+	}
+	if build != nil {
+		build(&e)
+	}
+	a.sink.Emit(e)
+}
 
 // exposedTools returns the current set of tools to advertise to the LLM —
-// every active tool plus any deferred tools that have been loaded.
+// every active tool plus any deferred tools that have been resolved.
 func (a *Agent) exposedTools() []tools.Tool {
 	out := make([]tools.Tool, 0, len(a.active))
 	for _, t := range a.active {
 		out = append(out, t)
 	}
 	return out
+}
+
+// hasAnyTaskTool reports whether the profile mentions any task tool —
+// either active or deferred. Used to decide whether wiring the task store's
+// OnChange hook is worth it. Agents with no task tools never need the
+// emit-bridge and skip the lazy TaskStore allocation entirely.
+func (a *Agent) hasAnyTaskTool() bool {
+	for _, n := range a.profile.ActiveTools {
+		if isTaskName(n) {
+			return true
+		}
+	}
+	for n := range a.deferredAllowlist {
+		if isTaskName(n) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTaskName(n tools.ToolName) bool {
+	switch n {
+	case tools.TASK_CREATE, tools.TASK_GET, tools.TASK_LIST,
+		tools.TASK_UPDATE, tools.TASK_OUTPUT, tools.TASK_STOP:
+		return true
+	}
+	return false
 }

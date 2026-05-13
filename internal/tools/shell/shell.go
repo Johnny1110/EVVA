@@ -1,33 +1,14 @@
-// Package shell hosts the active Bash tool. Process-monitoring lives under
-// the monitor package — see docs/claude-tool/claude-code-tool-summary.md.
+// Package shell hosts shell-side tools: Bash, Ls, Grep, Tree.
+//
+// Bash is synchronous shell execution; Ls/Tree are filesystem listing
+// helpers (cheaper than a Bash round-trip when you just want to look at a
+// directory); Grep is a regex search across files. Long-running process
+// monitoring is intentionally elsewhere (the monitor package).
 package shell
 
 import "github.com/johnny1110/evva/internal/tools"
 
-// Names lists every tool name this package contributes.
-func Names() []tools.ToolName { return []tools.ToolName{tools.BASH} }
-
-var Bash tools.Tool = tools.NewStub(
-	tools.BASH,
-	"Executes a given bash command and returns its output.\n\n"+
-		"The working directory persists between commands, but shell state does not. "+
-		"The shell environment is initialized from the user's profile (bash or zsh).\n\n"+
-		"Prefer dedicated tools when one fits: Read for known paths, Edit for edits, Write for new files. "+
-		"Reserve Bash for shell-only operations.\n\n"+
-		"Supports: optional timeout (max 600000 ms), background execution via run_in_background, "+
-		"and a dangerouslyDisableSandbox escape hatch.\n\n"+
-		"Includes detailed protocols for safe git commits, PR creation via gh, "+
-		"and avoiding destructive operations without explicit user consent.",
-	`{
-		"type":"object",
-		"additionalProperties":false,
-		"required":["command"],
-		"properties":{
-			"command":{"type":"string","description":"The command to execute"},
-			"description":{"type":"string","description":"Clear, concise description of what this command does in active voice."},
-			"timeout":{"type":"number","description":"Optional timeout in milliseconds (max 600000)"},
-			"run_in_background":{"type":"boolean","description":"Set to true to run this command in the background. Use Read to read the output later."},
-			"dangerouslyDisableSandbox":{"type":"boolean","description":"Set this to true to dangerously override sandbox mode and run commands without sandboxing."}
-		}
-	}`,
-)
+// Names lists every tool name this package contributes, in canonical order.
+func Names() []tools.ToolName {
+	return []tools.ToolName{tools.BASH, tools.GREP, tools.TREE}
+}

@@ -4,17 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/johnny1110/evva/internal/tools"
 )
 
 // The task tools are stateful: all six (Create, Get, List, Update, Output,
-// Stop) share one *Store per agent. The profile builder constructs one Store
-// and threads it through each NewXxx constructor.
+// Stop) share one *Store per agent. The profile builder constructs one
+// Store and threads it through each NewXxx constructor.
 //
-// Descriptions and schemas match the docs in
-// docs/claude-tool/deferred-tools/task-process-management.md.
-// Execute on each tool is currently a stub returning "not implemented".
+// Output and Stop are reserved for background-process tasks (Bash
+// run_in_background, future Monitor); until those land they return a clear
+// "not implemented" error so the model can route around them.
 
 // --- TaskCreate -----------------------------------------------------------
 
@@ -46,8 +48,28 @@ func (t *CreateTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *CreateTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
-	return notImplemented(tools.TASK_CREATE)
+type createInput struct {
+	Subject     string         `json:"subject"`
+	Description string         `json:"description"`
+	ActiveForm  string         `json:"activeForm"`
+	Metadata    map[string]any `json:"metadata"`
+}
+
+func (t *CreateTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+	var in createInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("task_create: decode: %v", err)}, nil
+	}
+	if strings.TrimSpace(in.Subject) == "" {
+		return tools.Result{IsError: true, Content: "task_create: subject is required"}, nil
+	}
+	created := t.store.Create(Task{
+		Subject:     in.Subject,
+		Description: in.Description,
+		ActiveForm:  in.ActiveForm,
+		Metadata:    in.Metadata,
+	})
+	return tools.Result{Content: fmt.Sprintf("created task %s (pending): %s", created.ID, created.Subject)}, nil
 }
 
 // --- TaskGet --------------------------------------------------------------
@@ -76,8 +98,21 @@ func (t *GetTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *GetTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
-	return notImplemented(tools.TASK_GET)
+type getInput struct {
+	TaskID string `json:"taskId"`
+}
+
+func (t *GetTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+	var in getInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("task_get: decode: %v", err)}, nil
+	}
+	task, ok := t.store.Get(in.TaskID)
+	if !ok {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("task_get: no task with id %q", in.TaskID)}, nil
+	}
+	out, _ := json.MarshalIndent(task, "", "  ")
+	return tools.Result{Content: string(out)}, nil
 }
 
 // --- TaskList -------------------------------------------------------------
@@ -103,8 +138,30 @@ func (t *ListTool) Schema() json.RawMessage {
 	}`)
 }
 
+type taskSummary struct {
+	ID        string   `json:"id"`
+	Subject   string   `json:"subject"`
+	Status    Status   `json:"status"`
+	Owner     string   `json:"owner,omitempty"`
+	BlockedBy []string `json:"blockedBy,omitempty"`
+}
+
 func (t *ListTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
-	return notImplemented(tools.TASK_LIST)
+	all := t.store.List()
+	out := make([]taskSummary, 0, len(all))
+	for _, task := range all {
+		out = append(out, taskSummary{
+			ID:        task.ID,
+			Subject:   task.Subject,
+			Status:    task.Status,
+			Owner:     task.Owner,
+			BlockedBy: task.BlockedBy,
+		})
+	}
+	// Sort by numeric suffix of ID for stable display ("t1", "t2", ..., "t10").
+	sort.Slice(out, func(i, j int) bool { return idLess(out[i].ID, out[j].ID) })
+	body, _ := json.MarshalIndent(out, "", "  ")
+	return tools.Result{Content: string(body)}, nil
 }
 
 // --- TaskUpdate -----------------------------------------------------------
@@ -130,7 +187,7 @@ func (t *UpdateTool) Schema() json.RawMessage {
 		"required":["taskId"],
 		"properties":{
 			"taskId":{"type":"string","description":"The ID of the task to update"},
-			"status":{"description":"New status for the task","anyOf":[{"type":"string","enum":["pending","in_progress","completed"]},{"type":"string","constant":"deleted"}]},
+			"status":{"type":"string","enum":["pending","in_progress","completed","deleted"],"description":"New status for the task"},
 			"subject":{"type":"string","description":"New subject for the task"},
 			"description":{"type":"string","description":"New description for the task"},
 			"activeForm":{"type":"string","description":"Present continuous form shown in spinner when in_progress"},
@@ -142,8 +199,45 @@ func (t *UpdateTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *UpdateTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
-	return notImplemented(tools.TASK_UPDATE)
+type updateInput struct {
+	TaskID       string         `json:"taskId"`
+	Status       *Status        `json:"status,omitempty"`
+	Subject      *string        `json:"subject,omitempty"`
+	Description  *string        `json:"description,omitempty"`
+	ActiveForm   *string        `json:"activeForm,omitempty"`
+	Owner        *string        `json:"owner,omitempty"`
+	AddBlocks    []string       `json:"addBlocks,omitempty"`
+	AddBlockedBy []string       `json:"addBlockedBy,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+}
+
+func (t *UpdateTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+	var in updateInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("task_update: decode: %v", err)}, nil
+	}
+	if in.TaskID == "" {
+		return tools.Result{IsError: true, Content: "task_update: taskId is required"}, nil
+	}
+
+	patch := UpdatePatch{
+		Status:       in.Status,
+		Subject:      in.Subject,
+		Description:  in.Description,
+		ActiveForm:   in.ActiveForm,
+		Owner:        in.Owner,
+		AddBlocks:    in.AddBlocks,
+		AddBlockedBy: in.AddBlockedBy,
+		Metadata:     in.Metadata,
+	}
+	updated, ok, err := t.store.Update(in.TaskID, patch)
+	if err != nil {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("task_update: %v", err)}, nil
+	}
+	if !ok {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("task_update: no task with id %q", in.TaskID)}, nil
+	}
+	return tools.Result{Content: fmt.Sprintf("updated task %s (status=%s): %s", updated.ID, updated.Status, updated.Subject)}, nil
 }
 
 // --- TaskOutput -----------------------------------------------------------
@@ -157,18 +251,15 @@ func NewOutput(s *Store) *OutputTool { return &OutputTool{store: s} }
 func (t *OutputTool) Name() string { return string(tools.TASK_OUTPUT) }
 
 func (t *OutputTool) Description() string {
-	return "Retrieve stdout/stderr output from a running or completed task " +
-		"(background shell, agent, or remote session). " +
-		"DEPRECATED for many cases — prefer reading the task's output file path directly with Read " +
-		"for bash/remote_agent tasks. Local_agent tasks: use the Agent result, never Read the .output file " +
-		"(transcript will overflow context)."
+	return "Retrieve stdout/stderr output from a background task (Bash run_in_background, Monitor). " +
+		"Not yet implemented — background execution is reserved for a future phase."
 }
 
 func (t *OutputTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
 		"additionalProperties":false,
-		"required":["task_id","block","timeout"],
+		"required":["task_id"],
 		"properties":{
 			"task_id":{"type":"string","description":"The task ID to get output from"},
 			"block":{"type":"boolean","default":true,"description":"Whether to wait for completion"},
@@ -178,7 +269,10 @@ func (t *OutputTool) Schema() json.RawMessage {
 }
 
 func (t *OutputTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
-	return notImplemented(tools.TASK_OUTPUT)
+	return tools.Result{
+		IsError: true,
+		Content: "task_output: background tasks are not implemented yet",
+	}, nil
 }
 
 // --- TaskStop -------------------------------------------------------------
@@ -192,7 +286,8 @@ func NewStop(s *Store) *StopTool { return &StopTool{store: s} }
 func (t *StopTool) Name() string { return string(tools.TASK_STOP) }
 
 func (t *StopTool) Description() string {
-	return "Stop a running background task by ID. Returns success or failure status."
+	return "Stop a running background task by ID. " +
+		"Not yet implemented — background execution is reserved for a future phase."
 }
 
 func (t *StopTool) Schema() json.RawMessage {
@@ -200,21 +295,43 @@ func (t *StopTool) Schema() json.RawMessage {
 		"type":"object",
 		"additionalProperties":false,
 		"properties":{
-			"task_id":{"type":"string","description":"The ID of the background task to stop"},
-			"shell_id":{"type":"string","description":"Deprecated: use task_id instead"}
+			"task_id":{"type":"string","description":"The ID of the background task to stop"}
 		}
 	}`)
 }
 
 func (t *StopTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
-	return notImplemented(tools.TASK_STOP)
-}
-
-// --- shared helper --------------------------------------------------------
-
-func notImplemented(name tools.ToolName) (tools.Result, error) {
 	return tools.Result{
 		IsError: true,
-		Content: fmt.Sprintf("tool %q is not implemented yet", name),
+		Content: "task_stop: background tasks are not implemented yet",
 	}, nil
+}
+
+// --- helpers --------------------------------------------------------------
+
+// idLess sorts task IDs by their numeric suffix ("t1" < "t2" < "t10").
+// Falls back to lexicographic comparison if either ID doesn't match the
+// "t<int>" shape.
+func idLess(a, b string) bool {
+	ai, aok := parseID(a)
+	bi, bok := parseID(b)
+	if aok && bok {
+		return ai < bi
+	}
+	return a < b
+}
+
+func parseID(s string) (int, bool) {
+	if len(s) < 2 || s[0] != 't' {
+		return 0, false
+	}
+	var n int
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
 }

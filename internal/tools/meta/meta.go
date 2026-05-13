@@ -14,50 +14,11 @@ func Names() []tools.ToolName {
 	return []tools.ToolName{tools.AGENT, tools.TOOL_SEARCH, tools.SKILL, tools.SCHEDULE_WAKEUP}
 }
 
+// The real AGENT and TOOL_SEARCH tools live in agent.go and toolsearch.go
+// respectively (both need agent-layer hooks). Skill and Wakeup remain
+// stub singletons here.
+
 var (
-	Agent tools.Tool = tools.NewStub(
-		tools.AGENT,
-		"Launch a new agent to handle complex, multi-step tasks. "+
-			"Each agent type has specific capabilities and tools available to it. "+
-			"When using the Agent tool, specify a subagent_type parameter to select which agent type to use. "+
-			"If omitted, the general-purpose agent is used.",
-		`{
-			"type":"object",
-			"additionalProperties":false,
-			"required":["description","prompt"],
-			"properties":{
-				"description":{"type":"string","description":"A short (3-5 word) description of the task"},
-				"prompt":{"type":"string","description":"The task for the agent to perform"},
-				"subagent_type":{"type":"string","description":"The type of specialized agent to use for this task"},
-				"model":{"type":"string","enum":["sonnet","opus","haiku"],"description":"Optional model override. Takes precedence over the agent definition's model frontmatter."},
-				"isolation":{"type":"string","enum":["worktree"],"description":"Isolation mode. \"worktree\" creates a temporary git worktree so the agent works on an isolated copy of the repo."},
-				"run_in_background":{"type":"boolean","description":"Set to true to run this agent in the background. You will be notified when it completes."}
-			}
-		}`,
-	)
-
-	ToolSearch tools.Tool = tools.NewStub(
-		tools.TOOL_SEARCH,
-		"Fetches full schema definitions for deferred tools so they can be called.\n\n"+
-			"Deferred tools appear by name in <system-reminder> messages. Until fetched, only the name is known — "+
-			"there is no parameter schema, so the tool cannot be invoked. "+
-			"This tool takes a query, matches it against the deferred tool list, "+
-			"and returns the matched tools' complete JSONSchema definitions inside a <functions> block.\n\n"+
-			"Query forms:\n"+
-			"- \"select:Read,Edit,Grep\" — fetch these exact tools by name\n"+
-			"- \"notebook jupyter\" — keyword search, up to max_results best matches\n"+
-			"- \"+slack send\" — require \"slack\" in the name, rank by remaining terms",
-		`{
-			"type":"object",
-			"additionalProperties":false,
-			"required":["query","max_results"],
-			"properties":{
-				"query":{"type":"string","description":"Query to find deferred tools. Use \"select:<tool_name>\" for direct selection, or keywords to search."},
-				"max_results":{"type":"number","default":5,"description":"Maximum number of results to return (default: 5)"}
-			}
-		}`,
-	)
-
 	Skill tools.Tool = tools.NewStub(
 		tools.SKILL,
 		"Execute a skill within the main conversation.\n\n"+

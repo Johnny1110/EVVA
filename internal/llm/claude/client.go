@@ -22,6 +22,29 @@ const (
 	messagesPath     = "/v1/messages"
 )
 
+// budgetForEffort maps llm.LLMParams.Effort (1..n) to Anthropic's
+// thinking budget_tokens. Effort 0 disables thinking entirely.
+//
+// The tiers are deliberately coarse — the caller picks "how hard should
+// it think" not "exactly how many tokens." Levels 5+ saturate at the max
+// useful budget for non-Opus models.
+func budgetForEffort(effort int) int {
+	switch {
+	case effort <= 0:
+		return 0
+	case effort == 1:
+		return 1024
+	case effort == 2:
+		return 4096
+	case effort == 3:
+		return 8192
+	case effort == 4:
+		return 16384
+	default:
+		return 24576
+	}
+}
+
 // Client implements llm.Client backed by the Anthropic Messages API.
 type Client struct {
 	name   string
@@ -79,6 +102,21 @@ type block struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   string          `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+	// Thinking block fields. Signature is opaque crypto Anthropic generates
+	// alongside each thinking block; it MUST be echoed verbatim if the
+	// thinking block precedes a tool_use in a subsequent turn.
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
+}
+
+// apiThinking enables extended thinking. BudgetTokens caps how many tokens
+// the model may spend reasoning before producing a reply; it must be less
+// than apiRequest.MaxTokens. Temperature/top_p/top_k must equal defaults
+// when thinking is enabled — the client clears them on the request.
+type apiThinking struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
 }
 
 type apiTool struct {
@@ -97,12 +135,19 @@ type apiRequest struct {
 	TopK          *int         `json:"top_k,omitempty"`
 	StopSequences []string     `json:"stop_sequences,omitempty"`
 	Tools         []apiTool    `json:"tools,omitempty"`
+	Thinking      *apiThinking `json:"thinking,omitempty"`
 }
 
 type apiResponse struct {
 	Content    []block `json:"content"`
 	StopReason string  `json:"stop_reason"`
-	Error      *struct {
+	Usage      *struct {
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	} `json:"usage,omitempty"`
+	Error *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -128,6 +173,19 @@ func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet [
 	}
 	if body.MaxTokens == 0 {
 		body.MaxTokens = DefaultMaxTokens
+	}
+
+	// Extended thinking: map effort tier to a budget. Anthropic requires
+	// MaxTokens > BudgetTokens and rejects non-default temperature/top_p/top_k
+	// while thinking is on, so clear those knobs and grow MaxTokens if needed.
+	if budget := budgetForEffort(c.params.Effort); budget > 0 {
+		body.Thinking = &apiThinking{Type: "enabled", BudgetTokens: budget}
+		if body.MaxTokens <= budget {
+			body.MaxTokens = budget + DefaultMaxTokens
+		}
+		body.Temperature = nil
+		body.TopP = nil
+		body.TopK = nil
 	}
 
 	payload, err := json.Marshal(body)
@@ -166,8 +224,9 @@ func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet [
 	}
 
 	var (
-		out  llm.Response
-		text strings.Builder
+		out      llm.Response
+		text     strings.Builder
+		thinking strings.Builder
 	)
 
 	out.ToolCalls = []*tools.Call{}
@@ -175,6 +234,14 @@ func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet [
 		switch b.Type {
 		case "text":
 			text.WriteString(b.Text)
+		case "thinking":
+			thinking.WriteString(b.Thinking)
+			// Only one signature is expected per response; if Anthropic ever
+			// emits multiple thinking blocks the last signature wins. The
+			// agent only needs *a* valid signature to round-trip.
+			if b.Signature != "" {
+				out.ThinkingSignature = b.Signature
+			}
 		case "tool_use":
 			tc := &tools.Call{ID: b.ID, Name: b.Name, Input: b.Input}
 			out.ToolCalls = append(out.ToolCalls, tc)
@@ -182,6 +249,15 @@ func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet [
 	}
 
 	out.Content = text.String()
+	out.Thinking = thinking.String()
+	if parsed.Usage != nil {
+		out.Usage = llm.Usage{
+			InputTokens:         parsed.Usage.InputTokens,
+			OutputTokens:        parsed.Usage.OutputTokens,
+			CacheReadTokens:     parsed.Usage.CacheReadInputTokens,
+			CacheCreationTokens: parsed.Usage.CacheCreationInputTokens,
+		}
+	}
 	return out, nil
 }
 
@@ -198,35 +274,42 @@ func toAPIMessages(msgs []llm.Message) []apiMessage {
 			})
 		case llm.RoleAssistant:
 			blocks := []block{}
+			// Thinking block (with signature) MUST precede tool_use when
+			// extended thinking is on — Anthropic 400s otherwise. We replay
+			// it whenever both pieces are present; signatures from prior
+			// turns are passed through verbatim.
+			if m.Thinking != "" && m.ThinkingSignature != "" {
+				blocks = append(blocks, block{
+					Type:      "thinking",
+					Thinking:  m.Thinking,
+					Signature: m.ThinkingSignature,
+				})
+			}
 			if m.Content != "" {
 				blocks = append(blocks, block{Type: "text", Text: m.Content})
 			}
-			if m.ToolCalls != nil {
-				for _, tc := range m.ToolCalls {
-					blocks = append(blocks, block{
-						Type:  "tool_use",
-						ID:    tc.ID,
-						Name:  tc.Name,
-						Input: tc.Input,
-					})
-				}
+			for _, tc := range m.ToolCalls {
+				blocks = append(blocks, block{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: tc.Input,
+				})
 			}
 			out = append(out, apiMessage{Role: "assistant", Content: blocks})
 		case llm.RoleTool:
-			blocks := []block{}
-
-			if m.ToolCalls != nil {
-				for _, tc := range m.ToolCalls {
-					blocks = append(blocks, block{
-						Type:      "tool_result",
-						ToolUseID: tc.ID,
-						Content:   m.Content,
-						Input:     tc.Input,
-					})
-				}
+			// Anthropic carries tool_result blocks inside a user message,
+			// not a "tool" role — that role doesn't exist in this API.
+			blocks := make([]block, 0, len(m.ToolResults))
+			for _, tr := range m.ToolResults {
+				blocks = append(blocks, block{
+					Type:      "tool_result",
+					ToolUseID: tr.ID,
+					Content:   tr.Content,
+					IsError:   tr.IsError,
+				})
 			}
-
-			out = append(out, apiMessage{Role: "tool", Content: blocks})
+			out = append(out, apiMessage{Role: "user", Content: blocks})
 		}
 	}
 	return out

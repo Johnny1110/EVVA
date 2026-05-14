@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/johnny1110/evva/internal/agent/event"
-	//"github.com/johnny1110/evva/internal/agent/profiles"
 	"github.com/johnny1110/evva/internal/tools"
 	"github.com/johnny1110/evva/internal/tools/meta"
 )
@@ -23,10 +22,15 @@ import (
 //     LLMProvider.ModelForLevel — 1 is the normal tier, 2 is the big tier.
 //  4. Constructs a child agent with event.BubbleUp routing its events back
 //     to the parent's Sink, tagged with the parent's AgentID.
-//  5. Emits KindSubagent {Started} → child.Run → KindSubagent {Ended}.
-//  6. Returns the child's final assistant text on success. ErrIterLimit on
-//     a subagent is downgraded to a soft note appended to the partial reply
-//     so the parent run can recover.
+//  5. Registers the child in the parent's SpawnGroup panel — every
+//     mutation is observable through the unified ToolState change stream.
+//  6. Runs the child:
+//     - Sync mode: blocks until child.Run completes, removes from panel
+//       on return, and propagates the child's text through the tool result.
+//     - Async mode: spawns a goroutine that runs the child and marks the
+//       panel entry Done / Crushed on exit. Returns immediately with an
+//       ack message; the parent loop will pick up the eventual result via
+//       AgentGroupPanel.DrainCompleted between turns.
 func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error) {
 	if a.IsSubagent() {
 		return "", meta.ErrSubagentForbidden
@@ -44,7 +48,6 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 	subProfile.LLMModel = a.profile.LLMProvider.ModelForLevel(req.Level)
 
 	childSink := event.BubbleUp{Parent: a.Sink(), ParentID: a.ID}
-	// new a sub agent
 	child, err := New(subProfile,
 		WithName(req.Name),
 		WithSink(childSink),
@@ -57,30 +60,44 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 	}
 
 	summary := truncateSummary(req.Prompt, 100)
+	panel := a.ToolState().AgentGroupPanel()
+	panel.Add(child.Name, child.ID, subProfile.Type.String(), summary, req.AsyncMode)
 
-	// ------------------------------------------------------------
-	a.ToolState().AgentGroupPanel().Add(child.Name, child.ID, subProfile.Type.String(), summary)
-	emitSubagent(child, req.Kind, summary, event.SubagentInit)
-	// TODO: In evva v2.0 support sync/async agent mode as new feature, if req.AsyncMode = true
-	// update subagent status in toolState
-	resp, runErr := child.Run(ctx, req.Prompt)
-	emitSubagent(child, req.Kind, summary, event.SubagentEnded)
-	if runErr != nil {
-		a.ToolState().AgentGroupPanel().Crush(child.ID, runErr)
-	} else {
-		a.ToolState().AgentGroupPanel().Done(child.ID, resp.Content)
+	if req.AsyncMode {
+		// Detach: run the child in a goroutine, mark the panel entry on
+		// exit. The parent's main loop picks the result up via
+		// DrainCompleted between turns. We deliberately pass the parent's
+		// ctx so a top-level cancel reaches the child.
+		go func() {
+			resp, runErr := child.Run(ctx, req.Prompt)
+			switch {
+			case runErr != nil && errors.Is(runErr, ErrIterLimit):
+				panel.Done(child.ID, resp.Content+"\n[subagent paused at iteration limit]")
+			case runErr != nil:
+				panel.Crush(child.ID, runErr)
+			default:
+				panel.Done(child.ID, resp.Content)
+			}
+		}()
+		return fmt.Sprintf("subagent %s spawned in background; its summary will be delivered on a later turn (do not assume any result here).", child.ID), nil
 	}
-	// ------------------------------------------------------------
+
+	// Sync path: block on the child. Result is delivered via this return
+	// value (which the tool dispatcher hands back to the model as the
+	// AGENT tool_result). The panel entry is short-lived — we update the
+	// phase, then Remove so DrainCompleted never sees a sync entry.
+	resp, runErr := child.Run(ctx, req.Prompt)
+	defer panel.Remove(child.ID)
 
 	if runErr != nil {
-		// Subagent paused at iter limit — return the partial so the parent
-		// can keep working. Other errors propagate.
 		if errors.Is(runErr, ErrIterLimit) {
+			panel.Done(child.ID, resp.Content)
 			return resp.Content + "\n[subagent paused at iteration limit]", nil
 		}
+		panel.Crush(child.ID, runErr)
 		return "", runErr
 	}
-
+	panel.Done(child.ID, resp.Content)
 	return resp.Content, nil
 }
 
@@ -92,7 +109,6 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 //
 // Unknown kinds are an error the caller surfaces to the model.
 func subagentProfile(parent Profile, kind string) (Profile, error) {
-
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "explore":
 		// read-only
@@ -109,17 +125,6 @@ func subagentProfile(parent Profile, kind string) (Profile, error) {
 	default:
 		return Profile{}, fmt.Errorf("unknown subagent_type %q (want \"explore\" or \"general-purpose\")", kind)
 	}
-}
-
-func emitSubagent(a *Agent, kind, summary string, phase event.SubagentPhase) {
-	a.emit(event.KindSubagent, func(e *event.Event) {
-		e.Subagent = &event.SubagentPayload{
-			SubagentID:    a.ID,
-			AgentType:     kind,
-			PromptSummary: summary,
-			Phase:         phase,
-		}
-	})
 }
 
 func truncateSummary(s string, max int) string {

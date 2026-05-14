@@ -4,7 +4,14 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/johnny1110/evva/internal/observable"
 )
+
+// Domain is the observable.Change.Domain value every task-store change
+// carries. Consumers switch on this string and type-assert Payload to
+// task.Summary.
+const Domain = "task"
 
 // Status enumerates the lifecycle states a task can be in.
 type Status string
@@ -47,31 +54,37 @@ type Task struct {
 	UpdatedAt   time.Time
 }
 
+// Summary is the typed payload carried in observable.Change.Payload for
+// every task-domain change. Consumers receive this in their observer
+// callback after type-asserting on Domain == "task".
+type Summary struct {
+	Status  string
+	Subject string
+}
+
 // Store is the per-agent backing store for the task tools. All six task
 // tools (Create, Get, List, Update, Output, Stop) share one Store via
 // constructor injection, so they cooperate without any global state.
 //
-// Safe for concurrent access — the agent loop and TUI may read simultaneously.
-//
-// OnChange is fired AFTER a successful mutation (Create / Update) while the
-// store lock is released, so the callback may freely call back into the
-// store. The agent wires this to emit KindTaskUpdate events.
-//
-// Status is passed as a string so consumers (notably the agent's event
-// package) don't have to import internal/tools/task.
+// Safe for concurrent access. Mutations call Notify after releasing the
+// lock so observers may freely call back into the store.
 type Store struct {
+	observable.Observable
+
 	mu      sync.Mutex
 	tasks   map[string]*Task
 	order   []string // insertion order — drives stable List output
 	counter int
-
-	OnChange func(id, status, subject string)
 }
 
 // NewStore returns an empty Store ready for use.
 func NewStore() *Store {
 	return &Store{tasks: make(map[string]*Task)}
 }
+
+// Domain identifies this store on the change stream. Required by the
+// observable.Store interface.
+func (s *Store) Domain() string { return Domain }
 
 // Create inserts a new task. The store assigns the ID (monotonic per-store,
 // "t1", "t2", …) and timestamps; the caller supplies the other fields.
@@ -87,12 +100,14 @@ func (s *Store) Create(in Task) Task {
 	t := in
 	s.tasks[t.ID] = &t
 	s.order = append(s.order, t.ID)
-	cb := s.OnChange
 	s.mu.Unlock()
 
-	if cb != nil {
-		cb(t.ID, string(t.Status), t.Subject)
-	}
+	s.Notify(observable.Change{
+		Domain:  Domain,
+		Op:      "created",
+		ID:      t.ID,
+		Payload: Summary{Status: string(t.Status), Subject: t.Subject},
+	})
 	return t
 }
 
@@ -188,12 +203,14 @@ func (s *Store) Update(id string, p UpdatePatch) (Task, bool, error) {
 	}
 	t.UpdatedAt = time.Now()
 	snapshot := *t
-	cb := s.OnChange
 	s.mu.Unlock()
 
-	if cb != nil {
-		cb(snapshot.ID, string(snapshot.Status), snapshot.Subject)
-	}
+	s.Notify(observable.Change{
+		Domain:  Domain,
+		Op:      "updated",
+		ID:      snapshot.ID,
+		Payload: Summary{Status: string(snapshot.Status), Subject: snapshot.Subject},
+	})
 	return snapshot, true, nil
 }
 

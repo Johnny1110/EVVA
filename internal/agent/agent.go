@@ -2,9 +2,11 @@ package agent
 
 import (
 	"fmt"
-	"github.com/johnny1110/evva/internal/constant"
 	"log/slog"
+	"sync"
 	"time"
+
+	"github.com/johnny1110/evva/internal/constant"
 
 	config "github.com/johnny1110/evva/configs"
 	"github.com/johnny1110/evva/internal/agent/event"
@@ -63,6 +65,14 @@ type Agent struct {
 	maxIters int //agent loop max iters
 
 	asyncMode bool
+
+	// emitMu serializes calls into a.sink.Emit so parallel tool dispatch
+	// honors the Sink contract (one agent's events delivered serially).
+	emitMu sync.Mutex
+	// resolveMu guards a.active during lazy deferred-tool materialization.
+	// Parallel tool dispatch resolves up front in the caller's goroutine but
+	// subagents may also reach in, so the lock is cheap insurance.
+	resolveMu sync.Mutex
 }
 
 // New constructs an agent with a fresh ID, a per-agent logger, and the given
@@ -116,8 +126,10 @@ func New(profile Profile, opts ...Option) (*Agent, error) {
 		opt(a)
 	}
 
-	// bind tool state onchange event.
-	toolStateOnchangeEventBinding(a)
+	// Single subscription bridges every store registered on the ToolState
+	// (task list, subagent panel, future panels) into the agent's event
+	// sink as KindStoreUpdate events.
+	bindToolStateEvents(a)
 
 	// Install ourselves as the subagent spawner and the deferred-tool
 	// lookup. Only the root agent does this — subagents leave the slots
@@ -178,6 +190,10 @@ func (a *Agent) Sink() event.Sink {
 // emit sends an event to the agent's sink (no-op if none installed). The
 // envelope's AgentID, ParentID, and Time are filled in here so call sites
 // only carry the kind-specific payload.
+//
+// emitMu serializes the call into a.sink.Emit — parallel tool dispatch
+// invokes emit from multiple goroutines, but the Sink contract guarantees
+// one agent's events are delivered serially.
 func (a *Agent) emit(kind event.Kind, build func(*event.Event)) {
 	if a.sink == nil {
 		return
@@ -191,5 +207,7 @@ func (a *Agent) emit(kind event.Kind, build func(*event.Event)) {
 	if build != nil {
 		build(&e)
 	}
+	a.emitMu.Lock()
 	a.sink.Emit(e)
+	a.emitMu.Unlock()
 }

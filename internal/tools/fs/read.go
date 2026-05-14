@@ -10,6 +10,12 @@ import (
 	"github.com/johnny1110/evva/internal/tools"
 )
 
+// DefaultReadLimit caps an unbounded Read at this many lines, matching
+// Claude Code. The model can pass an explicit larger limit when it really
+// needs more, but the default protects the context window from accidental
+// 50k-line dumps.
+const DefaultReadLimit = 2000
+
 // ReadTool reads a file and returns it in cat -n format.
 type ReadTool struct {
 	tracker *ReadTracker
@@ -23,17 +29,23 @@ func NewRead(tracker *ReadTracker) *ReadTool {
 func (t *ReadTool) Name() string { return string(tools.READ_FILE) }
 
 func (t *ReadTool) Description() string {
-	return "Reads a file from the local filesystem. Output is cat -n format: " +
-		"each line is prefixed with its 1-based line number and a tab " +
-		"(e.g. `   42\\thello`). A header `[File: <path> (N lines)]` " +
-		"precedes the body and notes the slice when offset/limit are used.\n\n" +
-		"Use `offset` (1-based) and `limit` to read a slice of a large " +
-		"file without spending tokens on the rest. Reading marks the file " +
-		"as loaded into the session — edit_file and write_file (overwrite) " +
-		"refuse to touch a file you haven't read first.\n\n" +
-		"When you later call edit_file, DO NOT include the `<line>\\t` " +
-		"prefix in old_string — strip it. Only the raw line content is " +
-		"what's actually in the file."
+	return "Reads a file from the local filesystem. file_path must be absolute.\n\n" +
+		"Output is cat -n format: each line is prefixed with its 1-based " +
+		"line number and a tab (e.g. `   42\\thello`). A header " +
+		"`[File: <path> (N lines)]` precedes the body and notes the slice " +
+		"when offset/limit are used.\n\n" +
+		"By default at most 2000 lines are returned starting from line 1. " +
+		"Use `offset` (1-based) to start later in the file and `limit` to " +
+		"control the slice size — pass an explicit larger `limit` when you " +
+		"need more than 2000 lines.\n\n" +
+		"Reading marks the file as loaded into the session — edit_file and " +
+		"write_file (overwrite) refuse to touch a file you haven't read " +
+		"first. When you later call edit_file, DO NOT include the " +
+		"`<line>\\t` prefix in old_string — strip it. Only the raw line " +
+		"content is what's actually in the file.\n\n" +
+		"Multimodal reads (images, PDFs, Jupyter notebooks) are not yet " +
+		"supported — see the README wish list. The `pages` parameter is " +
+		"reserved for future PDF support and is rejected today."
 }
 
 func (t *ReadTool) Schema() json.RawMessage {
@@ -42,18 +54,19 @@ func (t *ReadTool) Schema() json.RawMessage {
 		"additionalProperties":false,
 		"required":["file_path"],
 		"properties":{
-			"file_path":{"type":"string","description":"Absolute or relative path to the file to read."},
-			"offset":{"type":"integer","description":"1-based line number to start reading from. Defaults to 1."},
-			"limit":{"type":"integer","exclusiveMinimum":0,"description":"Maximum number of lines to return. Defaults to all lines."}
+			"file_path":{"type":"string","description":"Absolute path to the file to read."},
+			"offset":{"type":"integer","minimum":1,"description":"1-based line number to start reading from. Defaults to 1."},
+			"limit":{"type":"integer","exclusiveMinimum":0,"description":"Maximum number of lines to return. Defaults to 2000. Pass a larger value to read more."},
+			"pages":{"type":"string","description":"Reserved for PDF page range (not yet supported)."}
 		}
 	}`)
 }
 
 type readInput struct {
 	FilePath string `json:"file_path"`
-	Encoding string `json:"encoding"`
 	Offset   int    `json:"offset"`
 	Limit    int    `json:"limit"`
+	Pages    string `json:"pages"`
 }
 
 func (t *ReadTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
@@ -61,41 +74,39 @@ func (t *ReadTool) Execute(_ context.Context, input json.RawMessage) (tools.Resu
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: "read: decode input: " + err.Error()}, nil
 	}
-	if in.FilePath == "" {
-		return tools.Result{IsError: true, Content: "read: file_path is required"}, nil
+
+	if in.Pages != "" {
+		return tools.Result{
+			IsError: true,
+			Content: "read: PDF/pages support is not yet implemented (tracked in README wish list). Use this tool only on text files.",
+		}, nil
 	}
 
 	resolved, err := resolvePath(in.FilePath)
 	if err != nil {
-		return tools.Result{IsError: true, Content: "error: " + err.Error()}, nil
+		return tools.Result{IsError: true, Content: "read: " + err.Error()}, nil
 	}
 
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return tools.Result{IsError: true, Content: fmt.Sprintf("error: file not found: %s", in.FilePath)}, nil
+		return tools.Result{IsError: true, Content: fmt.Sprintf("read: file not found: %s", in.FilePath)}, nil
 	}
 	if info.IsDir() {
-		return tools.Result{IsError: true, Content: fmt.Sprintf("error: not a regular file: %s", in.FilePath)}, nil
-	}
-
-	encoding := in.Encoding
-	if encoding == "" {
-		encoding = "utf-8"
+		return tools.Result{IsError: true, Content: fmt.Sprintf("read: not a regular file: %s", in.FilePath)}, nil
 	}
 
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return tools.Result{IsError: true, Content: fmt.Sprintf("error: could not read %s: %s", in.FilePath, err)}, nil
+		return tools.Result{IsError: true, Content: fmt.Sprintf("read: could not read %s: %s", in.FilePath, err)}, nil
 	}
 
-	// Mark as read so edit/write guards pass.
 	if t.tracker != nil {
 		t.tracker.MarkRead(resolved)
 	}
 
 	content := string(data)
 	allLines := strings.Split(content, "\n")
-	// Strip trailing empty line from split if content ends with \n
+	// Strip the trailing empty line from Split when the file ends with \n.
 	if len(allLines) > 0 && allLines[len(allLines)-1] == "" && strings.HasSuffix(content, "\n") {
 		allLines = allLines[:len(allLines)-1]
 	}
@@ -105,7 +116,6 @@ func (t *ReadTool) Execute(_ context.Context, input json.RawMessage) (tools.Resu
 		return tools.Result{Content: fmt.Sprintf("[File: %s, 0 lines]", resolved)}, nil
 	}
 
-	// offset is 1-based, clamp to valid range
 	start := in.Offset
 	if start < 1 {
 		start = 1
@@ -118,11 +128,13 @@ func (t *ReadTool) Execute(_ context.Context, input json.RawMessage) (tools.Resu
 		)}, nil
 	}
 
-	endIdx := totalLines
-	if in.Limit > 0 {
-		if end := startIdx + in.Limit; end < endIdx {
-			endIdx = end
-		}
+	limit := in.Limit
+	if limit <= 0 {
+		limit = DefaultReadLimit
+	}
+	endIdx := startIdx + limit
+	if endIdx > totalLines {
+		endIdx = totalLines
 	}
 
 	selected := allLines[startIdx:endIdx]

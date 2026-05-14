@@ -11,6 +11,10 @@ import (
 type Session struct {
 	// LLM context payload
 	Messages []llm.Message
+	// Usage is the running sum of every turn's reported token usage in this
+	// session. Compaction is expected to reset Messages but leave Usage as
+	// the running tab of what the user has already paid for.
+	Usage llm.Usage
 	// microCompacted: compress tool_use result block only (level-1 compact)
 	microCompacted bool
 	// fullCompact: compress all session message (level-2 compact)
@@ -27,6 +31,12 @@ func (s *Session) Append(msg llm.Message) {
 
 func (s *Session) GetMessages() []llm.Message {
 	return s.Messages
+}
+
+// AddUsage folds one turn's reported usage into the session running total.
+// Zero-valued fields are treated as "not reported" and add nothing.
+func (s *Session) AddUsage(u llm.Usage) {
+	s.Usage = s.Usage.Add(u)
 }
 
 func (s *Session) IsMicroCompacted() bool {

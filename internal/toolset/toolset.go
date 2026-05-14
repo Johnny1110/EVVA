@@ -21,7 +21,9 @@ package toolset
 
 import (
 	"fmt"
+	"sync"
 
+	"github.com/johnny1110/evva/internal/observable"
 	"github.com/johnny1110/evva/internal/tools"
 	"github.com/johnny1110/evva/internal/tools/cron"
 	"github.com/johnny1110/evva/internal/tools/fs"
@@ -50,13 +52,64 @@ type ToolState struct {
 	readTracker     *fs.ReadTracker
 	subAgentGroup   *meta.SpawnGroup
 	// Future: monitorBus, cronService, skillLoader, ...
+
+	// Store registry — every observable.Store registered here fans its
+	// changes into the ToolState's observers. The agent subscribes once
+	// in New() and re-emits every change as an event.KindStoreUpdate, so
+	// adding a new panel never requires touching the agent layer.
+	storesMu  sync.Mutex
+	stores    []observable.Store
+	observers []observable.Observer
 }
+
+// RegisterStore plugs a Store into the unified change stream. ToolState
+// subscribes to store and re-publishes every Change to its own observers.
+// Lazy accessors below call this on first allocation, so callers that just
+// use the typed accessors get registration for free.
+func (s *ToolState) RegisterStore(store observable.Store) {
+	if store == nil {
+		return
+	}
+	s.storesMu.Lock()
+	s.stores = append(s.stores, store)
+	s.storesMu.Unlock()
+	store.Subscribe(s.fanout)
+}
+
+// Subscribe registers an observer that receives every Change from every
+// registered Store. The agent uses this to bridge into its event sink.
+func (s *ToolState) Subscribe(fn observable.Observer) {
+	if fn == nil {
+		return
+	}
+	s.storesMu.Lock()
+	s.observers = append(s.observers, fn)
+	s.storesMu.Unlock()
+}
+
+func (s *ToolState) fanout(c observable.Change) {
+	s.storesMu.Lock()
+	snapshot := append([]observable.Observer(nil), s.observers...)
+	s.storesMu.Unlock()
+	for _, fn := range snapshot {
+		fn(c)
+	}
+}
+
+// HasAgentGroupPanel reports whether a SpawnGroup has already been
+// allocated. The agent loop uses this to skip drain calls in runs that
+// never spawned a subagent (avoids forcing the lazy allocation just to
+// peek at an empty panel).
+func (s *ToolState) HasAgentGroupPanel() bool { return s.subAgentGroup != nil }
 
 // TaskStore returns the task subsystem's backing store, allocating one on
 // first use. All six task tools constructed against the same ToolState share it.
+// First-use also registers the store on the change stream so the agent's
+// event bridge picks up every task mutation without per-store wiring.
 func (s *ToolState) TaskStore() *task.Store {
 	if s.taskStore == nil {
 		s.taskStore = task.NewStore()
+		s.RegisterStore(s.taskStore)
 	}
 	return s.taskStore
 }
@@ -101,6 +154,7 @@ func (s *ToolState) ReadTracker() *fs.ReadTracker {
 func (s *ToolState) AgentGroupPanel() *meta.SpawnGroup {
 	if s.subAgentGroup == nil {
 		s.subAgentGroup = meta.NewSpawnGroup()
+		s.RegisterStore(s.subAgentGroup)
 	}
 	return s.subAgentGroup
 }

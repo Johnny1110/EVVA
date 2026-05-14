@@ -4,10 +4,12 @@
 package fs
 
 import (
-	config "github.com/johnny1110/evva/configs"
-	"github.com/johnny1110/evva/internal/tools"
+	"fmt"
 	"os"
 	"path/filepath"
+
+	config "github.com/johnny1110/evva/configs"
+	"github.com/johnny1110/evva/internal/tools"
 )
 
 // Names lists every tool name this package contributes, in canonical order.
@@ -15,17 +17,20 @@ func Names() []tools.ToolName {
 	return []tools.ToolName{tools.READ_FILE, tools.WRITE_FILE, tools.EDIT_FILE}
 }
 
-// resolvePath resolves a relative path against the workdir and returns the
-// absolute path.
+// resolvePath validates that pathStr is absolute and returns its cleaned
+// form. Matches Claude Code's contract — the LLM must supply absolute
+// paths; relative paths are rejected up front with a hint pointing at the
+// workdir, so a misconfigured agent never silently writes to /cwd by
+// mistake.
 func resolvePath(pathStr string) (string, error) {
-	cfg := config.Get()
-	workdir := cfg.WorkDir
-
-	p := pathStr
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(workdir, p)
+	if pathStr == "" {
+		return "", fmt.Errorf("file_path is required")
 	}
-	return filepath.Abs(p)
+	if !filepath.IsAbs(pathStr) {
+		cfg := config.Get()
+		return "", fmt.Errorf("file_path must be absolute (relative paths are not supported; workdir is %s)", cfg.WorkDir)
+	}
+	return filepath.Clean(pathStr), nil
 }
 
 func fileExists(path string) bool {

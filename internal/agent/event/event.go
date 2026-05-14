@@ -5,6 +5,12 @@
 // type-safe (no interface{} assertions, no reflection) while still allowing
 // one Sink to receive every kind of event the agent might emit.
 //
+// State-change events from backing stores (task list, subagent panel, future
+// notes/todos/...) all flow through a single KindStoreUpdate so adding a
+// new panel never requires a new event kind. The store's domain identifier
+// (see internal/observable.Change.Domain) selects how the consumer renders
+// the row.
+//
 // Sinks (see sink.go) are the consumer side. A TUI, a structured logger,
 // and a JSON-over-websocket bridge can each implement Sink and subscribe
 // independently of one another — the agent doesn't know about them.
@@ -39,39 +45,13 @@ const (
 
 	KindError Kind = "error"
 
-	KindTaskUpdate Kind = "task_update" // task panel state change
-	KindSubagent   Kind = "subagent"    // subagent lifecycle marker
+	// KindStoreUpdate carries every state change emitted by an
+	// observable.Store registered on the agent's ToolState. The consumer
+	// switches on StoreUpdatePayload.Domain to decide how to render.
+	KindStoreUpdate Kind = "store_update"
+
+	KindUsage Kind = "usage" // per-turn token usage report
 )
-
-// SubagentPhase distinguishes subagent-started from subagent-ended events.
-// The events between them (carrying the same ParentID) belong to the
-// subagent's run.
-type SubagentPhase int
-
-const (
-	SubagentInit SubagentPhase = iota
-	SubagentThinking
-	SubagentToolUse
-	SubagentIdle
-	SubagentEnded
-)
-
-func (p SubagentPhase) String() string {
-	switch p {
-	case SubagentInit:
-		return "init"
-	case SubagentThinking:
-		return "thinking"
-	case SubagentToolUse:
-		return "tool_use"
-	case SubagentIdle:
-		return "idle"
-	case SubagentEnded:
-		return "done"
-	default:
-		return "unknown"
-	}
-}
 
 // Event is the envelope. Exactly one of the *Payload fields is non-nil per
 // event, matched to Kind. Consumers should switch on Kind and read the
@@ -96,8 +76,8 @@ type Event struct {
 	ToolUseStart  *ToolUseStartPayload  `json:",omitempty"`
 	ToolUseResult *ToolUseResultPayload `json:",omitempty"`
 	Error         *ErrorPayload         `json:",omitempty"`
-	TaskUpdate    *TaskUpdatePayload    `json:",omitempty"`
-	Subagent      *SubagentPayload      `json:",omitempty"`
+	StoreUpdate   *StoreUpdatePayload   `json:",omitempty"`
+	Usage         *UsagePayload         `json:",omitempty"`
 }
 
 // --- payload types ---
@@ -138,10 +118,17 @@ type ToolUseStartPayload struct {
 	ToolID string
 }
 
+// ToolUseResultPayload reports the outcome of a single tool call.
+//
+// Metadata is an optional tool-specific structured payload (e.g. a
+// *fs.FileDiff for write_file / edit_file). Carried opaquely through this
+// layer; the UI type-asserts. Never sent to the LLM — Content alone is the
+// model-facing summary.
 type ToolUseResultPayload struct {
-	ToolID  string
-	Content string
-	IsError bool
+	ToolID   string
+	Content  string
+	IsError  bool
+	Metadata any
 }
 
 // ErrorPayload reports a Go-level failure that aborted the loop. Tool errors
@@ -152,16 +139,24 @@ type ErrorPayload struct {
 	Err   error
 }
 
-type TaskUpdatePayload struct {
-	TaskID  string
-	Status  string
-	Subject string
+// StoreUpdatePayload is the bridge between observable.Change and the event
+// stream. Domain names the emitting store ("task", "subagent", ...); Op is
+// the verb ("created" / "updated" / "removed" / "phase" / "done" / "crushed");
+// Payload is the store's domain-typed snapshot, switched on by Domain at
+// the consumer.
+type StoreUpdatePayload struct {
+	Domain  string
+	Op      string
+	ID      string
+	Payload any
+	Time    time.Time
 }
 
-type SubagentPayload struct {
-	SubagentID    string
-	AgentType     string // "explore", "general", ...
-	PromptSummary string
-	Phase         SubagentPhase
-	ResultSummary string
+// UsagePayload reports token usage for the LLM call that just completed.
+// Turn is the just-completed call; Cumulative is the running session total
+// after Turn has been folded in. The TUI typically shows both — Turn for
+// the latest cost spike, Cumulative for the session budget.
+type UsagePayload struct {
+	Turn       llm.Usage
+	Cumulative llm.Usage
 }

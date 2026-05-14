@@ -28,6 +28,15 @@ func getEnvDefaultInt(key, fallback string) int {
 	return num
 }
 
+func getEnvDefaultBool(key, fallback string) bool {
+	val := getEnvDefault(key, fallback)
+	b, err := strconv.ParseBool(val)
+	if err != nil {
+		panic(fmt.Errorf("cannot parse %s as bool: %v", key, err))
+	}
+	return b
+}
+
 func getEnvDefaultLowerCase(key, fallback string) string {
 	return strings.ToLower(getEnvDefault(key, fallback))
 }

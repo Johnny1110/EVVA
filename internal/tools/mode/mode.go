@@ -59,7 +59,7 @@ var (
 	EnterWorktree tools.Tool = tools.NewStub(
 		tools.ENTER_WORKTREE,
 		"Create an isolated git worktree and switch the session into it. "+
-			"Use ONLY when the user explicitly says \"worktree\" or CLAUDE.md/memory instructs it. "+
+			"Use ONLY when the user explicitly says \"worktree\" or EVVA.md/memory instructs it. "+
 			"Do not use for ordinary branch work. "+
 			"Pass `path` to enter an existing worktree instead of creating one.",
 		`{

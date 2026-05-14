@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -17,18 +18,25 @@ import (
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/internal/constant"
 	"github.com/johnny1110/evva/internal/llm"
+	"github.com/johnny1110/evva/internal/tools/fs"
+	"github.com/johnny1110/evva/internal/tools/meta"
+	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/ui/bubbletea"
 	"github.com/joho/godotenv"
 )
 
 // CLI driver for the agent loop.
 //
-// Usage:
+// Two UI modes:
 //
-//	evva [-temp 0.7] [-max-tokens 1024] [-max-iters 25] <prompt>
+//   - Interactive TUI (default, when stdout is a TTY): bubbletea.UI takes
+//     over the screen, transcript scrolls, panels collapse when empty,
+//     status bar shows tokens + state. The user types prompts in the
+//     bottom input.
 //
-// If no positional prompt is given, the program reads from stdin (pipe / heredoc).
-// Ctrl+C / SIGTERM cancels the in-flight loop and exits with code 130.
-// When the iteration cap is hit the user is prompted to press Enter to continue.
+//   - Plain CLI sink (`-no-tui`, or when stdout is piped): the original
+//     one-shot flow. Read a prompt from args/stdin, run the agent once,
+//     stream events as plain-text lines, exit. Useful for scripting and CI.
 func main() {
 	_ = godotenv.Load()
 	cfg := config.Get()
@@ -36,26 +44,57 @@ func main() {
 	temp := flag.Float64("temp", -1, "sampling temperature (-1 → leave unset)")
 	maxTokens := flag.Int("max-tokens", 1024, "max output tokens (0 → provider default)")
 	maxIters := flag.Int("max-iters", cfg.DefaultMaxIterations, "max loop iterations before pausing for Continue")
+	noTUI := flag.Bool("no-tui", false, "disable the bubbletea TUI; read a prompt and run once with plain CLI output")
 	flag.Parse()
 
+	prof := agent.Main(constant.DEEPSEEK, constant.DEEPSEEK_V4_FLASH, buildOptions(*temp, *maxTokens))
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	useTUI := !*noTUI && isTTY(os.Stdout)
+	if useTUI {
+		runTUI(ctx, prof, *maxIters, cfg.AppName)
+		return
+	}
+	runCLI(ctx, prof, *maxIters, cfg.AppName)
+}
+
+// runTUI is the interactive path. The bubbletea UI owns the screen; the
+// agent emits events into it; the user drives prompts from the textarea.
+func runTUI(ctx context.Context, prof agent.Profile, maxIters int, name string) {
+	tui := bubbletea.New()
+	ag, err := agent.New(prof,
+		agent.WithName(name),
+		agent.WithSink(tui),
+		agent.WithMaxIterations(maxIters),
+	)
+	if err != nil {
+		exitf(1, "evva: %v", err)
+	}
+	tui.Attach(ag)
+	if err := tui.Run(ctx); err != nil {
+		exitf(1, "evva: %v", err)
+	}
+}
+
+// runCLI is the headless one-shot path used by `-no-tui` and by pipes.
+// Preserves the original behavior: read prompt → run → stream events as
+// plain text → exit. ErrIterLimit triggers a synchronous "press Enter to
+// continue" prompt on stderr.
+func runCLI(ctx context.Context, prof agent.Profile, maxIters int, name string) {
 	prompt, err := readPrompt(flag.Args())
 	if err != nil {
 		exitf(2, "evva: %v", err)
 	}
 	if prompt == "" {
-		exitf(2, "usage: evva [-temp 0.7] [-max-tokens N] [-max-iters N] <prompt>")
+		exitf(2, "usage: evva [-temp 0.7] [-max-tokens N] [-max-iters N] [-no-tui] <prompt>")
 	}
 
-	prof := agent.Main(constant.DEEPSEEK, constant.DEEPSEEK_V4_FLASH, buildOptions(*temp, *maxTokens))
-	prof.SystemPrompt = "You are a helpful coding agent operating in a terminal. Use tools when they help."
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	ag, err := agent.New(prof,
-		agent.WithName(cfg.AppName),
+		agent.WithName(name),
 		agent.WithSink(cliSink{out: os.Stdout}),
-		agent.WithMaxIterations(*maxIters),
+		agent.WithMaxIterations(maxIters),
 	)
 	if err != nil {
 		exitf(1, "evva: %v", err)
@@ -78,17 +117,26 @@ func main() {
 		exitf(1, "evva: %v", err)
 	}
 
-	// Final answer was already emitted as a Text event by the loop; no need
-	// to repeat it. resp is here in case scripts want to read structured
-	// state (provider, model, etc.) in the future.
 	_ = resp
+}
+
+// isTTY reports whether f is connected to a terminal. We use stat() because
+// adding go-isatty as a direct dep just for this is overkill — the
+// ModeCharDevice bit is set on a /dev/tty character device and clear when
+// stdout is a pipe / file.
+func isTTY(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 // --- CLI event sink -------------------------------------------------------
 
 // cliSink writes a human-readable trace of the agent's events to out. It is
-// the reference Sink implementation — a fine starting point for richer UIs
-// (Bubble Tea TUI, web UI) which can replace it without changing the agent.
+// the fallback event.Sink for `-no-tui` mode — a stable, scriptable text
+// stream that pipes well into other tools.
 type cliSink struct {
 	out io.Writer
 }
@@ -121,6 +169,9 @@ func (s cliSink) Emit(e event.Event) {
 		}
 		body := truncate(e.ToolUseResult.Content, 600)
 		fmt.Fprintf(s.out, "%s %s\n", prefix, body)
+		if diff, ok := e.ToolUseResult.Metadata.(*fs.FileDiff); ok && diff != nil {
+			renderFileDiff(s.out, diff)
+		}
 	case event.KindError:
 		if e.Error != nil {
 			fmt.Fprintf(s.out, "\n[error:%s] %v\n", e.Error.Stage, e.Error.Err)
@@ -133,17 +184,71 @@ func (s cliSink) Emit(e event.Event) {
 		fmt.Fprintln(s.out, "\n[cancelled]")
 	case event.KindRunEnd:
 		// final text already printed via KindText
-	case event.KindTaskUpdate:
-		if e.TaskUpdate != nil {
-			fmt.Fprintf(s.out, "[task] %s [%s] %s\n", e.TaskUpdate.TaskID, e.TaskUpdate.Status, e.TaskUpdate.Subject)
+	case event.KindStoreUpdate:
+		if e.StoreUpdate != nil {
+			s.printStoreUpdate(e.StoreUpdate)
 		}
-	case event.KindSubagent:
-		if e.Subagent != nil {
-			fmt.Fprintf(s.out, "[subagent:%s] %s (%s)\n", e.Subagent.Phase, e.Subagent.SubagentID, e.Subagent.AgentType)
+	case event.KindUsage:
+		if e.Usage != nil {
+			fmt.Fprintf(s.out, "[tok] in=%d out=%d (cum in=%d out=%d)\n",
+				e.Usage.Turn.InputTokens, e.Usage.Turn.OutputTokens,
+				e.Usage.Cumulative.InputTokens, e.Usage.Cumulative.OutputTokens,
+			)
 		}
 	case event.KindTurnStart, event.KindTurnEnd:
 		// quiet — too chatty for the CLI; the structured log captures these
 	}
+}
+
+func (s cliSink) printStoreUpdate(p *event.StoreUpdatePayload) {
+	switch p.Domain {
+	case task.Domain:
+		if t, ok := p.Payload.(task.Summary); ok {
+			fmt.Fprintf(s.out, "[task:%s] %s [%s] %s\n", p.Op, p.ID, t.Status, t.Subject)
+		}
+	case meta.SpawnGroupDomain:
+		if sn, ok := p.Payload.(meta.SubagentSnapshot); ok {
+			fmt.Fprintf(s.out, "[subagent:%s] %s (%s) phase=%s\n", p.Op, sn.ID, sn.Type, sn.Phase)
+		}
+	default:
+		fmt.Fprintf(s.out, "[%s:%s] %s\n", p.Domain, p.Op, p.ID)
+	}
+}
+
+// ANSI escapes for the CLI sink's diff renderer. The TUI uses lipgloss
+// styles instead; this is the plain-text fallback for `-no-tui`.
+const (
+	ansiReset = "\x1b[0m"
+	ansiRed   = "\x1b[31m"
+	ansiGreen = "\x1b[32m"
+	ansiDim   = "\x1b[2m"
+)
+
+func renderFileDiff(out io.Writer, d *fs.FileDiff) {
+	fmt.Fprintf(out, "%sdiff %s a/%s b/%s%s\n", ansiDim, d.Op, d.Path, d.Path, ansiReset)
+	for _, h := range d.Hunks {
+		fmt.Fprintf(out, "%s@@ -%d,%d +%d,%d @@%s\n",
+			ansiDim, h.OldStart, h.OldCount, h.NewStart, h.NewCount, ansiReset)
+		for _, ln := range h.Lines {
+			oldCol := blankIfZero(ln.Old)
+			newCol := blankIfZero(ln.New)
+			switch ln.Kind {
+			case fs.LineAdd:
+				fmt.Fprintf(out, "%s%4s %4s + %s%s\n", ansiGreen, oldCol, newCol, ln.Text, ansiReset)
+			case fs.LineRemove:
+				fmt.Fprintf(out, "%s%4s %4s - %s%s\n", ansiRed, oldCol, newCol, ln.Text, ansiReset)
+			default:
+				fmt.Fprintf(out, "%s%4s %4s   %s%s\n", ansiDim, oldCol, newCol, ln.Text, ansiReset)
+			}
+		}
+	}
+}
+
+func blankIfZero(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
 }
 
 func compactJSON(raw []byte) string {
@@ -151,7 +256,6 @@ func compactJSON(raw []byte) string {
 		return "{}"
 	}
 	out := truncate(string(raw), 200)
-	// Squash runs of whitespace so multi-line tool inputs read as one line.
 	out = strings.Join(strings.Fields(out), " ")
 	return out
 }
@@ -207,6 +311,9 @@ func buildOptions(temp float64, maxTokens int) []llm.Option {
 	if maxTokens > 0 {
 		out = append(out, llm.WithMaxTokens(maxTokens))
 	}
+
+	out = append(out, llm.WithSystem("You are a helpful coding agent operating in a terminal. Use tools when they help."))
+
 	return out
 }
 

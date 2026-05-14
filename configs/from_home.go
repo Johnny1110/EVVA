@@ -10,6 +10,8 @@ import (
 func setupGlobalParam(cfg *AppConfig) {
 	_ = os.MkdirAll(cfg.EvvaHome, 0o755)
 	_ = os.MkdirAll(cfg.EvvaHomeSkillsDir, 0o755)
+
+	cfg.DisplayThinking = getEnvDefaultBool("DISPLAY_THINKING", "true")
 }
 
 func setupLLMProviderConfig(cfg *AppConfig) {

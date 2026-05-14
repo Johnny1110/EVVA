@@ -2,10 +2,11 @@ package event
 
 // Sink consumes events emitted by an agent's run loop.
 //
-// Concurrency: an agent calls Emit serially from a single goroutine
-// (the loop's goroutine). Sinks do NOT need internal locking to handle
-// events from one agent. Sinks shared across multiple agents (e.g. a
-// global logger) must handle concurrent Emit calls themselves.
+// Concurrency: an agent serializes calls into Sink.Emit internally — even
+// when tools dispatch in parallel, individual Emit calls are mutex-guarded
+// so events from one agent arrive one at a time. Sinks shared across
+// multiple agents (e.g. a global logger, or a parent sink reached through
+// BubbleUp) must still handle concurrent Emit calls themselves.
 //
 // Emit should be fast — slow sinks block the agent loop. Sinks needing
 // network or disk I/O should buffer internally (channel, ring buffer)

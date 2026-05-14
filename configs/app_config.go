@@ -44,6 +44,9 @@ type AppConfig struct {
 	// KindIterLimit event and pauses the agent; the caller may invoke
 	// Continue(ctx) to keep going.
 	DefaultMaxIterations int
+
+	// UI
+	DisplayThinking bool
 }
 
 var (

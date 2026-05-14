@@ -2,9 +2,10 @@ package agent
 
 import (
 	"fmt"
+
 	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/internal/observable"
 	"github.com/johnny1110/evva/internal/tools"
-	"github.com/johnny1110/evva/internal/tools/task"
 	"github.com/johnny1110/evva/internal/toolset"
 )
 
@@ -23,6 +24,8 @@ import (
 // Note: TOOL_SEARCH should NOT call this — it only fetches descriptors via
 // toolset.Describe. The build is triggered by the first actual invocation.
 func (a *Agent) ResolveTool(name tools.ToolName) (tools.Tool, error) {
+	a.resolveMu.Lock()
+	defer a.resolveMu.Unlock()
 	if t, ok := a.active[string(name)]; ok {
 		return t, nil
 	}
@@ -73,71 +76,24 @@ func (a *Agent) Describe(name tools.ToolName) (tools.Descriptor, error) {
 
 // Agent ToolState OnChange Event Binding ============================================
 
-func toolStateOnchangeEventBinding(a *Agent) {
-	// Wire task store mutations to the event stream. Done after options so
-	// the closure captures the final sink. TaskStore() lazy-allocates on
-	// first call; this also forces that allocation when tasks are in scope.
-	if a.hasAnyTaskTool() {
-		bindTaskOnChange(a)
-	}
-
-	if a.hasAgentTool() {
-		bindAgentPanelOnChange(a)
-	}
-
-	// TODO Other tool state onchange event add here...
-}
-
-func bindTaskOnChange(a *Agent) {
-	// mount event with toolState.TaskStore()
-	a.toolState.TaskStore().OnChange = func(id, status, subject string) {
-		a.emit(event.KindTaskUpdate, func(e *event.Event) {
-			e.TaskUpdate = &event.TaskUpdatePayload{
-				TaskID:  id,
-				Status:  status,
-				Subject: subject,
+// bindToolStateEvents wires the ToolState's unified change stream into the
+// agent's event sink. Every observable.Store registered on the ToolState
+// (today: task.Store, meta.SpawnGroup; tomorrow: whatever a developer
+// adds) flows through here as a single KindStoreUpdate event.
+//
+// Adding a new panel requires no changes to this function — the new store
+// auto-registers via its lazy accessor on ToolState and the subscription
+// below picks up its changes automatically.
+func bindToolStateEvents(a *Agent) {
+	a.toolState.Subscribe(func(c observable.Change) {
+		a.emit(event.KindStoreUpdate, func(e *event.Event) {
+			e.StoreUpdate = &event.StoreUpdatePayload{
+				Domain:  c.Domain,
+				Op:      c.Op,
+				ID:      c.ID,
+				Payload: c.Payload,
+				Time:    c.Time,
 			}
 		})
-	}
-}
-
-func bindAgentPanelOnChange(a *Agent) {
-	a.toolState.AgentGroupPanel().OnChange = func(id, agtype, psummary, rsummary string, phase int) {
-		a.emit(event.KindSubagent, func(e *event.Event) {
-			e.Subagent = &event.SubagentPayload{
-				SubagentID:    id,
-				AgentType:     agtype,
-				PromptSummary: psummary,
-				Phase:         event.SubagentPhase(phase),
-				ResultSummary: rsummary,
-			}
-		})
-	}
-}
-
-// hasAnyTaskTool reports whether the profile mentions any task tool —
-// either active or deferred. Used to decide whether wiring the task store's
-// OnChange hook is worth it. Agents with no task tools never need the
-// emit-bridge and skip the lazy TaskStore allocation entirely.
-func (a *Agent) hasAnyTaskTool() bool {
-	for _, n := range a.profile.ActiveTools {
-		if task.IsTaskToolName(n) {
-			return true
-		}
-	}
-	for n := range a.deferredAllowlist {
-		if task.IsTaskToolName(n) {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *Agent) hasAgentTool() bool {
-	for _, n := range a.profile.ActiveTools {
-		if n == tools.AGENT {
-			return true
-		}
-	}
-	return false
+	})
 }

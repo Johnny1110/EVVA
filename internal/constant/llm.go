@@ -19,7 +19,7 @@ type Model string
 
 const (
 	// OLLAMA
-	QWEN_3_6 Model = "qwen3:6"
+	QWEN_3_6 Model = "qwen3.6"
 
 	// ANTHROPIC
 	SONNET_4_6 Model = "claude-sonnet-4-6"

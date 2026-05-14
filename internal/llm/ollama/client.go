@@ -7,10 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/johnny1110/evva/internal/constant"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/johnny1110/evva/internal/constant"
 
 	config "github.com/johnny1110/evva/configs"
 	"github.com/johnny1110/evva/internal/llm"
@@ -60,10 +61,12 @@ func (c *Client) SetModel(m string) { c.model = m }
 type apiMessage struct {
 	Role      string        `json:"role"`
 	Content   string        `json:"content"`
+	Thinking  string        `json:"thinking,omitempty"`
 	ToolCalls []apiToolCall `json:"tool_calls,omitempty"`
 }
 
 type apiToolCall struct {
+	ID       string `json:"id,omitempty"`
 	Function struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -92,23 +95,30 @@ type apiRequest struct {
 	Messages []apiMessage `json:"messages"`
 	Tools    []apiTool    `json:"tools,omitempty"`
 	Stream   bool         `json:"stream"`
+	Think    bool         `json:"think"`
 	Options  *apiOptions  `json:"options,omitempty"`
 }
 
 type apiResponse struct {
-	Message apiMessage `json:"message"`
-	Done    bool       `json:"done"`
-	Error   string     `json:"error,omitempty"`
+	Message         apiMessage `json:"message"`
+	Done            bool       `json:"done"`
+	DoneReason      string     `json:"done_reason,omitempty"`
+	PromptEvalCount int        `json:"prompt_eval_count,omitempty"`
+	EvalCount       int        `json:"eval_count,omitempty"`
+	Error           string     `json:"error,omitempty"`
 }
 
 // --- Client interface -----------------------------------------------------
 
+// Note on llm.LLMParams.Effort: Ollama exposes no provider-level reasoning
+// knob; reasoning behavior is a property of the model. Effort is ignored.
 func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet []tools.Tool) (llm.Response, error) {
 	body := apiRequest{
 		Model:    c.model,
 		Messages: toAPIMessages(messages, c.params.System),
 		Tools:    toAPITools(toolSet),
 		Stream:   false,
+		Think:    true,
 		Options:  buildOptions(c.params),
 	}
 
@@ -145,13 +155,22 @@ func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet [
 		return llm.Response{}, fmt.Errorf("ollama: %s", parsed.Error)
 	}
 
-	out := llm.Response{Content: parsed.Message.Content}
-	if len(parsed.Message.ToolCalls) > 0 {
-		tc := parsed.Message.ToolCalls[0] // TODO: Why only 1 tool call ?
-		out.ToolCall = &tools.Call{Name: tc.Function.Name, Input: tc.Function.Arguments}
-		// Ollama doesn't issue tool-call ids; synthesize one so the agent can pair
-		// the eventual tool reply with this request when echoing back.
-		out.ToolID = newToolID()
+	out := llm.Response{
+		Content:  parsed.Message.Content,
+		Thinking: parsed.Message.Thinking,
+		Usage: llm.Usage{
+			InputTokens:  parsed.PromptEvalCount,
+			OutputTokens: parsed.EvalCount,
+		},
+	}
+	for _, tc := range parsed.Message.ToolCalls {
+		// Ollama doesn't issue tool-call ids; synthesize one so the agent can
+		// pair the eventual tool reply with this request when echoing back.
+		out.ToolCalls = append(out.ToolCalls, &tools.Call{
+			ID:    newToolID(),
+			Name:  tc.Function.Name,
+			Input: tc.Function.Arguments,
+		})
 	}
 	return out, nil
 }
@@ -171,15 +190,19 @@ func toAPIMessages(msgs []llm.Message, system string) []apiMessage {
 			out = append(out, apiMessage{Role: "user", Content: m.Content})
 		case llm.RoleAssistant:
 			am := apiMessage{Role: "assistant", Content: m.Content}
-			if m.ToolCall != nil {
+			for _, c := range m.ToolCalls {
 				var tc apiToolCall
-				tc.Function.Name = m.ToolCall.Name
-				tc.Function.Arguments = m.ToolCall.Input
-				am.ToolCalls = []apiToolCall{tc}
+				tc.ID = c.ID
+				tc.Function.Name = c.Name
+				tc.Function.Arguments = c.Input
+				am.ToolCalls = append(am.ToolCalls, tc)
 			}
 			out = append(out, am)
 		case llm.RoleTool:
-			out = append(out, apiMessage{Role: "tool", Content: m.Content})
+			// Ollama follows the OpenAI shape: one tool-role message per result.
+			for _, tr := range m.ToolResults {
+				out = append(out, apiMessage{Role: "tool", Content: tr.Content})
+			}
 		}
 	}
 	return out

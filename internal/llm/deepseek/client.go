@@ -102,6 +102,16 @@ type apiResponse struct {
 		Message      apiMessage `json:"message"`
 		FinishReason string     `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens            int `json:"prompt_tokens"`
+		CompletionTokens        int `json:"completion_tokens"`
+		TotalTokens             int `json:"total_tokens"`
+		PromptCacheHitTokens    int `json:"prompt_cache_hit_tokens"`
+		PromptCacheMissTokens   int `json:"prompt_cache_miss_tokens"`
+		CompletionTokensDetails *struct {
+			ReasoningTokens int `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details,omitempty"`
+	} `json:"usage,omitempty"`
 	Error *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -110,6 +120,9 @@ type apiResponse struct {
 
 // --- Client interface -----------------------------------------------------
 
+// Note on llm.LLMParams.Effort: DeepSeek selects reasoning by model name
+// (deepseek-reasoner vs deepseek-chat), not via a per-request knob, so
+// the Effort field is intentionally ignored here. Caller picks the model.
 func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet []tools.Tool) (llm.Response, error) {
 	if c.apiKey == "" {
 		return llm.Response{}, fmt.Errorf("deepseek: missing API key")
@@ -167,13 +180,22 @@ func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet [
 		Content:  msg.Content,
 		Thinking: msg.ReasoningContent,
 	}
-	if len(msg.ToolCalls) > 0 {
-		call := msg.ToolCalls[0] // TODO: Why only 1 tool call ?
-		out.ToolCall = &tools.Call{
+	for _, call := range msg.ToolCalls {
+		out.ToolCalls = append(out.ToolCalls, &tools.Call{
+			ID:    call.ID,
 			Name:  call.Function.Name,
 			Input: json.RawMessage(call.Function.Arguments),
+		})
+	}
+	if parsed.Usage != nil {
+		out.Usage = llm.Usage{
+			InputTokens:     parsed.Usage.PromptTokens,
+			OutputTokens:    parsed.Usage.CompletionTokens,
+			CacheReadTokens: parsed.Usage.PromptCacheHitTokens,
 		}
-		out.ToolID = call.ID
+		if d := parsed.Usage.CompletionTokensDetails; d != nil {
+			out.Usage.ReasoningTokens = d.ReasoningTokens
+		}
 	}
 	return out, nil
 }
@@ -193,19 +215,22 @@ func toAPIMessages(msgs []llm.Message, system string) []apiMessage {
 			out = append(out, apiMessage{Role: "user", Content: m.Content})
 		case llm.RoleAssistant:
 			am := apiMessage{Role: "assistant", Content: m.Content, ReasoningContent: m.Thinking}
-			if m.ToolCall != nil {
-				tc := apiToolCall{ID: m.ToolID, Type: "function"}
-				tc.Function.Name = m.ToolCall.Name
-				tc.Function.Arguments = string(m.ToolCall.Input)
-				am.ToolCalls = []apiToolCall{tc}
+			for _, c := range m.ToolCalls {
+				tc := apiToolCall{ID: c.ID, Type: "function"}
+				tc.Function.Name = c.Name
+				tc.Function.Arguments = string(c.Input)
+				am.ToolCalls = append(am.ToolCalls, tc)
 			}
 			out = append(out, am)
 		case llm.RoleTool:
-			out = append(out, apiMessage{
-				Role:       "tool",
-				Content:    m.Content,
-				ToolCallID: m.ToolID,
-			})
+			// OpenAI-style: one tool-role message per tool_call_id.
+			for _, tr := range m.ToolResults {
+				out = append(out, apiMessage{
+					Role:       "tool",
+					Content:    tr.Content,
+					ToolCallID: tr.ID,
+				})
+			}
 		}
 	}
 	return out

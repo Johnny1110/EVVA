@@ -651,7 +651,10 @@ func (t *transcript) attachToolResult(r *event.ToolUseResultPayload) bool {
 	}
 	hasDiff := false
 	if diff, ok := r.Metadata.(*fs.FileDiff); ok && diff != nil {
-		resultBody += "\n" + renderFileDiff(diff)
+		// Reserve 3 cols for the tool block's gutter (`├─ ` / `│  `)
+		// so the colored fill terminates flush against the gutter
+		// instead of bleeding past it.
+		resultBody += "\n" + renderFileDiff(diff, t.width-3)
 		hasDiff = true
 	}
 

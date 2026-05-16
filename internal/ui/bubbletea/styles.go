@@ -35,6 +35,14 @@ const (
 	paletteRed       lipgloss.Color = "#FF003C" // glitch red — ERRORS ONLY (tool err / diff remove / crushed / interrupted)
 	paletteLightBlue lipgloss.Color = "#7DF9FF" // cyan glow — thinking spinner
 
+	// Diff line backgrounds — 淡綠 / 淡紅: desaturated mid-pastel
+	// green / red. Visible enough to read as colored bars across the
+	// transcript without being so bright that they fight the rest of
+	// the chrome. Foreground keeps the bright neon green / red so the
+	// text still pops.
+	paletteAddBg    lipgloss.Color = "#5A8B6B" // 淡綠 — soft pale green
+	paletteRemoveBg lipgloss.Color = "#8B5A65" // 淡紅 — soft pale red
+
 	// Hot pink kept on the palette but used only when an accent must
 	// genuinely pop (greeting flourish, paste chip optional). NOT on
 	// chrome surfaces.
@@ -114,10 +122,14 @@ var styles = struct {
 	// text.
 	ToolResult: lipgloss.NewStyle().Foreground(paletteSky),
 
-	// Diff — red for removed, green for added. The two cases where
-	// red genuinely communicates something the user wants to see.
-	DiffAdd:     lipgloss.NewStyle().Foreground(paletteGreen).Bold(true),
-	DiffRemove:  lipgloss.NewStyle().Foreground(paletteRed).Bold(true),
+	// Diff — soft pale green / red bg with bright neon foreground.
+	// The hue match between fg and bg makes each row read as a
+	// "colored block with neon outline" — recognizable as add/remove
+	// without darkening the row into the rest of the chrome. Fill
+	// spans the full transcript width via per-row Width() at render
+	// time (see renderFileDiff).
+	DiffAdd:    lipgloss.NewStyle().Foreground(paletteGreen).Background(paletteAddBg).Bold(true),
+	DiffRemove: lipgloss.NewStyle().Foreground(paletteRed).Background(paletteRemoveBg).Bold(true),
 	DiffContext: lipgloss.NewStyle().Foreground(paletteMuted),
 	DiffHeader:  lipgloss.NewStyle().Foreground(palettePurple).Italic(true),
 

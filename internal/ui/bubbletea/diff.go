@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/johnny1110/evva/internal/tools/fs"
 )
 
@@ -12,7 +14,12 @@ import (
 // style: two columns of line numbers (old | new) and colored +/-/context
 // rows. Used by the transcript renderer when a tool result carries an
 // *fs.FileDiff in its Metadata.
-func renderFileDiff(d *fs.FileDiff) string {
+//
+// width is the column count to fill — each `+` and `-` row is padded
+// out to width so its background tint reads as a solid block stretching
+// across the transcript column. Zero or negative width disables the
+// fill (lines render at their natural length); useful for tests.
+func renderFileDiff(d *fs.FileDiff, width int) string {
 	if d == nil {
 		return ""
 	}
@@ -26,20 +33,47 @@ func renderFileDiff(d *fs.FileDiff) string {
 		for _, ln := range h.Lines {
 			oldCol := blankIfZero(ln.Old)
 			newCol := blankIfZero(ln.New)
+			text := fmt.Sprintf("%4s %4s %s %s", oldCol, newCol, signFor(ln.Kind), ln.Text)
 			var row string
 			switch ln.Kind {
 			case fs.LineAdd:
-				row = styles.DiffAdd.Render(fmt.Sprintf("%4s %4s + %s", oldCol, newCol, ln.Text))
+				row = fillStyle(styles.DiffAdd, text, width)
 			case fs.LineRemove:
-				row = styles.DiffRemove.Render(fmt.Sprintf("%4s %4s - %s", oldCol, newCol, ln.Text))
+				row = fillStyle(styles.DiffRemove, text, width)
 			default:
-				row = styles.DiffContext.Render(fmt.Sprintf("%4s %4s   %s", oldCol, newCol, ln.Text))
+				// Context rows stay un-filled — only the change rows
+				// get the colored block treatment so the eye lands
+				// on additions and removals first.
+				row = styles.DiffContext.Render(text)
 			}
 			b.WriteString(row)
 			b.WriteByte('\n')
 		}
 	}
 	return b.String()
+}
+
+// fillStyle renders s through style, padding the output to width so
+// the style's Background extends across the whole row. width<=0 falls
+// back to natural rendering (no fill) so the function is safe in test
+// contexts that don't know the terminal column count.
+func fillStyle(style lipgloss.Style, s string, width int) string {
+	if width <= 0 {
+		return style.Render(s)
+	}
+	return style.Width(width).Render(s)
+}
+
+// signFor returns the unified-diff sign character for the line kind.
+func signFor(kind string) string {
+	switch kind {
+	case fs.LineAdd:
+		return "+"
+	case fs.LineRemove:
+		return "-"
+	default:
+		return " "
+	}
 }
 
 func blankIfZero(n int) string {

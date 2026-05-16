@@ -1,6 +1,10 @@
 package fs
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/pmezard/go-difflib/difflib"
+)
 
 // Op enumerates the kinds of file mutation a FileDiff describes. Kept as
 // strings so the wire/UI side can render without importing this package.
@@ -110,6 +114,83 @@ func buildEditHunk(oldLines, newLines []string, oldLineNum, newLineNum, changedO
 	}
 
 	return h
+}
+
+// buildOverwriteDiff renders a unified-style diff between the pre- and
+// post-overwrite content. Uses difflib's SequenceMatcher to compute
+// minimal opcode ranges (replace / delete / insert / equal) and groups
+// them into hunks with ContextLines lines of leading/trailing context,
+// matching the convention of `diff -u`.
+//
+// Output mirrors what edit_file produces, so renderFileDiff can render
+// overwrite payloads the same way as edit payloads — colored +/-, line
+// numbers on both sides, hunk headers.
+func buildOverwriteDiff(path, before, after string) *FileDiff {
+	oldLines := splitLinesPreservingEnd(before)
+	newLines := splitLinesPreservingEnd(after)
+
+	matcher := difflib.NewMatcher(oldLines, newLines)
+	groups := matcher.GetGroupedOpCodes(ContextLines)
+
+	hunks := make([]DiffHunk, 0, len(groups))
+	for _, group := range groups {
+		if len(group) == 0 {
+			continue
+		}
+
+		// Hunk header spans the first opcode's start to the last
+		// opcode's end on each side. Indices from difflib are 0-based
+		// and end-exclusive; FileDiff line numbers are 1-based.
+		first, last := group[0], group[len(group)-1]
+		h := DiffHunk{
+			OldStart: first.I1 + 1,
+			OldCount: last.I2 - first.I1,
+			NewStart: first.J1 + 1,
+			NewCount: last.J2 - first.J1,
+		}
+		// difflib uses an "empty" convention where Start counts at 0
+		// when the count is 0 (matches `diff -u`). Preserve that so
+		// the rendered "@@ -0,0 +1,N @@" header for pure inserts /
+		// "@@ -1,N +0,0 @@" for pure deletes reads correctly.
+		if h.OldCount == 0 {
+			h.OldStart = 0
+		}
+		if h.NewCount == 0 {
+			h.NewStart = 0
+		}
+
+		for _, c := range group {
+			switch c.Tag {
+			case 'e': // equal
+				for k := c.I1; k < c.I2; k++ {
+					h.Lines = append(h.Lines, DiffLine{
+						Kind: LineContext,
+						Old:  k + 1,
+						New:  c.J1 + (k - c.I1) + 1,
+						Text: oldLines[k],
+					})
+				}
+			case 'r': // replace — emit removes then adds
+				for k := c.I1; k < c.I2; k++ {
+					h.Lines = append(h.Lines, DiffLine{Kind: LineRemove, Old: k + 1, Text: oldLines[k]})
+				}
+				for k := c.J1; k < c.J2; k++ {
+					h.Lines = append(h.Lines, DiffLine{Kind: LineAdd, New: k + 1, Text: newLines[k]})
+				}
+			case 'd': // delete (old-only)
+				for k := c.I1; k < c.I2; k++ {
+					h.Lines = append(h.Lines, DiffLine{Kind: LineRemove, Old: k + 1, Text: oldLines[k]})
+				}
+			case 'i': // insert (new-only)
+				for k := c.J1; k < c.J2; k++ {
+					h.Lines = append(h.Lines, DiffLine{Kind: LineAdd, New: k + 1, Text: newLines[k]})
+				}
+			}
+		}
+		hunks = append(hunks, h)
+	}
+
+	return &FileDiff{Path: path, Op: OpOverwrite, Hunks: hunks}
 }
 
 // buildCreateDiff renders the diff for a brand-new file: every line is an

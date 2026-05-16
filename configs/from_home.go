@@ -6,40 +6,40 @@ import (
 	"github.com/johnny1110/evva/internal/constant"
 )
 
-// setupGlobalParam ensures the global config directories exist.
+// setupGlobalParam ensures the global config directories exist. All
+// user-tunable values are now sourced from evva-config.yml in load();
+// this function only handles directory provisioning.
 func setupGlobalParam(cfg *AppConfig) {
 	_ = os.MkdirAll(cfg.EvvaHome, 0o755)
 	_ = os.MkdirAll(cfg.EvvaHomeSkillsDir, 0o755)
-
-	cfg.DisplayThinking = getEnvDefaultBool("DISPLAY_THINKING", "true")
-
-	if key := getEnvNullable("TAVILY_API_KEY"); key != nil {
-		cfg.TavilyAPIKey = *key
-	}
-	cfg.FetchMaxBytes = getEnvDefaultInt("FETCH_MAX_BYTES", "100000")
 }
 
-func setupLLMProviderConfig(cfg *AppConfig) {
+// setupLLMProviderConfig wires per-provider credentials from the YAML
+// file config. Providers with an empty api_url fall back to the
+// constant's built-in default. Anthropic/DeepSeek/OpenAI need an api_key
+// to be listed; Ollama is local and key-less.
+func setupLLMProviderConfig(cfg *AppConfig, fc FileConfig) {
 	cfg.LLMProviderConfig = map[string]LLMProviderAPIConfig{}
 
-	// Ollama is local — no API key required.
-	ollamaURL := getEnvDefault("OLLAMA_API_URL", constant.OLLAMA.ApiUrl)
-	cfg.LLMProviderConfig[constant.OLLAMA.Name] = LLMProviderAPIConfig{ApiURL: ollamaURL, Models: constant.OLLAMA.Models}
-
-	if key := getEnvNullable("ANTHROPIC_API_KEY"); key != nil {
-		url := getEnvDefault("ANTHROPIC_API_URL", constant.ANTHROPIC.ApiUrl)
-		cfg.LLMProviderConfig[constant.ANTHROPIC.Name] = LLMProviderAPIConfig{ApiURL: url, ApiSecret: *key, Models: constant.ANTHROPIC.Models}
+	register := func(provider constant.LLMProvider, fileEntry FileProviderConfig, requireKey bool) {
+		//if requireKey && fileEntry.APIKey == "" {
+		//	return
+		//}
+		url := fileEntry.APIURL
+		if url == "" {
+			url = provider.ApiUrl
+		}
+		cfg.LLMProviderConfig[provider.Name] = LLMProviderAPIConfig{
+			ApiURL:    url,
+			ApiSecret: fileEntry.APIKey,
+			Models:    provider.Models,
+		}
 	}
 
-	if key := getEnvNullable("DEEPSEEK_API_KEY"); key != nil {
-		url := getEnvDefault("DEEPSEEK_API_URL", constant.DEEPSEEK.ApiUrl)
-		cfg.LLMProviderConfig[constant.DEEPSEEK.Name] = LLMProviderAPIConfig{ApiURL: url, ApiSecret: *key, Models: constant.DEEPSEEK.Models}
-	}
-
-	if key := getEnvNullable("OPENAI_API_KEY"); key != nil {
-		url := getEnvDefault("OPENAI_API_URL", constant.OPENAI.ApiUrl)
-		cfg.LLMProviderConfig[constant.OPENAI.Name] = LLMProviderAPIConfig{ApiURL: url, ApiSecret: *key, Models: constant.OPENAI.Models}
-	}
+	register(constant.OLLAMA, fc.Providers[constant.OLLAMA.Name], false)
+	register(constant.ANTHROPIC, fc.Providers[constant.ANTHROPIC.Name], true)
+	register(constant.DEEPSEEK, fc.Providers[constant.DEEPSEEK.Name], true)
+	register(constant.OPENAI, fc.Providers[constant.OPENAI.Name], true)
 }
 
 type LLMProviderAPIConfig struct {

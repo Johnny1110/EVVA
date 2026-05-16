@@ -65,7 +65,10 @@ type Agent struct {
 
 	sink event.Sink // event to ui
 
-	maxIters int //agent loop max iters
+	// maxIters is the agent loop's safety cap. Atomic so the TUI's
+	// /config form can mutate it from another goroutine while the loop
+	// reads it at iteration boundaries.
+	maxIters atomic.Int64
 
 	asyncMode bool
 
@@ -134,8 +137,8 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 		active:            active,
 		deferredAllowlist: deferred,
 		exposeTools:       exposeTools,
-		maxIters:          cfg.DefaultMaxIterations,
 	}
+	a.maxIters.Store(int64(cfg.DefaultMaxIterations))
 
 	// adapt options params (e.g. name, sink, maxIters..)
 	for _, opt := range opts {
@@ -170,13 +173,61 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 		"provider", llmClient.Name(),
 		"model", llmClient.Model(),
 		"expose_tools", len(exposeTools),
-		"max_iters", a.maxIters,
+		"max_iters", a.maxIters.Load(),
 	)
 	return a, nil
 }
 
 func (a *Agent) AgentID() string {
 	return a.ID
+}
+
+// MaxIterations returns the current loop cap. Safe to call from any
+// goroutine — backed by an atomic load.
+func (a *Agent) MaxIterations() int {
+	return int(a.maxIters.Load())
+}
+
+// SetMaxIterations updates the loop cap. Takes effect at the next
+// iteration boundary (loop.go:74 reads a.maxIters via atomic.Load).
+// Values <= 0 are clamped to 1.
+func (a *Agent) SetMaxIterations(n int) {
+	if n <= 0 {
+		n = 1
+	}
+	a.maxIters.Store(int64(n))
+}
+
+// SwitchLLM rebuilds a.llm with a new (provider, model) pair, updates
+// a.profile so subagents inherit the new provider, and clears the
+// session — provider-specific in-flight state (Anthropic
+// ThinkingSignature, DeepSeek reasoning_content) is provider-locked, so
+// keeping history across a swap would 400 on the next request.
+//
+// MUST be called while no Run is in flight. Returns ErrRunInProgress
+// when the running guard is set, so the caller can refuse the swap
+// instead of racing a.llm reads on the agent loop's goroutine.
+func (a *Agent) SwitchLLM(provider constant.LLMProvider, model constant.Model) error {
+	if a.IsSubagent() {
+		return fmt.Errorf("agent: only the root agent can switch LLM")
+	}
+	if a.running.Load() {
+		return ErrRunInProgress
+	}
+
+	newProfile := a.profile
+	newProfile.LLMProvider = provider
+	newProfile.LLMModel = model
+	client, err := llmfactory.Of(provider, model, newProfile.LLMOptions)
+	if err != nil {
+		return fmt.Errorf("agent: build llm client: %w", err)
+	}
+
+	a.profile = newProfile
+	a.llm = client
+	a.session = session.New()
+	a.logger.Info("agent: llm switched", "provider", provider.Name, "model", string(model))
+	return nil
 }
 
 func (a *Agent) ParentID() string {

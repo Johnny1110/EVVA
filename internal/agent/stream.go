@@ -20,10 +20,9 @@ type chunkAdapter struct {
 }
 
 func (a *Agent) newChunkAdapter() *chunkAdapter {
-	cfg := config.Get()
 	return &chunkAdapter{
 		agent:        a,
-		emitThinking: cfg.DisplayThinking,
+		emitThinking: config.Get().GetDisplayThinking(),
 	}
 }
 

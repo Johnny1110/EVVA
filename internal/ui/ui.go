@@ -21,6 +21,7 @@ import (
 	"log/slog"
 
 	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/internal/constant"
 	"github.com/johnny1110/evva/internal/session"
 	"github.com/johnny1110/evva/internal/toolset"
 )
@@ -85,4 +86,16 @@ type Controller interface {
 	// surface it in headers / banners. Cheap accessor; safe to call
 	// every render.
 	AgentID() string
+
+	// MaxIterations / SetMaxIterations exposes the loop cap so the
+	// /config form can mutate it mid-session. Reads are cheap (atomic
+	// load); writes take effect at the next iteration boundary.
+	MaxIterations() int
+	SetMaxIterations(int)
+
+	// SwitchLLM rebuilds the agent's llm.Client with a new
+	// (provider, model) pair and clears the conversation history.
+	// Caller (the TUI's /model form) must ensure no Run is in flight
+	// before calling — see Agent.SwitchLLM for the running guard.
+	SwitchLLM(provider constant.LLMProvider, model constant.Model) error
 }

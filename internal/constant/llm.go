@@ -47,6 +47,17 @@ func GetProvider(name string) (LLMProvider, bool) {
 	return LLMProvider{}, false
 }
 
+// GetModel resolves a string to its typed Model constant. Mirrors
+// GetProvider; the canonical model registry is MODEL_CONTEXT_SIZE.
+func GetModel(name string) (Model, bool) {
+	for m := range MODEL_CONTEXT_SIZE {
+		if string(m) == name {
+			return m, true
+		}
+	}
+	return Model(""), false
+}
+
 // ModelForLevel returns the model to use at a given capability tier:
 //
 //   - level 1 (default) → the smallest / cheapest model the provider lists

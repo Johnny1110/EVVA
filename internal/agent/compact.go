@@ -74,7 +74,7 @@ func (a *Agent) compact(ctx context.Context, s *session.Session) {
 	// just had to process, which is what the threshold cares about.
 	currentUsage := a.Session().LastTurnInputTokens()
 	usageRatio := float64(currentUsage) / float64(maxContextSize)
-	if usageRatio < cfg.AutoCompactThreshold {
+	if usageRatio < cfg.GetAutoCompactThreshold() {
 		return // safe.
 	}
 

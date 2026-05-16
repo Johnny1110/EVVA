@@ -261,6 +261,24 @@ type rootModel struct {
 	// Resets only on process exit by design — there is no "turn it back
 	// off" UI; if the user wants the gate back, they restart evva.
 	autoApproveSession bool
+
+	// pendingConfig is non-nil while the /config form is on screen.
+	// Same shape as pendingApproval: input is locked to the form's key
+	// handler until the user presses Esc.
+	pendingConfig *pendingConfig
+
+	// pendingModel is non-nil while the /model picker is on screen.
+	pendingModel *pendingModel
+
+	// slashSel is the highlighted row in the slash-command suggestion
+	// panel. Reset to 0 whenever the match list changes; clamped each
+	// render so a shrinking list never indexes off the end.
+	slashSel int
+	// slashDismissed suppresses the suggestion panel until the user
+	// clears the input back below "/", giving Esc a way to hide the
+	// panel for prompts that legitimately start with "/" (e.g. pasting
+	// a Unix path).
+	slashDismissed bool
 }
 
 // approvalAction enumerates the choices in the approval menu. Listed
@@ -364,10 +382,17 @@ func (m *rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		// Bracketed paste arrives as one KeyMsg with Paste=true and
-		// every pasted rune in Runes. Intercept before the regular
-		// key handler so we can show a compact placeholder for
-		// multi-line / large pastes.
+		// every pasted rune in Runes. Pastes need to land in whichever
+		// field has focus — when an overlay editor is open (e.g.
+		// /config secret entry, approval feedback), route there so the
+		// paste doesn't leak into the textarea hidden behind the panel.
 		if msg.Paste {
+			if m.pendingConfig != nil && m.pendingConfig.editor != nil {
+				return m.handleConfigKey(msg)
+			}
+			if m.pendingApproval != nil && m.pendingApproval.feedback != nil {
+				return m.handleApprovalKey(msg)
+			}
 			return m.handlePaste(string(msg.Runes))
 		}
 		return m.handleKey(msg)
@@ -463,10 +488,13 @@ func (m *rootModel) layoutSizes() {
 	taskHeight := lineCount(m.taskPanel(bodyWidth))
 	stripHeight := lineCount(m.agentStrip(bodyWidth))
 	approvalHeight := lineCount(m.approvalPanel(bodyWidth))
+	configHeight := lineCount(m.configPanel(bodyWidth))
+	modelHeight := lineCount(m.modelPanel(bodyWidth))
+	slashHeight := lineCount(m.slashPanel(bodyWidth))
 	inputHeight := m.input.Height() + 2 // +2 for border
 	statusHeight := 1                   // bottom status bar (state · model · tokens · ctx)
 
-	vpHeight := m.height - taskHeight - stripHeight - approvalHeight - inputHeight - statusHeight
+	vpHeight := m.height - taskHeight - stripHeight - approvalHeight - configHeight - modelHeight - slashHeight - inputHeight - statusHeight
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
@@ -506,6 +534,38 @@ func (m *rootModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// escape hatch for a frozen UI.
 	if m.pendingApproval != nil {
 		return m.handleApprovalKey(msg)
+	}
+	// Same isolation rule for the /config form.
+	if m.pendingConfig != nil {
+		return m.handleConfigKey(msg)
+	}
+	// Same isolation rule for the /model picker.
+	if m.pendingModel != nil {
+		return m.handleModelKey(msg)
+	}
+
+	// Slash-command suggestions intercept nav keys *before* the regular
+	// dispatch — when the panel is up, Tab completes, Up/Down navigate
+	// the suggestion list (not history), and Esc dismisses for this
+	// typing session. Other keys fall through to the normal handlers.
+	if m.slashVisible() {
+		switch msg.Type {
+		case tea.KeyTab:
+			cmd := m.completeSlash()
+			return m, cmd
+		case tea.KeyUp:
+			if m.slashMoveSel(-1) {
+				return m, nil
+			}
+		case tea.KeyDown:
+			if m.slashMoveSel(1) {
+				return m, nil
+			}
+		case tea.KeyEsc:
+			m.slashDismissed = true
+			m.layoutSizes()
+			return m, nil
+		}
 	}
 
 	switch msg.Type {
@@ -582,20 +642,43 @@ func (m *rootModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	// If the user typed past the leading "/", or cleared the input,
+	// re-arm the suggestion panel — a previous Esc-dismiss should not
+	// stick across a fresh typing session.
+	if !strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/") {
+		m.slashDismissed = false
+		m.slashSel = 0
+	}
 	return m, cmd
 }
 
 func (m *rootModel) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input.Value())
 
+	// Slash-suggestion state is per-typing-session — reset on submit so
+	// the next input starts fresh regardless of whether this submit was
+	// a slash command, a prompt, or an empty no-op.
+	m.slashDismissed = false
+	m.slashSel = 0
+
 	// Slash commands intercepted before the prompt reaches the agent.
 	switch text {
 	case "/exit", "/quit", "exit":
 		return m, tea.Quit
 	case "/clear":
-		m.transcript = transcript{textInflightIdx: -1, thinkingInflightIdx: -1}
+		m.transcript.reset()
 		m.input.SetValue("")
 		m.refreshViewport()
+		return m, nil
+	case "/config":
+		m.openConfig()
+		m.input.SetValue("")
+		m.layoutSizes()
+		return m, nil
+	case "/model":
+		m.openModelPicker()
+		m.input.SetValue("")
+		m.layoutSizes()
 		return m, nil
 	}
 
@@ -1058,6 +1141,15 @@ func (m *rootModel) View() string {
 	}
 	if ap := m.approvalPanel(width); ap != "" {
 		sections = append(sections, ap)
+	}
+	if cp := m.configPanel(width); cp != "" {
+		sections = append(sections, cp)
+	}
+	if mp := m.modelPanel(width); mp != "" {
+		sections = append(sections, mp)
+	}
+	if sp := m.slashPanel(width); sp != "" {
+		sections = append(sections, sp)
 	}
 	sections = append(sections, styles.InputBorder.Render(m.input.View()))
 

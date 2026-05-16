@@ -1,9 +1,7 @@
 package config
 
 import (
-	"fmt"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -17,33 +15,6 @@ func getEnvDefault(key, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(val)
-}
-
-func getEnvDefaultInt(key, fallback string) int {
-	val := getEnvDefault(key, fallback)
-	num, err := strconv.Atoi(val)
-	if err != nil {
-		panic(fmt.Errorf("cannot parse %s as int: %v", key, err))
-	}
-	return num
-}
-
-func getEnvDefaultFloat(key, fallback string) float64 {
-	val := getEnvDefault(key, fallback)
-	num, err := strconv.ParseFloat(val, 64)
-	if err != nil {
-		panic(fmt.Errorf("cannot parse %s as float: %v", key, err))
-	}
-	return num
-}
-
-func getEnvDefaultBool(key, fallback string) bool {
-	val := getEnvDefault(key, fallback)
-	b, err := strconv.ParseBool(val)
-	if err != nil {
-		panic(fmt.Errorf("cannot parse %s as bool: %v", key, err))
-	}
-	return b
 }
 
 func getEnvDefaultLowerCase(key, fallback string) string {

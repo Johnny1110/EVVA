@@ -211,7 +211,7 @@ func (a *Agent) text(usage llm.Usage, thinking string, content string) {
 		return
 	}
 
-	if cfg.DisplayThinking && thinking != "" {
+	if cfg.GetDisplayThinking() && thinking != "" {
 		a.emit(event.KindThinking, func(e *event.Event) {
 			e.Thinking = &event.TextPayload{Text: thinking}
 		})
@@ -245,7 +245,7 @@ func (a *Agent) limitBreak() error {
 	}
 
 	a.emit(event.KindIterLimit, func(e *event.Event) {
-		e.IterLimit = &event.IterLimitPayload{Reached: a.maxIters}
+		e.IterLimit = &event.IterLimitPayload{Reached: int(a.maxIters.Load())}
 	})
 
 	return ErrIterLimit

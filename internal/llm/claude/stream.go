@@ -27,10 +27,10 @@ import (
 //     at some index. For tool_use it carries id + name; the input is empty
 //     and gets streamed via input_json_delta.
 //   - content_block_delta carries the actual incremental data:
-//       text_delta        → assistant text fragment
-//       thinking_delta    → reasoning fragment
-//       signature_delta   → opaque crypto signature byte (not user-facing)
-//       input_json_delta  → tool input JSON fragment
+//     text_delta        → assistant text fragment
+//     thinking_delta    → reasoning fragment
+//     signature_delta   → opaque crypto signature byte (not user-facing)
+//     input_json_delta  → tool input JSON fragment
 //   - content_block_stop closes the block.
 //   - message_delta updates the final usage.output_tokens.
 //   - message_stop is the terminator.
@@ -42,7 +42,7 @@ import (
 // llm.Message.ThinkingSignature), so we only accumulate it.
 func (c *Client) Stream(ctx context.Context, messages []llm.Message, toolSet []tools.Tool, sink llm.ChunkSink) (llm.Response, error) {
 	if c.apiKey == "" {
-		return llm.Response{}, fmt.Errorf("claude: missing API key")
+		return llm.Response{}, fmt.Errorf("claude: missing API key (type in /config to setup)")
 	}
 	if sink == nil {
 		sink = llm.DiscardChunks

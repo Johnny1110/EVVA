@@ -47,11 +47,11 @@ func WithMaxIterations(n int) Option {
 	return func(a *Agent) {
 		switch {
 		case n == 0:
-			a.maxIters = cfg.DefaultMaxIterations
+			a.maxIters.Store(int64(cfg.DefaultMaxIterations))
 		case n < 0:
-			a.maxIters = 1
+			a.maxIters.Store(1)
 		default:
-			a.maxIters = n
+			a.maxIters.Store(int64(n))
 		}
 	}
 }

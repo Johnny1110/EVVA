@@ -98,15 +98,15 @@ type apiTool struct {
 }
 
 type apiRequest struct {
-	Model         string              `json:"model"`
-	Messages      []apiMessage        `json:"messages"`
-	Temperature   *float64            `json:"temperature,omitempty"`
-	TopP          *float64            `json:"top_p,omitempty"`
-	MaxTokens     int                 `json:"max_tokens,omitempty"`
-	Stop          []string            `json:"stop,omitempty"`
-	Tools         []apiTool           `json:"tools,omitempty"`
-	Stream        bool                `json:"stream,omitempty"`
-	StreamOptions *apiStreamOptions   `json:"stream_options,omitempty"`
+	Model         string            `json:"model"`
+	Messages      []apiMessage      `json:"messages"`
+	Temperature   *float64          `json:"temperature,omitempty"`
+	TopP          *float64          `json:"top_p,omitempty"`
+	MaxTokens     int               `json:"max_tokens,omitempty"`
+	Stop          []string          `json:"stop,omitempty"`
+	Tools         []apiTool         `json:"tools,omitempty"`
+	Stream        bool              `json:"stream,omitempty"`
+	StreamOptions *apiStreamOptions `json:"stream_options,omitempty"`
 }
 
 // apiStreamOptions tweaks the OpenAI-compatible SSE response. include_usage
@@ -145,7 +145,7 @@ type apiResponse struct {
 // the Effort field is intentionally ignored here. Caller picks the model.
 func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet []tools.Tool) (llm.Response, error) {
 	if c.apiKey == "" {
-		return llm.Response{}, fmt.Errorf("deepseek: missing API key")
+		return llm.Response{}, fmt.Errorf("deepseek: missing API key (type in /config to setup)")
 	}
 
 	body := apiRequest{
@@ -229,10 +229,10 @@ type streamChunk struct {
 	Choices []struct {
 		Index int `json:"index"`
 		Delta struct {
-			Role             string             `json:"role,omitempty"`
-			Content          string             `json:"content,omitempty"`
-			ReasoningContent string             `json:"reasoning_content,omitempty"`
-			ToolCalls        []streamToolCallDelta  `json:"tool_calls,omitempty"`
+			Role             string                `json:"role,omitempty"`
+			Content          string                `json:"content,omitempty"`
+			ReasoningContent string                `json:"reasoning_content,omitempty"`
+			ToolCalls        []streamToolCallDelta `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
@@ -276,7 +276,7 @@ type streamToolCallDelta struct {
 // like any other cancelled completion.
 func (c *Client) Stream(ctx context.Context, messages []llm.Message, toolSet []tools.Tool, sink llm.ChunkSink) (llm.Response, error) {
 	if c.apiKey == "" {
-		return llm.Response{}, fmt.Errorf("deepseek: missing API key")
+		return llm.Response{}, fmt.Errorf("deepseek: missing API key (type in /config to setup)")
 	}
 	if sink == nil {
 		sink = llm.DiscardChunks

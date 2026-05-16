@@ -71,7 +71,7 @@ func (a *Agent) Continue(ctx context.Context) (string, error) {
 // already contains whatever messages the caller wants to seed (a fresh
 // RoleUser for Run; nothing extra for Continue).
 func (a *Agent) runLoop(ctx context.Context) (string, error) {
-	for iter := 0; iter < a.maxIters; iter++ {
+	for iter := 0; iter < int(a.maxIters.Load()); iter++ {
 
 		// Honor cancellation at the top of every iteration.
 		if err := ctx.Err(); err != nil {
@@ -167,7 +167,7 @@ func (a *Agent) runLoop(ctx context.Context) (string, error) {
 	}
 
 	// Iteration cap. Not fatal — UI can prompt "press enter to keep going", caller invokes Continue.
-	a.logger.Info("run.iter_limit", "reached", a.maxIters)
+	a.logger.Info("run.iter_limit", "reached", a.maxIters.Load())
 	return "", a.limitBreak()
 }
 

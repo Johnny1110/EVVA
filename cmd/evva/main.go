@@ -18,7 +18,6 @@ import (
 	"github.com/johnny1110/evva/internal/agent"
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/internal/agent/sysprompt"
-	"github.com/johnny1110/evva/internal/constant"
 	"github.com/johnny1110/evva/internal/llm"
 	"github.com/johnny1110/evva/internal/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/meta"
@@ -49,7 +48,7 @@ func main() {
 	noTUI := flag.Bool("no-tui", false, "disable the bubbletea TUI; read a prompt and run once with plain CLI output")
 	flag.Parse()
 
-	prof := agent.Main(cfg.AppEnv, constant.DEEPSEEK, constant.DEEPSEEK_V4_PRO,
+	prof := agent.Main(cfg.AppEnv, cfg.DefaultProvider, cfg.DefaultModel,
 		sysprompt.Build(sysprompt.Default(cfg.AppName, cfg.EvvaHome, cfg.AppEnv)),
 		buildOptions(*temp, *maxTokens))
 

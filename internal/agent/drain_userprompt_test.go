@@ -22,7 +22,7 @@ func TestDrainUserPrompts_LandsAsRoleUser(t *testing.T) {
 	}
 	a := newTestAgent(stub)
 	a.toolState = toolset.NewToolState()
-	a.maxIters = 3
+	a.maxIters.Store(3)
 
 	// Pretend the UI enqueued two prompts while the agent was idle.
 	// drainUserPrompts is supposed to fold both into the session in

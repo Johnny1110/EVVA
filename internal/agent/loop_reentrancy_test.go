@@ -31,7 +31,7 @@ func TestRun_RejectsReentrantCall(t *testing.T) {
 	}
 	a := newTestAgent(stub)
 	a.toolState = toolset.NewToolState() // drainAsyncSubagents needs a non-nil state
-	a.maxIters = 5
+	a.maxIters.Store(5)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -112,7 +112,7 @@ func TestContinue_RejectsReentrantCall(t *testing.T) {
 	}
 	a := newTestAgent(stub)
 	a.toolState = toolset.NewToolState() // drainAsyncSubagents needs a non-nil state
-	a.maxIters = 5
+	a.maxIters.Store(5)
 
 	var wg sync.WaitGroup
 	wg.Add(1)

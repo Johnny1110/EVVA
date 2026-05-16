@@ -61,6 +61,11 @@ type transcriptBlock struct {
 	// terse one-line summary. Set on tool_search calls so the loaded
 	// schemas don't pollute the user-facing transcript.
 	hideResult bool
+	// toolName carries the calling tool's name from KindToolUseStart
+	// through to KindToolUseResult so attachToolResult can pick
+	// tool-specific rendering (e.g. web_fetch / web_search collapse to
+	// the result's first line).
+	toolName string
 }
 
 // transcript accumulates the scrollback the user reads in the viewport.
@@ -343,6 +348,26 @@ func (t *transcript) setBanner(spec bannerSpec) {
 	t.reflowBanner()
 }
 
+// reset wipes all conversation blocks but keeps the banner, width, and
+// view preferences (expandTools, markdown renderer). Used by /clear and
+// by /model after a provider swap — both want a fresh conversation
+// view without losing the welcome block at the top.
+func (t *transcript) reset() {
+	spec := t.banner
+	width := t.width
+	expand := t.expandTools
+	md := t.md
+	*t = transcript{
+		textInflightIdx:     -1,
+		thinkingInflightIdx: -1,
+		bannerIdx:           -1,
+		width:               width,
+		expandTools:         expand,
+		md:                  md,
+	}
+	t.setBanner(spec)
+}
+
 // reflowBanner builds (or rebuilds) the styled banner block from the
 // stored spec and slots it at t.bannerIdx, creating the slot if this
 // is the first call. Width-dependent — re-invoked from setWidth on
@@ -607,6 +632,7 @@ func (t *transcript) foldEvent(e event.Event) bool {
 				kind:       blockTool,
 				content:    styles.ToolCall.Render(label),
 				toolID:     e.ToolUseStart.ToolID,
+				toolName:   e.ToolUseStart.Name,
 				hideResult: e.ToolUseStart.Name == string(tools.TOOL_SEARCH),
 			})
 			if t.toolBlocks == nil {
@@ -683,6 +709,21 @@ func (t *transcript) foldEvent(e event.Event) bool {
 //     same toolResult so fold/expand applies uniformly
 func (t *transcript) attachToolResult(r *event.ToolUseResultPayload) bool {
 	body := strings.TrimRight(sanitizeForTranscript(r.Content), "\n")
+
+	// Web tools dump a lot of text (page text, search snippets) that the
+	// model summarizes for the user anyway — showing the raw payload
+	// just buries the conversation. Collapse to the result's first line
+	// (web_fetch already produces "[Fetched: <url> (<type>, <N> chars)]"
+	// as the leading line; web_search produces 'Search results for "..."').
+	// Errors stay verbose so the user sees what went wrong.
+	if !r.IsError {
+		if idx, ok := t.toolBlocks[r.ToolID]; ok && idx >= 0 && idx < len(t.blocks) {
+			if isWebSummaryTool(t.blocks[idx].toolName) {
+				body = firstNonEmptyLine(body)
+			}
+		}
+	}
+
 	var resultBody string
 	if r.IsError {
 		resultBody = styles.ToolErr.Render("  ✘ ") + styles.ToolErr.Render(body)
@@ -723,6 +764,29 @@ func (t *transcript) attachToolResult(r *event.ToolUseResultPayload) bool {
 	t.blocks[idx].toolResultLines = lineCount(resultBody)
 	t.blocks[idx].noFold = hasDiff
 	return true
+}
+
+// isWebSummaryTool reports whether the named tool's successful results
+// should be collapsed to a one-line summary in the transcript. The raw
+// payload (page text, search snippets) is voluminous and the model
+// summarizes it for the user anyway — showing the full body just
+// pushes the conversation off-screen.
+func isWebSummaryTool(name string) bool {
+	return name == string(tools.WEB_FETCH) || name == string(tools.WEB_SEARCH)
+}
+
+// firstNonEmptyLine returns the first non-blank line of s, trimmed.
+// Used to extract the header line web_fetch / web_search prepend to
+// their payloads ("[Fetched: ...]", 'Search results for "..."') so the
+// transcript shows the essential metadata without the body.
+func firstNonEmptyLine(s string) string {
+	for line := range strings.SplitSeq(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return s
 }
 
 // redactedResultBody renders the one-line placeholder shown in place

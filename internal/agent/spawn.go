@@ -51,7 +51,7 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 	child, err := New(a, subProfile,
 		WithName(req.Name),
 		WithSink(childSink),
-		WithMaxIterations(a.maxIters), // share iters with child
+		WithMaxIterations(int(a.maxIters.Load())), // share iters with child
 		WithAsync(req.AsyncMode),
 	)
 	if err != nil {

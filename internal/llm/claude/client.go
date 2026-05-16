@@ -5,10 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/johnny1110/evva/internal/constant"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/johnny1110/evva/internal/constant"
 
 	config "github.com/johnny1110/evva/configs"
 	"github.com/johnny1110/evva/internal/llm"
@@ -193,7 +194,7 @@ func (c *Client) buildRequestBody(messages []llm.Message, toolSet []tools.Tool) 
 
 func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet []tools.Tool) (llm.Response, error) {
 	if c.apiKey == "" {
-		return llm.Response{}, fmt.Errorf("claude: missing API key")
+		return llm.Response{}, fmt.Errorf("claude: missing API key (type in /config to setup)")
 	}
 
 	body := c.buildRequestBody(messages, toolSet)

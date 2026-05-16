@@ -11,15 +11,20 @@ import (
 	"github.com/johnny1110/evva/internal/tools"
 )
 
-// WriteTool creates or overwrites a file.
+// WriteTool creates or overwrites a file. When an Approver is attached
+// every mutation pauses for user confirmation: the proposed diff is
+// shown and the write only lands on a "yes". A nil approver disables
+// the gate (used by tests).
 type WriteTool struct {
-	tracker *ReadTracker
+	tracker  *ReadTracker
+	approver Approver
 }
 
 // NewWrite creates a WriteTool that enforces the read-before-overwrite guard
-// via the given tracker.
-func NewWrite(tracker *ReadTracker) *WriteTool {
-	return &WriteTool{tracker: tracker}
+// via the given tracker. Pass a non-nil approver to gate writes behind
+// user confirmation; nil disables the gate.
+func NewWrite(tracker *ReadTracker, approver Approver) *WriteTool {
+	return &WriteTool{tracker: tracker, approver: approver}
 }
 
 func (t *WriteTool) Name() string { return string(tools.WRITE_FILE) }
@@ -56,7 +61,7 @@ type writeInput struct {
 	Content  string `json:"content"`
 }
 
-func (t *WriteTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
 	var in writeInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: "write: decode input: " + err.Error()}, nil
@@ -82,14 +87,54 @@ func (t *WriteTool) Execute(_ context.Context, input json.RawMessage) (tools.Res
 		}, nil
 	}
 
-	// Capture the prior content for an "overwrote: was M, now N lines"
-	// summary. Errors here are non-fatal — we fall back to "unknown" counts.
-	var oldLineCount int
-	var oldByteCount int
+	// Capture prior content. We need this for two things on the
+	// overwrite path: the proposed diff that the approver renders, and
+	// the "was M / now N" summary line on the model-facing result.
+	var oldByteCount, oldLineCount int
+	var priorContent string
 	if existedBefore {
-		if prior, perr := os.ReadFile(resolved); perr == nil {
+		prior, perr := os.ReadFile(resolved)
+		if perr == nil {
+			priorContent = string(prior)
 			oldByteCount = len(prior)
-			oldLineCount = countLines(string(prior))
+			oldLineCount = countLines(priorContent)
+		}
+	}
+
+	// Build the proposed diff up front so the same payload powers both
+	// the approval prompt and the final tools.Result.Metadata. New
+	// files render every line as an add; overwrites use difflib for a
+	// minimal unified diff.
+	var diff *FileDiff
+	if existedBefore {
+		diff = buildOverwriteDiff(resolved, priorContent, in.Content)
+	} else {
+		diff = buildCreateDiff(resolved, in.Content)
+	}
+
+	if t.approver != nil {
+		dec, aerr := t.approver.Approve(ctx, diff)
+		if aerr != nil {
+			return tools.Result{IsError: true, Content: "write: approval failed: " + aerr.Error()}, nil
+		}
+		if !dec.Approved {
+			// Two decline shapes:
+			//   - No feedback (user pressed Esc / EOF / blank line) →
+			//     surface a real error so the model knows the change
+			//     was refused outright.
+			//   - With feedback → silently pass the user's redirection
+			//     through as a non-error result. No "declined" chrome
+			//     in the transcript; the model treats the text as
+			//     in-flight instructions and continues the workflow.
+			if dec.Feedback == "" {
+				return tools.Result{
+					IsError: true,
+					Content: fmt.Sprintf("write: user declined the change to %s; the file was not modified.", in.FilePath),
+				}, nil
+			}
+			return tools.Result{
+				Content: fmt.Sprintf("User asked instead: %s", dec.Feedback),
+			}, nil
 		}
 	}
 
@@ -110,17 +155,13 @@ func (t *WriteTool) Execute(_ context.Context, input json.RawMessage) (tools.Res
 	if !existedBefore {
 		return tools.Result{
 			Content:  fmt.Sprintf("created %s (%d lines, %d bytes)", resolved, newLineCount, newByteCount),
-			Metadata: buildCreateDiff(resolved, in.Content),
+			Metadata: diff,
 		}, nil
 	}
-
-	// Overwrite: skip per-line diff in v1 (LCS not worth the complexity
-	// for an MVP). Still attach a minimal *FileDiff so the UI can know
-	// the file changed and render a "file replaced" badge.
 	return tools.Result{
 		Content: fmt.Sprintf("overwrote %s (was %d lines / %d bytes, now %d lines / %d bytes)",
 			resolved, oldLineCount, oldByteCount, newLineCount, newByteCount),
-		Metadata: &FileDiff{Path: resolved, Op: OpOverwrite},
+		Metadata: diff,
 	}, nil
 }
 

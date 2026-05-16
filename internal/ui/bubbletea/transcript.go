@@ -31,10 +31,25 @@ const (
 // transcriptBlock is one logical entry in the scrollback. content is the
 // already-styled string; the kind decides the gutter prefix; toolID is
 // only used for blockTool so the result event can find its start.
+//
+// For blockTool, content holds only the head line (the `◢ name(args)`
+// invocation). The result body is stored separately on toolResult so
+// the renderer can decide between a folded preview and the full payload
+// based on the transcript-wide expandTools flag — see foldedToolBody.
 type transcriptBlock struct {
 	kind    blockKind
 	content string
 	toolID  string
+
+	// toolResult is the styled multi-line result body (including diff
+	// hunks if any) for blockTool entries. Empty until the matching
+	// KindToolUseResult event lands. Kept separate from content so
+	// the fold preview can re-render without re-styling.
+	toolResult string
+	// toolResultLines is the rendered line count of toolResult — used
+	// to decide whether to fold and how many "more lines" the preview
+	// marker should report.
+	toolResultLines int
 }
 
 // transcript accumulates the scrollback the user reads in the viewport.
@@ -78,7 +93,23 @@ type transcript struct {
 	// blocks, or -1 when no banner is active. Used by reflowBanner
 	// to swap the styled string on resize / metadata change.
 	bannerIdx int
+	// expandTools, when true, suppresses the fold-preview pass so
+	// every tool result renders in full. Toggled by Ctrl+O in the
+	// app.go key handler.
+	expandTools bool
 }
+
+// foldToolThreshold and foldToolPreviewLines control when and how a
+// long tool result gets folded:
+//   - results with more than `foldToolThreshold` rendered lines fold
+//     by default (anything shorter shows in full — folding 3 lines is
+//     pointless ceremony)
+//   - the preview shows the first `foldToolPreviewLines` lines plus a
+//     dim "+N more lines · Ctrl+O to expand" marker
+const (
+	foldToolThreshold    = 8
+	foldToolPreviewLines = 3
+)
 
 // bannerSpec captures everything the welcome block displays: the ASCII
 // art, the greeting, and per-session metadata (agent id, model, start
@@ -133,7 +164,7 @@ func (t *transcript) renderWithTimeline(b transcriptBlock) string {
 	case blockUserPrompt:
 		return t.renderUserPrompt(b.content)
 	case blockTool:
-		return t.applyToolGutter(b.content)
+		return t.applyToolGutter(t.composeToolBlock(b))
 	default:
 		return t.applyLineGutter(b.content)
 	}
@@ -591,40 +622,88 @@ func (t *transcript) foldEvent(e event.Event) bool {
 	return false
 }
 
-// attachToolResult folds the result line into the matching tool block.
-// Falls back to appending a standalone block when the ToolID is unknown
-// (defensive — the agent should always emit a start before the result).
+// attachToolResult stores the styled result body on the matching tool
+// block so renderWithTimeline can decide between a folded preview and
+// the full payload at draw time. Falls back to appending a standalone
+// block when the ToolID is unknown (defensive — the agent should
+// always emit a start before the result).
 //
 // Visual contract:
-//   - status glyph (`✓` green / `✗` red) signals outcome
-//   - body content rendered in a neutral cyan so a successful read_file
-//     result doesn't read as a green "diff add" — the green vocabulary
-//     is reserved for actual diff additions
+//   - status glyph (`▸` green ok / `✘` red error) signals outcome
+//   - body content rendered in soft sky blue (paletteSky) so it sits
+//     beneath the brown call line as a quieter output stream
 //   - FileDiff metadata (write_file / edit_file) renders below the
-//     status line with its own +/− colored hunks
+//     status line with its own +/− colored hunks; bundled into the
+//     same toolResult so fold/expand applies uniformly
 func (t *transcript) attachToolResult(r *event.ToolUseResultPayload) bool {
 	body := strings.TrimRight(r.Content, "\n")
-	var resultLine string
+	var resultBody string
 	if r.IsError {
-		resultLine = styles.ToolErr.Render("  ✘ ") + styles.ToolErr.Render(body)
+		resultBody = styles.ToolErr.Render("  ✘ ") + styles.ToolErr.Render(body)
 	} else {
-		resultLine = styles.ToolOK.Render("  ▸ ") + styles.ToolResult.Render(body)
+		resultBody = styles.ToolOK.Render("  ▸ ") + styles.ToolResult.Render(body)
 	}
 	if diff, ok := r.Metadata.(*fs.FileDiff); ok && diff != nil {
-		resultLine += "\n" + renderFileDiff(diff)
+		resultBody += "\n" + renderFileDiff(diff)
 	}
 
 	idx, ok := t.toolBlocks[r.ToolID]
 	if !ok || idx < 0 || idx >= len(t.blocks) {
+		// No matching head — synthesize a bare block carrying just
+		// the result. content stays empty; the result body itself
+		// carries the user-facing output.
 		t.blocks = append(t.blocks, transcriptBlock{
-			kind:    blockTool,
-			content: resultLine,
-			toolID:  r.ToolID,
+			kind:            blockTool,
+			toolID:          r.ToolID,
+			toolResult:      resultBody,
+			toolResultLines: lineCount(resultBody),
 		})
 		return true
 	}
-	t.blocks[idx].content += "\n" + resultLine
+	t.blocks[idx].toolResult = resultBody
+	t.blocks[idx].toolResultLines = lineCount(resultBody)
 	return true
+}
+
+// composeToolBlock returns the rendered body for a blockTool: the head
+// line (already in b.content) followed by the result body. The result
+// is shown in full when:
+//   - the transcript is in expand-all mode (Ctrl+O),
+//   - the result is short enough not to warrant folding, OR
+//   - the result is empty (still in flight)
+//
+// Otherwise the renderer trims to the preview window and tacks on a
+// dim `+N more lines · Ctrl+O to expand` marker so the user can see
+// at a glance what's hidden and how to reveal it.
+func (t *transcript) composeToolBlock(b transcriptBlock) string {
+	if b.toolResult == "" {
+		return b.content
+	}
+	if t.expandTools || b.toolResultLines <= foldToolThreshold {
+		if b.content == "" {
+			return b.toolResult
+		}
+		return b.content + "\n" + b.toolResult
+	}
+	preview := previewLines(b.toolResult, foldToolPreviewLines)
+	hidden := b.toolResultLines - foldToolPreviewLines
+	marker := styles.DimText.Render(
+		fmt.Sprintf("  … +%d more lines · Ctrl+O to expand", hidden))
+	if b.content == "" {
+		return preview + "\n" + marker
+	}
+	return b.content + "\n" + preview + "\n" + marker
+}
+
+// previewLines returns the first n newline-separated lines of s. If s
+// has n or fewer lines the original is returned unchanged. Preserves
+// every embedded ANSI escape — we slice on \n boundaries only.
+func previewLines(s string, n int) string {
+	lines := strings.SplitN(s, "\n", n+1)
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[:n], "\n")
 }
 
 func compactInput(raw json.RawMessage) string {

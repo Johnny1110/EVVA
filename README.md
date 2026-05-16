@@ -145,13 +145,13 @@ OLLAMA_URL=http://localhost:11434
 
 ### In progress / next up
 
-- fs tool abspath issue.
-
-- Systemprompt:
+- System prompt:
   - main
   - explore
   - general-purpose
   - agent-specific
+
+- Refine the llm call params: max_token, ...
 
 - Tool implementations:
   - `tasks` multi-step tasks work.

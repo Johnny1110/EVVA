@@ -43,6 +43,81 @@ func TestWrapForWidthPreservesNewlines(t *testing.T) {
 	}
 }
 
+// TestToolResultFoldsLongBody locks down the "long tool result is
+// folded by default, Ctrl+O expands" behavior. A 30-line payload
+// should render as 3 preview lines + a "+27 more lines" marker; after
+// expandTools flips, the full body must be present.
+func TestToolResultFoldsLongBody(t *testing.T) {
+	tr := transcript{
+		width:               80,
+		textInflightIdx:     -1,
+		thinkingInflightIdx: -1,
+		bannerIdx:           -1,
+	}
+	// Build a tool block manually with a 30-line styled result.
+	var lines []string
+	for i := 0; i < 30; i++ {
+		lines = append(lines, "line "+string(rune('a'+i%26)))
+	}
+	body := strings.Join(lines, "\n")
+	tr.blocks = []transcriptBlock{{
+		kind:            blockTool,
+		content:         "◢ bash({...})",
+		toolID:          "tool_1",
+		toolResult:      body,
+		toolResultLines: 30,
+	}}
+
+	folded := tr.String()
+	if !strings.Contains(folded, "+27 more lines") {
+		t.Fatalf("expected fold marker '+27 more lines', got:\n%s", folded)
+	}
+	if strings.Contains(folded, "line "+string(rune('a'+25%26))) {
+		// We don't want any line beyond the preview to show through.
+		// Lines 0..2 are the preview; line at index 25 should be hidden.
+		t.Fatalf("late line leaked into folded output:\n%s", folded)
+	}
+
+	tr.expandTools = true
+	expanded := tr.String()
+	if strings.Contains(expanded, "more lines") {
+		t.Fatalf("expanded view should drop the fold marker:\n%s", expanded)
+	}
+	for _, line := range lines {
+		if !strings.Contains(expanded, line) {
+			t.Fatalf("expanded view missing line %q:\n%s", line, expanded)
+		}
+	}
+}
+
+// TestToolResultShortStaysInline keeps short results inline — folding
+// 3 lines wastes a row on the marker and obscures useful output.
+func TestToolResultShortStaysInline(t *testing.T) {
+	tr := transcript{
+		width:               80,
+		textInflightIdx:     -1,
+		thinkingInflightIdx: -1,
+		bannerIdx:           -1,
+	}
+	body := "line one\nline two\nline three"
+	tr.blocks = []transcriptBlock{{
+		kind:            blockTool,
+		content:         "◢ bash({})",
+		toolID:          "t",
+		toolResult:      body,
+		toolResultLines: 3,
+	}}
+	out := tr.String()
+	if strings.Contains(out, "more lines") {
+		t.Fatalf("short result should not fold:\n%s", out)
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.Contains(out, line) {
+			t.Fatalf("short result missing line %q:\n%s", line, out)
+		}
+	}
+}
+
 // TestRenderUserPromptPreservesPaste runs the full transcript path
 // — user prompt with embedded paste content + chips — and checks no
 // runes are lost. This is the regression the user reported: paste

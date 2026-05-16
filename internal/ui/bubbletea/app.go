@@ -179,7 +179,7 @@ type rootModel struct {
 
 func newRootModel(evvaHome string) *rootModel {
 	ta := textarea.New()
-	ta.Placeholder = "<Enter> to send · <Ctrl> + <J> for newline"
+	ta.Placeholder = "<Enter> send · <Ctrl+J> newline · <Ctrl+O> toggle tool results"
 	ta.CharLimit = 0
 	ta.SetHeight(3)
 	ta.ShowLineNumbers = false
@@ -340,6 +340,15 @@ func (m *rootModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(m.input.Value()) == "" {
 			return m, tea.Quit
 		}
+	case tea.KeyCtrlO:
+		// Ctrl+O toggles "expand all tool results" so long bash /
+		// read_file payloads stay folded by default but are one
+		// keystroke away. Folded blocks render the first 3 lines
+		// plus a "+N more lines" marker; expanded blocks show in
+		// full.
+		m.transcript.expandTools = !m.transcript.expandTools
+		m.refreshViewport()
+		return m, nil
 	case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 		// Scroll keys belong to the transcript viewport, not the
 		// textarea (which would treat them as cursor movement).

@@ -54,7 +54,6 @@ func environment(in Inputs) string {
 - Today: %s
 - Working directory: %s
 - Evva home (global config, skills, memory): %s`, osLabel, shellLabel, todayStr, workdir, evvaHome)
-
 }
 
 // harness encodes the Claude-Code-style coding conduct: edit over create,

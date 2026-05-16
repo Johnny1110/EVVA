@@ -3,6 +3,7 @@ package sysprompt
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Each section is a self-contained block that Build joins with blank lines.
@@ -42,10 +43,17 @@ func environment(in Inputs) string {
 	if evvaHome == "" {
 		evvaHome = "(unset)"
 	}
+	todayStr := ""
+	if !in.Today.IsZero() {
+		todayStr = in.Today.Format("Monday January 2 2006")
+	} else {
+		todayStr = time.Now().Format("Monday January 2 2006")
+	}
 	return fmt.Sprintf(`# Environment
 - OS / shell: %s / %s
+- Today: %s
 - Working directory: %s
-- Evva home (global config, skills, memory): %s`, osLabel, shellLabel, workdir, evvaHome)
+- Evva home (global config, skills, memory): %s`, osLabel, shellLabel, todayStr, workdir, evvaHome)
 }
 
 // harness encodes the Claude-Code-style coding conduct: edit over create,

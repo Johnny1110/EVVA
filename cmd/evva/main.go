@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	config "github.com/johnny1110/evva/configs"
@@ -48,8 +49,8 @@ func main() {
 	noTUI := flag.Bool("no-tui", false, "disable the bubbletea TUI; read a prompt and run once with plain CLI output")
 	flag.Parse()
 
-	prof := agent.Main(constant.DEEPSEEK, constant.DEEPSEEK_V4_FLASH,
-		sysprompt.Build(sysprompt.Default(cfg.AppName, cfg.EvvaHome)),
+	prof := agent.Main(cfg.AppEnv, constant.DEEPSEEK, constant.DEEPSEEK_V4_PRO,
+		sysprompt.Build(sysprompt.Default(cfg.AppName, cfg.EvvaHome, cfg.AppEnv)),
 		buildOptions(*temp, *maxTokens))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -325,6 +326,11 @@ type stdinApprover struct {
 	in  io.Reader
 	out io.Writer
 
+	// mu serializes Approve calls. Parallel fs tool_use blocks in one
+	// assistant turn would otherwise interleave diff output and race on
+	// stdin reads.
+	mu sync.Mutex
+
 	// autoApprove flips once the user has picked option 2. From that
 	// point on every Approve call short-circuits to approved without
 	// re-rendering the diff or reading stdin.
@@ -346,6 +352,26 @@ const (
 )
 
 func (s *stdinApprover) Approve(ctx context.Context, diff *fs.FileDiff) (fs.Decision, error) {
+	// Serialize so concurrent fs tool_use blocks in one assistant turn
+	// don't interleave diff output or race on stdin reads. Acquire
+	// ctx-cancellably so a cancelled run doesn't sit forever behind a
+	// slow prompt ahead of it.
+	lockCh := make(chan struct{}, 1)
+	go func() {
+		s.mu.Lock()
+		lockCh <- struct{}{}
+	}()
+	select {
+	case <-lockCh:
+		defer s.mu.Unlock()
+	case <-ctx.Done():
+		go func() {
+			<-lockCh
+			s.mu.Unlock()
+		}()
+		return fs.Decision{}, ctx.Err()
+	}
+
 	if s.autoApprove {
 		return fs.Decision{Approved: true}, nil
 	}

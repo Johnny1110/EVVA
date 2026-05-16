@@ -87,4 +87,7 @@ const (
 	// this is for explore agent (read only)
 	GREP ToolName = "grep"
 	TREE ToolName = "tree"
+
+	// this is for dev phase
+	FEEDBACK ToolName = "feedback"
 )

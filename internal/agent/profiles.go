@@ -16,6 +16,7 @@ import (
 	"github.com/johnny1110/evva/internal/llm"
 	"github.com/johnny1110/evva/internal/tools"
 	"github.com/johnny1110/evva/internal/tools/cron"
+	"github.com/johnny1110/evva/internal/tools/dev"
 	"github.com/johnny1110/evva/internal/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"
@@ -107,16 +108,22 @@ described in the user prompt and return a short done. Stay in scope.`
 // chunk adapter falls back cleanly for providers without native streaming.
 // Callers who want the old buffered behavior can pass WithStream(false) at
 // agent construction.
-func Main(provider constant.LLMProvider, model constant.Model, sysPrompt string, options []llm.Option) Profile {
+func Main(env string, provider constant.LLMProvider, model constant.Model, sysPrompt string, options []llm.Option) Profile {
 	if sysPrompt == "" {
 		options = append(options, llm.WithSystem(dummyMainSystemPrompt))
 	}
 	options = append(options, llm.WithSystem(sysPrompt))
 
+	activeTools := slices.Concat(fs.Names(), shell.Names(), meta.Names())
+	// dev env tools for collect agent feedback
+	if env == "dev" {
+		activeTools = append(activeTools, dev.Names()...)
+	}
+
 	return Profile{
 		Type:         MAIN,
 		SystemPrompt: sysPrompt,
-		ActiveTools:  slices.Concat(fs.Names(), shell.Names(), meta.Names()),
+		ActiveTools:  activeTools,
 		DeferredTools: slices.Concat(
 			task.Names(),
 			monitor.Names(),

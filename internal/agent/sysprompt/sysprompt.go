@@ -44,6 +44,8 @@ type Inputs struct {
 	IncludeHarness      bool // software-engineering conduct rules.
 	IncludeToolGuide    bool // dedicated-tool preference + TOOL_SEARCH protocol.
 	IncludeTaskPlanning bool // when and how to use the task_* tool family.
+
+	Env string // dev or prod
 }
 
 // Default returns an Inputs preset suitable for the main agent: every
@@ -52,7 +54,7 @@ type Inputs struct {
 // because those live in configs.AppConfig and the sysprompt module
 // deliberately does not import configs (keeps the dependency graph one-way
 // and the module trivially testable).
-func Default(agentName, evvaHome string) Inputs {
+func Default(agentName, evvaHome, env string) Inputs {
 	workdir, _ := os.Getwd()
 	return Inputs{
 		AgentName:           agentName,
@@ -64,6 +66,7 @@ func Default(agentName, evvaHome string) Inputs {
 		IncludeHarness:      true,
 		IncludeToolGuide:    true,
 		IncludeTaskPlanning: true,
+		Env:                 env,
 	}
 }
 
@@ -82,6 +85,9 @@ func Build(in Inputs) string {
 	}
 	if in.IncludeTaskPlanning {
 		parts = append(parts, taskPlanning())
+	}
+	if in.Env == "dev" {
+		parts = append(parts, devSection())
 	}
 
 	out := parts[:0]

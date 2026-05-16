@@ -27,6 +27,7 @@ import (
 	"github.com/johnny1110/evva/internal/observable"
 	"github.com/johnny1110/evva/internal/tools"
 	"github.com/johnny1110/evva/internal/tools/cron"
+	"github.com/johnny1110/evva/internal/tools/dev"
 	"github.com/johnny1110/evva/internal/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"
@@ -348,6 +349,10 @@ func buildOne(name tools.ToolName, s *ToolState) (tools.Tool, error) {
 		return ux.AskQuestion, nil
 	case tools.PUSH_NOTIFICATION:
 		return ux.Notify, nil
+
+	// evva developer tools
+	case tools.FEEDBACK:
+		return dev.Feedback, nil
 
 	default:
 		return nil, fmt.Errorf("toolset: unknown tool %q", name)

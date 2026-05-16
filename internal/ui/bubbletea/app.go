@@ -84,6 +84,14 @@ type UI struct {
 
 	mu         sync.Mutex
 	controller ui.Controller
+
+	// approveMu serializes Approve() calls. The model carries a single
+	// pendingApproval slot; concurrent callers (parallel fs tool_use in
+	// one assistant turn) would overwrite each other's reply channel and
+	// deadlock waiting on the orphaned ones. Holding this for the
+	// lifetime of one approval lets later callers queue naturally and
+	// the user sees one prompt at a time.
+	approveMu sync.Mutex
 }
 
 // New builds a UI ready to be Attached and Run. evvaHome is the user's
@@ -128,6 +136,28 @@ func (u *UI) Approve(ctx context.Context, diff *fs.FileDiff) (fs.Decision, error
 	if u.program == nil {
 		return fs.Decision{}, errors.New("bubbletea: program not initialized")
 	}
+
+	// Serialize so the model's single pendingApproval slot is never
+	// overwritten by a concurrent caller. Acquire ctx-cancellably so a
+	// cancelled run doesn't sit forever behind a slow prompt ahead of it.
+	lockCh := make(chan struct{}, 1)
+	go func() {
+		u.approveMu.Lock()
+		lockCh <- struct{}{}
+	}()
+	select {
+	case <-lockCh:
+		defer u.approveMu.Unlock()
+	case <-ctx.Done():
+		// Hand the lock back to whichever future caller picks it up; we
+		// never sent the request, so there's no overlay to clear.
+		go func() {
+			<-lockCh
+			u.approveMu.Unlock()
+		}()
+		return fs.Decision{}, ctx.Err()
+	}
+
 	reply := make(chan fs.Decision, 1)
 	u.program.Send(approvalRequestMsg{diff: diff, reply: reply})
 

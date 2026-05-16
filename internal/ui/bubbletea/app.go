@@ -47,12 +47,14 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/internal/llm"
+	"github.com/johnny1110/evva/internal/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/task"
 	"github.com/johnny1110/evva/internal/ui"
 	"github.com/johnny1110/evva/pkg/banner"
@@ -88,14 +90,15 @@ type UI struct {
 // config directory (typically ~/.evva); the constructor uses it to
 // resolve banner.txt with an embedded fallback.
 //
-// WithMouseCellMotion enables mouse-wheel scrolling on the transcript
-// viewport (the viewport bubble handles wheel events itself once mouse
-// reporting is on).
+// Mouse reporting is intentionally NOT enabled: with it on, the terminal
+// hands mouse events to the program and native text selection breaks
+// (users can't drag-select to copy transcript content). The trade is
+// losing mouse-wheel scroll on the viewport; PgUp/PgDown/Home/End cover
+// keyboard scrolling.
 func New(evvaHome string) *UI {
 	u := &UI{model: newRootModel(evvaHome)}
 	u.program = tea.NewProgram(u.model,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 	u.model.program = u.program
 	return u
@@ -108,6 +111,30 @@ func (u *UI) Emit(e event.Event) {
 		return
 	}
 	u.program.Send(eventMsg{Event: e})
+}
+
+// Approve satisfies fs.Approver. Called from a tool goroutine when an
+// fs mutation needs confirmation. The proposed diff is forwarded to
+// the bubbletea loop via approvalRequestMsg; this goroutine blocks on
+// the reply channel until the user decides or ctx cancels.
+//
+// On ctx cancellation we ALSO send approvalCancelMsg so the on-screen
+// prompt clears — otherwise the user is left staring at a stale
+// overlay for a request whose caller has already given up.
+func (u *UI) Approve(ctx context.Context, diff *fs.FileDiff) (fs.Decision, error) {
+	if u.program == nil {
+		return fs.Decision{}, errors.New("bubbletea: program not initialized")
+	}
+	reply := make(chan fs.Decision, 1)
+	u.program.Send(approvalRequestMsg{diff: diff, reply: reply})
+
+	select {
+	case dec := <-reply:
+		return dec, nil
+	case <-ctx.Done():
+		u.program.Send(approvalCancelMsg{})
+		return fs.Decision{}, ctx.Err()
+	}
 }
 
 // Attach hands the UI its agent controller. Must be called before Run.
@@ -163,6 +190,19 @@ type rootModel struct {
 	// in-order from this slice. Cleared once the prompt is sent.
 	pastedBuf []string
 
+	// promptHistory stores raw user prompts (pre-paste-expansion) in
+	// submission order. Up/Down navigate it from the input box, bash
+	// style. Consecutive duplicates are deduped on append.
+	promptHistory []string
+	// historyIdx is the active index into promptHistory while the user
+	// is navigating. -1 means "not navigating; whatever is in the input
+	// is the user's live draft".
+	historyIdx int
+	// historyDraft preserves the in-progress input the user had typed
+	// when they entered history nav, so Down past the newest entry can
+	// restore it.
+	historyDraft string
+
 	// spinnerFrameIdx is the current braille-dot frame for the
 	// status-bar state pill and any animated subagent rows. Advances
 	// on spinnerTickMsg.
@@ -175,6 +215,61 @@ type rootModel struct {
 	startedAt time.Time
 
 	runCancel context.CancelFunc
+
+	// pendingApproval is non-nil while an fs.Approver request is on
+	// screen. The model freezes input, renders the diff plus a y/n
+	// prompt, and replies via reply on the next keystroke. Cleared on
+	// reply or on approvalCancelMsg (ctx fired before user answered).
+	pendingApproval *pendingApproval
+
+	// autoApproveSession is the "approve all in session" sticky flag.
+	// Once set (by pressing [a] at any approval prompt) every subsequent
+	// approvalRequestMsg replies true and skips the overlay entirely.
+	// Resets only on process exit by design — there is no "turn it back
+	// off" UI; if the user wants the gate back, they restart evva.
+	autoApproveSession bool
+}
+
+// approvalAction enumerates the choices in the approval menu. Listed
+// from "most affirmative" to "most rejecting" so the cursor starts on
+// the safest default (approveOnce) and stepping down moves toward
+// stronger interventions. There is no plain-decline action in the menu
+// itself — Esc handles that path so the menu only carries
+// forward-moving choices.
+type approvalAction int
+
+const (
+	actionApproveOnce approvalAction = iota
+	actionApproveAll
+	actionDeclineWithFeedback
+)
+
+// approvalMenu is the canonical option list rendered by the TUI's
+// approval panel. The label is what the user reads; the action drives
+// what happens when Enter is pressed on that row. Stable order —
+// users build muscle memory.
+var approvalMenu = []struct {
+	label  string
+	action approvalAction
+}{
+	{"Yes, apply this change", actionApproveOnce},
+	{"Yes, and approve all remaining changes this session", actionApproveAll},
+	{"No — let me tell the agent what to do instead", actionDeclineWithFeedback},
+}
+
+// pendingApproval captures one in-flight fs mutation approval. The diff
+// drives the on-screen preview; selected tracks the menu cursor; reply
+// receives the final Decision exactly once. When feedback is non-nil
+// the panel is in "type your redirection" mode rather than menu mode.
+type pendingApproval struct {
+	diff     *fs.FileDiff
+	reply    chan<- fs.Decision
+	selected int
+	// feedback is a single-line textinput that appears AFTER the user
+	// picks "redirect the agent". nil = menu mode. The model owns this
+	// so its lifecycle ties to the approval — it's discarded when the
+	// approval resolves.
+	feedback *textinput.Model
 }
 
 func newRootModel(evvaHome string) *rootModel {
@@ -210,6 +305,7 @@ func newRootModel(evvaHome string) *rootModel {
 		state:      stateIdle,
 		transcript: t,
 		startedAt:  time.Now(),
+		historyIdx: -1,
 	}
 }
 
@@ -253,6 +349,28 @@ func (m *rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinnerFrameIdx++
 		return m, spinnerTickCmd()
 
+	case approvalRequestMsg:
+		// Sticky "approve all in session" — drop straight through
+		// without ever painting an overlay. Reply is buffered, so the
+		// send is non-blocking even if the caller's ctx has already
+		// fired and gone away.
+		if m.autoApproveSession {
+			msg.reply <- fs.Decision{Approved: true}
+			return m, nil
+		}
+		m.pendingApproval = &pendingApproval{
+			diff:     msg.diff,
+			reply:    msg.reply,
+			selected: 0,
+		}
+		m.layoutSizes()
+		return m, nil
+
+	case approvalCancelMsg:
+		m.pendingApproval = nil
+		m.layoutSizes()
+		return m, nil
+
 	case quitMsg:
 		m.cancelRunIfAny()
 		return m, tea.Quit
@@ -292,10 +410,11 @@ func (m *rootModel) layoutSizes() {
 
 	taskHeight := lineCount(m.taskPanel(bodyWidth))
 	stripHeight := lineCount(m.agentStrip(bodyWidth))
+	approvalHeight := lineCount(m.approvalPanel(bodyWidth))
 	inputHeight := m.input.Height() + 2 // +2 for border
 	statusHeight := 1                   // bottom status bar (state · model · tokens · ctx)
 
-	vpHeight := m.height - taskHeight - stripHeight - inputHeight - statusHeight
+	vpHeight := m.height - taskHeight - stripHeight - approvalHeight - inputHeight - statusHeight
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
@@ -322,6 +441,14 @@ func (m *rootModel) refreshViewport() {
 }
 
 func (m *rootModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// When an approval prompt is up, route input through its own state
+	// machine so accidental keystrokes can't leak into the textarea
+	// behind the panel. Ctrl+C still quits — there must always be an
+	// escape hatch for a frozen UI.
+	if m.pendingApproval != nil {
+		return m.handleApprovalKey(msg)
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		if m.state == stateRunning {
@@ -356,14 +483,20 @@ func (m *rootModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
-	case tea.KeyUp, tea.KeyDown:
-		// When the input is empty, treat arrow keys as scroll. As
-		// soon as the user starts typing arrow keys revert to
-		// textarea cursor movement.
-		if strings.TrimSpace(m.input.Value()) == "" {
-			var cmd tea.Cmd
-			m.viewport, cmd = m.viewport.Update(msg)
-			return m, cmd
+	case tea.KeyUp:
+		// Up walks back through prompt history when the input is
+		// empty or the user is already mid-navigation. With typed
+		// text and no active nav, falls through to textarea cursor
+		// movement so multi-line editing still works.
+		if m.historyPrev() {
+			return m, nil
+		}
+	case tea.KeyDown:
+		// Down only consumes the key while history nav is active —
+		// it walks forward and eventually restores the user's saved
+		// draft. Otherwise falls through to textarea cursor.
+		if m.historyNext() {
+			return m, nil
 		}
 	case tea.KeyCtrlJ:
 		// Ctrl+J is line-feed (\n). On many terminals, Shift+Enter is
@@ -415,6 +548,7 @@ func (m *rootModel) submit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	m.appendHistory(text)
 	switch m.state {
 	case stateIterLimit:
 		m.input.SetValue("")
@@ -436,6 +570,172 @@ func (m *rootModel) submit() (tea.Model, tea.Cmd) {
 	}
 	m.refreshViewport()
 	return m, nil
+}
+
+// handleApprovalKey dispatches keystrokes while an approval is on
+// screen. Two sub-states: menu mode (cursor on a row) and feedback mode
+// (user typing redirection text into a textinput). Everything outside
+// the dispatch table is swallowed so the user can't accidentally type
+// past the panel.
+func (m *rootModel) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	pa := m.pendingApproval
+	// Ctrl+C is the universal escape hatch — works the same in both
+	// approval sub-states.
+	if msg.Type == tea.KeyCtrlC {
+		m.replyApproval(fs.Decision{Approved: false})
+		m.cancelRunIfAny()
+		return m, tea.Quit
+	}
+
+	// Feedback mode: user is typing the redirection text. Enter
+	// submits, Esc cancels back to a plain decline (no feedback),
+	// everything else is forwarded to the textinput for editing.
+	if pa.feedback != nil {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.replyApproval(fs.Decision{Approved: false})
+			return m, nil
+		case tea.KeyEnter:
+			text := strings.TrimSpace(pa.feedback.Value())
+			m.replyApproval(fs.Decision{Approved: false, Feedback: text})
+			return m, nil
+		}
+		var cmd tea.Cmd
+		ti, cmd := pa.feedback.Update(msg)
+		pa.feedback = &ti
+		return m, cmd
+	}
+
+	// Menu mode: Up/Down moves the cursor, Enter dispatches, Esc is a
+	// shortcut to the "tell the agent what to do instead" flow — same
+	// effect as highlighting that row and pressing Enter, so the user
+	// can redirect without first navigating to the option.
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.openFeedback()
+		return m, nil
+	case tea.KeyUp:
+		if pa.selected > 0 {
+			pa.selected--
+		}
+		return m, nil
+	case tea.KeyDown:
+		if pa.selected < len(approvalMenu)-1 {
+			pa.selected++
+		}
+		return m, nil
+	case tea.KeyEnter:
+		return m.dispatchApprovalChoice()
+	}
+	return m, nil
+}
+
+// dispatchApprovalChoice runs the action attached to the highlighted
+// menu row. For "decline with feedback" the panel switches to a text
+// input sub-state and the reply is deferred until the user submits.
+func (m *rootModel) dispatchApprovalChoice() (tea.Model, tea.Cmd) {
+	pa := m.pendingApproval
+	opt := approvalMenu[pa.selected]
+	switch opt.action {
+	case actionApproveOnce:
+		m.replyApproval(fs.Decision{Approved: true})
+	case actionApproveAll:
+		m.autoApproveSession = true
+		m.replyApproval(fs.Decision{Approved: true})
+	case actionDeclineWithFeedback:
+		m.openFeedback()
+	}
+	return m, nil
+}
+
+// openFeedback swaps the approval panel into "redirect the agent" mode
+// by attaching a fresh textinput to the pending request. Used both by
+// the menu's decline-with-feedback option and by Esc as a shortcut.
+// Safe to call only while a pendingApproval exists.
+func (m *rootModel) openFeedback() {
+	if m.pendingApproval == nil {
+		return
+	}
+	ti := textinput.New()
+	ti.Placeholder = "What should the agent do instead?"
+	ti.CharLimit = 0
+	ti.Width = m.bodyWidth() - 6
+	ti.Focus()
+	m.pendingApproval.feedback = &ti
+	m.layoutSizes()
+}
+
+// replyApproval delivers the user's Decision to the waiting approver
+// and clears the on-screen prompt. The reply channel is buffered so
+// the send never blocks, even if the approver's context has already
+// fired and the receiver has gone away.
+func (m *rootModel) replyApproval(dec fs.Decision) {
+	if m.pendingApproval == nil {
+		return
+	}
+	m.pendingApproval.reply <- dec
+	m.pendingApproval = nil
+	m.layoutSizes()
+}
+
+// appendHistory records a submitted prompt and resets nav state so the
+// next Up arrow starts from the newest entry. Consecutive duplicates
+// are skipped — repeatedly running the same prompt shouldn't pad the
+// history with copies.
+func (m *rootModel) appendHistory(text string) {
+	if text == "" {
+		return
+	}
+	if n := len(m.promptHistory); n == 0 || m.promptHistory[n-1] != text {
+		m.promptHistory = append(m.promptHistory, text)
+	}
+	m.historyIdx = -1
+	m.historyDraft = ""
+}
+
+// historyPrev walks one step back through promptHistory. Returns true
+// when the key was consumed (handler should stop propagation); false
+// when the caller should fall through to the textarea so multi-line
+// editing keeps working.
+//
+// Entry rules: nav engages when the input is empty or nav is already
+// active. With unrelated typed text and no active nav, Up belongs to
+// the textarea.
+func (m *rootModel) historyPrev() bool {
+	if len(m.promptHistory) == 0 {
+		return false
+	}
+	inNav := m.historyIdx != -1
+	if !inNav && strings.TrimSpace(m.input.Value()) != "" {
+		return false
+	}
+	if !inNav {
+		m.historyDraft = m.input.Value()
+		m.historyIdx = len(m.promptHistory) - 1
+	} else if m.historyIdx > 0 {
+		m.historyIdx--
+	}
+	m.input.SetValue(m.promptHistory[m.historyIdx])
+	return true
+}
+
+// historyNext walks one step forward through promptHistory. Past the
+// newest entry it restores the saved draft and exits nav. Returns true
+// only while nav is active; outside of nav Down stays with the textarea.
+func (m *rootModel) historyNext() bool {
+	if m.historyIdx == -1 {
+		return false
+	}
+	m.historyIdx++
+	if m.historyIdx >= len(m.promptHistory) {
+		m.historyIdx = -1
+		draft := m.historyDraft
+		m.historyDraft = ""
+		m.input.SetValue(draft)
+		return true
+	}
+	m.input.SetValue(m.promptHistory[m.historyIdx])
+	return true
 }
 
 func (m *rootModel) startRun(prompt string) {
@@ -677,6 +977,9 @@ func (m *rootModel) View() string {
 	if strip := m.agentStrip(width); strip != "" {
 		sections = append(sections, strip)
 	}
+	if ap := m.approvalPanel(width); ap != "" {
+		sections = append(sections, ap)
+	}
 	sections = append(sections, styles.InputBorder.Render(m.input.View()))
 
 	status := renderStatusBar(statusBarInput{
@@ -759,6 +1062,78 @@ func (m *rootModel) taskPanel(width int) string {
 		return ""
 	}
 	return renderTaskPanel(m.controller.ToolState(), width)
+}
+
+// approvalPanel renders the pending fs.Approver request as a bordered
+// block above the input bar. Two sub-views share the same outer frame:
+//
+//   - Menu mode: header → rendered diff → vertical option list with a
+//     ▶ marker on the highlighted row, navigated by Up/Down.
+//   - Feedback mode: header → short prompt → textinput, entered when
+//     the user picks the "tell the agent what to do instead" option.
+//
+// Returns "" when no approval is pending so the section collapses to
+// zero height and the transcript reclaims the space.
+func (m *rootModel) approvalPanel(width int) string {
+	if m.pendingApproval == nil || m.pendingApproval.diff == nil {
+		return ""
+	}
+	// Reserve room for the panel border (2 cols horizontal padding).
+	innerWidth := width - 4
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+
+	if m.pendingApproval.feedback != nil {
+		return styles.InputBorder.Render(m.renderApprovalFeedback())
+	}
+	return styles.InputBorder.Render(m.renderApprovalMenu(innerWidth))
+}
+
+// renderApprovalMenu draws the diff plus the option list. The selected
+// row gets a cyan ▶ marker and bold cyan label; unselected rows are
+// muted so the cursor reads as the load-bearing affordance. The hint
+// footer reminds the user how to drive the menu.
+func (m *rootModel) renderApprovalMenu(innerWidth int) string {
+	diff := m.pendingApproval.diff
+
+	var b strings.Builder
+	b.WriteString(styles.PanelHeader.Render(
+		fmt.Sprintf("▰ APPROVE %s %s", strings.ToUpper(diff.Op), diff.Path),
+	))
+	b.WriteByte('\n')
+	b.WriteString(renderFileDiff(diff, innerWidth))
+	b.WriteByte('\n')
+
+	selStyle := lipgloss.NewStyle().Foreground(paletteCyan).Bold(true)
+	dimStyle := styles.DimText
+	for i, opt := range approvalMenu {
+		if i == m.pendingApproval.selected {
+			b.WriteString(selStyle.Render("▶ " + opt.label))
+		} else {
+			b.WriteString(dimStyle.Render("  " + opt.label))
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// renderApprovalFeedback draws the redirection prompt the user types
+// into after picking "tell the agent what to do instead". No diff is
+// repeated — they've already seen it; what matters now is the new
+// instruction they want the agent to follow.
+func (m *rootModel) renderApprovalFeedback() string {
+	var b strings.Builder
+	b.WriteString(styles.PanelHeader.Render("▰ REDIRECT THE AGENT"))
+	b.WriteByte('\n')
+	b.WriteString(styles.DimText.Render(
+		"The proposed change will not be applied. Type the instruction you want the agent to follow instead, then press Enter.",
+	))
+	b.WriteString("\n\n")
+	b.WriteString(m.pendingApproval.feedback.View())
+	b.WriteByte('\n')
+	b.WriteString(styles.FooterHint.Render("[Enter] submit   [Esc] cancel (decline without feedback)"))
+	return b.String()
 }
 
 func (m *rootModel) modelName() string {

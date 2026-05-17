@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/internal/tools/shell"
 )
 
 // DefaultReadLimit caps an unbounded Read at this many lines, matching
@@ -69,7 +70,7 @@ type readInput struct {
 	Pages    string `json:"pages"`
 }
 
-func (t *ReadTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
 	var in readInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: "read: decode input: " + err.Error()}, nil
@@ -92,7 +93,8 @@ func (t *ReadTool) Execute(_ context.Context, input json.RawMessage) (tools.Resu
 		return tools.Result{IsError: true, Content: fmt.Sprintf("read: file not found: %s", in.FilePath)}, nil
 	}
 	if info.IsDir() {
-		return tools.Result{IsError: true, Content: fmt.Sprintf("read: not a regular file: %s", in.FilePath)}, nil
+		treeInput := fmt.Sprintf(`{"path":"%s"}`, resolved)
+		return shell.Tree.Execute(ctx, json.RawMessage(treeInput))
 	}
 
 	data, err := os.ReadFile(resolved)

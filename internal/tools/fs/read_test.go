@@ -13,7 +13,7 @@ import (
 //   - decode input
 //   - reject `pages` (reserved)
 //   - resolvePath errors
-//   - stat → not-found / directory rejection
+//   - stat → not-found / directory delegation to tree
 //   - read file
 //   - mark tracker on success
 //   - line slicing (offset / limit / past-EOF)
@@ -51,12 +51,17 @@ func TestRead_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestRead_RejectsDirectory(t *testing.T) {
+func TestRead_DirectoryDelegatesToTree(t *testing.T) {
 	dir := t.TempDir()
 	tool := NewRead(NewReadTracker())
 	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"file_path":"`+dir+`"}`))
-	if !res.IsError || !strings.Contains(res.Content, "not a regular file") {
-		t.Errorf("expected dir rejection; got isErr=%v content=%q", res.IsError, res.Content)
+	if res.IsError {
+		t.Fatalf("expected tree delegation; got error: %s", res.Content)
+	}
+	// tree output starts with the basename of the directory
+	base := filepath.Base(dir)
+	if !strings.HasPrefix(res.Content, base) {
+		t.Errorf("expected tree output starting with %q; got %q", base, res.Content)
 	}
 }
 

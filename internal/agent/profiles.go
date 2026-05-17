@@ -29,6 +29,7 @@ import (
 	"github.com/johnny1110/evva/internal/tools/shell"
 	"github.com/johnny1110/evva/internal/tools/skill"
 	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/tools/util"
 	"github.com/johnny1110/evva/internal/tools/ux"
 	"github.com/johnny1110/evva/internal/tools/web"
 )
@@ -152,6 +153,7 @@ func Main(cfg *config.AppConfig, provider constant.LLMProvider, model constant.M
 			ux.Names(),
 			cron.Names(),
 			web.Names(),
+			util.Names(),
 		),
 		LLMProvider: provider,
 		LLMModel:    model,
@@ -170,7 +172,7 @@ func Explore(cfg *config.AppConfig, provider constant.LLMProvider, model constan
 	return Profile{
 		Type:         EXPLORE,
 		SystemPrompt: sp,
-		ActiveTools:  []tools.ToolName{tools.READ_FILE, tools.WEB_SEARCH, tools.TREE, tools.GREP},
+		ActiveTools:  []tools.ToolName{tools.READ_FILE, tools.WEB_SEARCH, tools.TREE, tools.GREP, tools.JSON_QUERY},
 		LLMProvider:  provider,
 		LLMModel:     model,
 		LLMOptions:   options,

@@ -107,6 +107,12 @@ Rules:
 ## Web tools (` + "`web_search`" + ` / ` + "`web_fetch`" + `)
 Reach for these when the answer depends on info past your training cutoff: latest financial news, library versions, new APIs, current events, or a verbatim error-message lookup.
 
+## Json tools (` + "`json_query`" + `)
+Extract a value from a JSON blob using a simple path expression.
+
+## Calculate tools (` + "`calc`" + `)
+Evaluate a mathematical expression and return the result.
+
 ## Subagents (` + "`agent`" + `)
 A subagent runs a focused task in its own conversation thread, inherits your provider, and returns a single summary. Use it to keep your own context clean — the subagent's intermediate tool results never enter your transcript, only the final report does.
 

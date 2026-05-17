@@ -17,8 +17,6 @@ var Tree tools.Tool = &TreeTool{}
 
 type TreeTool struct{}
 
-func NewTree() *TreeTool { return &TreeTool{} }
-
 func (t *TreeTool) Name() string { return string(tools.TREE) }
 
 func (t *TreeTool) Description() string {

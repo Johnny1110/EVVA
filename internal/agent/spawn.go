@@ -143,8 +143,10 @@ func subagentProfile(parent Profile, kind string) (Profile, error) {
 		return Explore(cfg, parent.LLMProvider, parent.LLMModel, inherited), nil
 	case "general-purpose", "general", "":
 		toolNames := []tools.ToolName{
+			tools.TREE,
 			tools.READ_FILE, tools.WRITE_FILE, tools.EDIT_FILE,
 			tools.BASH, tools.WEB_SEARCH, tools.WEB_FETCH,
+			tools.JSON_QUERY, tools.CALC,
 		}
 		return General(cfg, parent.LLMProvider, parent.LLMModel, inherited, toolNames...), nil
 	case "teammate":

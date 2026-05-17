@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -81,7 +82,7 @@ func TestEdit_RejectsIdenticalStrings(t *testing.T) {
 }
 
 func TestEdit_OldStringNotFound(t *testing.T) {
-	path := writeTempFile(t, "hello world")
+	path := writeTempFile(t, "hello world\nsecond line\n")
 	tr := NewReadTracker()
 	tr.MarkRead(path)
 	tool := NewEdit(tr)
@@ -91,6 +92,30 @@ func TestEdit_OldStringNotFound(t *testing.T) {
 
 	if !res.IsError || !strings.Contains(res.Content, "not found") {
 		t.Errorf("expected 'not found'; got isErr=%v content=%q", res.IsError, res.Content)
+	}
+	// Verify the diagnostic hint is present.
+	if !strings.Contains(res.Content, "File starts with:") {
+		t.Errorf("expected hint with file preview; got %q", res.Content)
+	}
+}
+
+func TestEdit_OldStringNotFound_LineNumberPrefixHint(t *testing.T) {
+	path := writeTempFile(t, "hello world\n")
+	tr := NewReadTracker()
+	tr.MarkRead(path)
+	tool := NewEdit(tr)
+
+	// Simulate the model accidentally including the read_file line-number
+	// prefix: "     1\thello world" (6 spaces, "1", tab, then content).
+	oldWithPrefix := "     1\thello world"
+	res, _ := tool.Execute(context.Background(), json.RawMessage(
+		`{"file_path":"`+path+`","old_string":`+strconv.Quote(oldWithPrefix)+`,"new_string":"bye"}`))
+
+	if !res.IsError {
+		t.Fatalf("expected error; got content=%q", res.Content)
+	}
+	if !strings.Contains(res.Content, "line-number prefix") {
+		t.Errorf("expected line-number-prefix hint; got %q", res.Content)
 	}
 }
 

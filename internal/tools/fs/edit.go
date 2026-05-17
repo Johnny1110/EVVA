@@ -50,8 +50,8 @@ func (t *EditTool) Schema() json.RawMessage {
 		"required":["file_path","old_string","new_string"],
 		"properties":{
 			"file_path":{"type":"string","description":"Absolute path to the file to edit (must be absolute, not relative)."},
-			"old_string":{"type":"string","description":"Exact text to find. Must match byte-for-byte including whitespace and newlines. Include enough surrounding context to make it unique unless replace_all is true."},
-			"new_string":{"type":"string","description":"Replacement text. Must differ from old_string."},
+			"old_string":{"type":"string","description":"Exact text to find. Must match byte-for-byte including whitespace and newlines. Include enough surrounding context to make it unique unless replace_all is true. be careful read tool have line number as each lines prefix, do not include that in old_string."},
+			"new_string":{"type":"string","description":"Replacement text. Must differ from old_string. Also remind don't add linen umber as prefix'"},
 			"replace_all":{"type":"boolean","default":false,"description":"Replace every occurrence of old_string. Defaults to false (require a unique match)."}
 		}
 	}`)
@@ -110,14 +110,14 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 	before := string(data)
 	count := strings.Count(before, in.OldString)
 	if count == 0 {
+		hint := buildNotFoundHint(in.OldString, before)
 		return tools.Result{
 			IsError: true,
 			Content: fmt.Sprintf(
-				"edit: old_string not found in %s. "+
-					"The text you provided does not appear in the file. "+
+				"edit: old_string not found in %s.\n%s\n"+
 					"Re-read the file and copy the exact text — including "+
 					"whitespace — that you want to replace.",
-				in.FilePath,
+				in.FilePath, hint,
 			),
 		}, nil
 	}
@@ -242,4 +242,39 @@ func lineSpan(s string) int {
 		return 1
 	}
 	return n
+}
+
+// buildNotFoundHint returns a diagnostic to help the user understand why
+// old_string wasn't found in the file.
+func buildNotFoundHint(old, fileContent string) string {
+	var b strings.Builder
+
+	// Detect line-number prefix: "     1\thello" — the first tab separates
+	// the line-number gutter from the real content. If stripping everything
+	// up through that first tab yields a match, the user included the prefix.
+	if idx := strings.IndexByte(old, '\t'); idx >= 0 {
+		stripped := old[idx+1:]
+		if stripped != "" && strings.Contains(fileContent, stripped) {
+			b.WriteString("Hint: your old_string appears to include a line-number prefix (e.g. \"    42\\thello\"). ")
+			b.WriteString("Strip the `<n>\\t` prefix from the read_file output — provide only the raw line content.\n")
+		}
+	}
+
+	// Show the file's start for visual comparison.
+	firstLine := fileContent
+	if idx := strings.IndexByte(fileContent, '\n'); idx >= 0 {
+		firstLine = fileContent[:idx]
+	}
+	if len(firstLine) > 80 {
+		firstLine = firstLine[:80] + "..."
+	}
+	b.WriteString("File starts with: ")
+	b.WriteString(strconv.Quote(firstLine))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf(
+		"old_string: %d bytes; file: %d bytes.",
+		len(old), len(fileContent),
+	))
+
+	return b.String()
 }

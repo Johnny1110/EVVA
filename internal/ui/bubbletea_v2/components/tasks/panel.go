@@ -11,6 +11,7 @@ package tasks
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -112,6 +113,7 @@ func visibleTasks(store *task.TaskGroup) []task.Task {
 		}
 		out = append(out, t)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 

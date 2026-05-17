@@ -122,8 +122,8 @@ func Default() *Theme {
 	t.ToolResult = lipgloss.NewStyle().Foreground(sky)
 
 	// Diff — white on solid bg (M2 change)
-	t.DiffAdd = lipgloss.NewStyle().Foreground(white).Background(green).Bold(true)
-	t.DiffRemove = lipgloss.NewStyle().Foreground(white).Background(red).Bold(true)
+	t.DiffAdd = lipgloss.NewStyle().Foreground(fg).Background(diffAddBg).Bold(true)
+	t.DiffRemove = lipgloss.NewStyle().Foreground(fg).Background(diffRemoveBg).Bold(true)
 	t.DiffContext = lipgloss.NewStyle().Foreground(muted)
 	t.DiffHeader = lipgloss.NewStyle().Foreground(purple).Italic(true)
 
@@ -172,7 +172,7 @@ func Default() *Theme {
 	// Context HUD
 	t.ContextBar = lipgloss.NewStyle().Foreground(muted)
 	t.ContextFill = lipgloss.NewStyle().Foreground(cyan).Bold(true)
-	t.ContextRail = lipgloss.NewStyle().Foreground(dim)
+	t.ContextRail = lipgloss.NewStyle().Foreground(muted)
 
 	// Spinner color overrides
 	t.spinThink = lipgloss.NewStyle().Foreground(lightBlue).Bold(true)

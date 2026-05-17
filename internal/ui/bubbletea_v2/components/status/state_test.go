@@ -217,7 +217,7 @@ func TestStatusBarComposeSmokeTest(t *testing.T) {
 		t.Fatal("Compose returned empty output")
 	}
 	plain := stripANSIForTest(out)
-	for _, want := range []string{"READY", "EVVA", "claude-opus-4-7", "IN", "OUT", "CTX", "10%", "a1b2c3d4"} {
+	for _, want := range []string{"READY", "EVVA", "claude-opus-4-7", "IN", "OUT", "CTX", "10.0%", "a1b2c3d4"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("status bar missing %q\n   plain: %q", want, plain)
 		}
@@ -231,14 +231,14 @@ func TestStatusBarContextPercent(t *testing.T) {
 	bar := New(s)
 	cases := []struct {
 		used, limit int
-		want        string
+		want     string
 	}{
-		{0, 200000, "0%"},
-		{20000, 200000, "10%"},
-		{100000, 200000, "50%"},
-		{200000, 200000, "100%"},
-		{300000, 200000, "100%"}, // overflow clamps
-		{1234, 0, "0%"},          // unknown limit
+		{0, 200000, "0.0%"},
+		{20000, 200000, "10.0%"},
+		{100000, 200000, "50.0%"},
+		{200000, 200000, "100.0%"},
+		{300000, 200000, "100.0%"}, // overflow clamps
+		{1234, 0, "0.0%"},          // unknown limit
 	}
 	for _, tc := range cases {
 		bar.SetContext(tc.used, tc.limit)

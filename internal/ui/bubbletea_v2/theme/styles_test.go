@@ -31,8 +31,8 @@ func TestDefaultDiffStylesWhiteOnSolid(t *testing.T) {
 		fg   lipgloss.Color
 		bg   lipgloss.Color
 	}{
-		{"DiffAdd", th.DiffAdd, white, green},
-		{"DiffRemove", th.DiffRemove, white, red},
+		{"DiffAdd", th.DiffAdd, fg, diffAddBg},
+		{"DiffRemove", th.DiffRemove, fg, diffRemoveBg},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if gotFg := tc.got.GetForeground(); gotFg != tc.fg {

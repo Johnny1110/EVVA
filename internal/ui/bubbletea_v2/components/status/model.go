@@ -154,27 +154,62 @@ func stateColor(s RunState, th *theme.Theme) lipgloss.Color {
 }
 
 // renderContextBar produces the HUD utilization meter. Half-block
-// tally marks: filled ▰, empty ▱. Bracketed in cyan so it reads as
-// an instrument cell, not a generic progress widget. used==0 or
-// limit==0 collapses to 0%.
+// tally marks: filled ▰, empty ▱. Fill color shifts from green
+// (0-20%) through yellow (40-60%) to red (80-100%). Empty rail is
+// grey. Percentage is shown to 1 decimal place.
 func renderContextBar(used, limit int, th *theme.Theme) string {
 	const barWidth = 12
-	pct := 0
+	pct := 0.0
 	if limit > 0 {
-		pct = used * 100 / limit
+		pct = float64(used) * 100.0 / float64(limit)
 		if pct > 100 {
 			pct = 100
 		}
 	}
-	filled := pct * barWidth / 100
+	filled := int(pct * float64(barWidth) / 100.0)
 	if filled > barWidth {
 		filled = barWidth
 	}
-	bar := th.ContextFill.Render(strings.Repeat("▰", filled)) +
+	fillStyle := lipgloss.NewStyle().Foreground(contextBarColor(pct)).Bold(true)
+	bar := fillStyle.Render(strings.Repeat("▰", filled)) +
 		th.ContextRail.Render(strings.Repeat("▱", barWidth-filled))
 	return th.ContextBar.Render("CTX ") +
 		bar + " " +
-		th.StatusValue.Render(fmt.Sprintf("%d%%", pct))
+		th.StatusValue.Render(fmt.Sprintf("%.1f%%", pct))
+}
+
+// contextBarColor maps a 0-100 percentage to an RGB color on the
+// green→yellow→red spectrum: green ≤20%, yellow at 40-60%, red ≥80%,
+// with linear interpolation through the transition bands.
+func contextBarColor(pct float64) lipgloss.Color {
+	green := [3]uint8{0x39, 0xFF, 0x14}
+	yellow := [3]uint8{0xFA, 0xFC, 0x4E}
+	red := [3]uint8{0xFF, 0x00, 0x3C}
+
+	var c [3]uint8
+	switch {
+	case pct <= 20:
+		c = green
+	case pct <= 40:
+		t := (pct - 20) / 20
+		c = lerpRGB(green, yellow, t)
+	case pct <= 60:
+		c = yellow
+	case pct <= 80:
+		t := (pct - 60) / 20
+		c = lerpRGB(yellow, red, t)
+	default:
+		c = red
+	}
+	return lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", c[0], c[1], c[2]))
+}
+
+func lerpRGB(a, b [3]uint8, t float64) [3]uint8 {
+	return [3]uint8{
+		uint8(float64(a[0]) + (float64(b[0])-float64(a[0]))*t),
+		uint8(float64(a[1]) + (float64(b[1])-float64(a[1]))*t),
+		uint8(float64(a[2]) + (float64(b[2])-float64(a[2]))*t),
+	}
 }
 
 // shortAgentID truncates the agent's UUID to its first 8 characters

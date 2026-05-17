@@ -33,6 +33,11 @@ const (
 	yellow    lipgloss.Color = "#FAFC4E" // sulfur — compacting / paused
 	green     lipgloss.Color = "#39FF14" // acid green — success / diff add bg
 	red       lipgloss.Color = "#FF003C" // glitch red — errors / diff remove bg
+
+	// Diff backgrounds — heavily muted green/red so filled diff rows
+	// blend into the dark terminal surface rather than jumping out.
+	diffAddBg    lipgloss.Color = "#0F2B0E"
+	diffRemoveBg lipgloss.Color = "#2B0E18"
 	lightBlue lipgloss.Color = "#7DF9FF" // cyan glow — thinking spinner
 
 	// Diff text foreground: true white on the solid green / red blocks.

@@ -87,7 +87,7 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 		return tools.Result{
 			IsError: true,
 			Content: fmt.Sprintf(
-				"edit: you must use read_file on %s before editing it. "+
+				"edit: you must use `read` tool on %s before editing it. "+
 					"Read the file first so your old_string matches the current "+
 					"content exactly.",
 				in.FilePath,

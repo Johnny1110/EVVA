@@ -10,7 +10,7 @@ import "github.com/johnny1110/evva/internal/tools"
 
 // Names lists every tool name this package contributes, in canonical order.
 func Names() []tools.ToolName {
-	return []tools.ToolName{tools.BASH, tools.GREP, tools.TREE}
+	return []tools.ToolName{tools.BASH, tools.TREE}
 }
 
 // skipDirs returns the set of directory names to skip during tree/grep walks.

@@ -109,6 +109,26 @@ func TestCalc_Evaluate(t *testing.T) {
 			expr: "1e3 + 1",
 			want: "1001",
 		},
+		{
+			name: "modulo",
+			expr: "10 % 3",
+			want: "1",
+		},
+		{
+			name: "modulo float",
+			expr: "10.5 % 3",
+			want: "1.5",
+		},
+		{
+			name: "modulo precedence vs add",
+			expr: "10 + 3 % 2",
+			want: "11",
+		},
+		{
+			name: "modulo precedence vs mult",
+			expr: "10 % 3 * 2",
+			want: "2",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -154,6 +174,16 @@ func TestCalc_Errors(t *testing.T) {
 			name: "garbage input",
 			expr: "abc",
 			want: "invalid number",
+		},
+		{
+			name: "modulo by zero",
+			expr: "1 % 0",
+			want: "modulo by zero",
+		},
+		{
+			name: "double star exponentiation",
+			expr: "2 ** 10",
+			want: "** is not supported",
 		},
 	}
 	for _, tt := range tests {

@@ -21,9 +21,9 @@ func (t *calcTool) Name() string { return string(tools.CALC) }
 
 func (t *calcTool) Description() string {
 	return "Evaluate a mathematical expression and return the result.\n\n" +
-		"Supports: +, -, *, /, ^ (exponentiation), parentheses, and unary +/-.\n" +
-		"All calculations use float64; the final result is rounded to 6 decimal places.\n" +
-		"Examples: \"((1+2)*3/4)^5\", \"sqrt(2)\" (not yet), \"1 + 2 * 3\""
+		"Supports: +, -, *, /, % (modulo), ^ (exponentiation), parentheses, and unary +/-.\n" +
+		"Use ^ for exponentiation (not **). All calculations use float64; the final result is rounded to 6 decimal places.\n" +
+		"Examples: \"((1+2)*3/4)^5\", \"10 % 3\", \"1 + 2 * 3\""
 }
 
 func (t *calcTool) Schema() json.RawMessage {
@@ -148,6 +148,9 @@ func (p *parser) parseTerm() (float64, error) {
 		}
 		switch p.s[p.pos] {
 		case '*':
+			if p.pos+1 < len(p.s) && p.s[p.pos+1] == '*' {
+				return 0, fmt.Errorf("** is not supported; use ^ for exponentiation")
+			}
 			p.pos++
 			right, err := p.parseUnary()
 			if err != nil {
@@ -164,6 +167,16 @@ func (p *parser) parseTerm() (float64, error) {
 				return 0, fmt.Errorf("division by zero")
 			}
 			left /= right
+		case '%':
+			p.pos++
+			right, err := p.parseUnary()
+			if err != nil {
+				return 0, err
+			}
+			if right == 0 {
+				return 0, fmt.Errorf("modulo by zero")
+			}
+			left = math.Mod(left, right)
 		default:
 			return left, nil
 		}

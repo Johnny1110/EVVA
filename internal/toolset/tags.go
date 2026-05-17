@@ -52,6 +52,10 @@ var toolTags = map[tools.ToolName][]string{
 
 	tools.ASK_USER_QUESTION: {"ask", "user", "question", "prompt", "interact", "clarify"},
 	tools.PUSH_NOTIFICATION: {"notify", "notification", "alert", "ping", "remind"},
+
+	// utils
+	tools.JSON_QUERY: {"json", "query", "filter", "extract", "parse"},
+	tools.CALC:       {"math", "calculate", "sum", "product", "average"},
 }
 
 // TagsFor returns the keywords associated with a tool name, or nil if none

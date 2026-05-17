@@ -130,7 +130,7 @@ func search(query string, max int, all []tools.Descriptor) []tools.Descriptor {
 
 	// 1. select: form — exact name lookup, preserves the user's order.
 	if rest, ok := strings.CutPrefix(q, "select:"); ok {
-		return selectByName(rest, all)
+		return selectByName(rest, all, max)
 	}
 
 	// 2. Tokenize. "+keyword" tokens are required filters; the rest contribute to score.
@@ -200,8 +200,9 @@ func search(query string, max int, all []tools.Descriptor) []tools.Descriptor {
 
 // selectByName implements "select:a,b,c" — exact (case-insensitive) name
 // lookup; unknown names are silently dropped (the result list is the
-// authoritative signal).
-func selectByName(list string, all []tools.Descriptor) []tools.Descriptor {
+// authoritative signal). Capped at max to match the documented max_results
+// behavior (schema default: 5).
+func selectByName(list string, all []tools.Descriptor, max int) []tools.Descriptor {
 	wanted := strings.Split(list, ",")
 	out := make([]tools.Descriptor, 0, len(wanted))
 	for _, w := range wanted {
@@ -214,6 +215,9 @@ func selectByName(list string, all []tools.Descriptor) []tools.Descriptor {
 				out = append(out, d)
 				break
 			}
+		}
+		if len(out) >= max {
+			break
 		}
 	}
 	return out

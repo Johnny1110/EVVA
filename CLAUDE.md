@@ -174,7 +174,7 @@ There are full claude-source code put in `evva/ref/src`, refer to claude-code so
   * Redesign Agent: in the future, the evva agent should be able support extend by other project, 
   * Any project extend agent can share Evva toolPackage + customized toolPackage
 
-* [] Phase-4: System/Tool Prompt copy
+* [ ] Phase-4: System/Tool Prompt copy
   * Learn from Claude Code Prompt system design, copy the claude code design to evva.
   * update evva system design following claude code. 
 
@@ -186,21 +186,21 @@ There are full claude-source code put in `evva/ref/src`, refer to claude-code so
   * Based on claude-code TaskTools(Create, Get, List, Output, Stop, Update), revamp evva task tool. copy to golang including same tool desc and schema.
   * Revamp TaskGroup to fit new TaskTools 
 
-* [] Phase-7: Tool use Permission mechanism copy
+* [ ] Phase-7: Tool use Permission mechanism copy
   * Based on claude-code Tool use Permission mechanism design it for evva, and create a mode swith, safe mode (enable tool use permission check), auto mode (disable tool use permission check)
 
-* [] Phase-8: Agent Profile switch
+* [ ] Phase-8: Agent Profile switch
   * Design an agent profile switch feature, different tool list, different system prompt, different harness. user can switch profile before session start.
   * system level agent profile (Explore, General) are now allow to switch by user
   * need a ProfileManager to manage all profile.
 
-* [] Phase-9: TeamTool SendMessageTool copy
+* [ ] Phase-9: TeamTool SendMessageTool copy
 
-* [] Phase-10: EnterWorktreeTool +ExitWorktreeTool
+* [ ] Phase-10: EnterWorktreeTool +ExitWorktreeTool
 
-* [] Phase-10: AskUserQuestionTool copy
+* [ ] Phase-10: AskUserQuestionTool copy
 
-* [] Phase-11: EnterPlanModeTool + ExitPlanMode copy
+* [ ] Phase-11: EnterPlanModeTool + ExitPlanMode copy
 
 ... in future
 

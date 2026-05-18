@@ -4,7 +4,7 @@
 
 `evva` runs a tool-using LLM agent in your terminal. It speaks Anthropic Claude, DeepSeek, OpenAI, and Ollama through one `llm.Client` interface; dispatches multiple tool calls per turn in parallel; tracks tasks and sub-agents through an observable store; and renders into a bubbletea TUI or a plain-text CLI sink.
 
-The architecture is small on purpose — adding a new LLM provider, panel, or UI implementation is roughly one package each.
+The architecture is small on purpose — adding a new LLM provider, panel, or UI implementation is roughly one package each. evva is written in golang.
 
 ### EVVA_HOME Dir 
 

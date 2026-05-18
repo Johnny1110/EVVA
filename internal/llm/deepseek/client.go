@@ -98,15 +98,44 @@ type apiTool struct {
 }
 
 type apiRequest struct {
-	Model         string            `json:"model"`
-	Messages      []apiMessage      `json:"messages"`
-	Temperature   *float64          `json:"temperature,omitempty"`
-	TopP          *float64          `json:"top_p,omitempty"`
-	MaxTokens     int               `json:"max_tokens,omitempty"`
-	Stop          []string          `json:"stop,omitempty"`
-	Tools         []apiTool         `json:"tools,omitempty"`
-	Stream        bool              `json:"stream,omitempty"`
-	StreamOptions *apiStreamOptions `json:"stream_options,omitempty"`
+	Model           string            `json:"model"`
+	Messages        []apiMessage      `json:"messages"`
+	Temperature     *float64          `json:"temperature,omitempty"`
+	TopP            *float64          `json:"top_p,omitempty"`
+	MaxTokens       int               `json:"max_tokens,omitempty"`
+	Stop            []string          `json:"stop,omitempty"`
+	Tools           []apiTool         `json:"tools,omitempty"`
+	Thinking        *apiThinking      `json:"thinking,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+	Stream          bool              `json:"stream,omitempty"`
+	StreamOptions   *apiStreamOptions `json:"stream_options,omitempty"`
+}
+
+// apiThinking enables DeepSeek's thinking mode.
+type apiThinking struct {
+	Type string `json:"type"` // "enabled"
+}
+
+// deepseekEffort maps evva effort levels to DeepSeek reasoning_effort:
+//
+//	0 → ""   (thinking disabled)
+//	1 → ""   (low: no thinking, fast)
+//	2 → "high"  (medium)
+//	3 → "max"   (high)
+//	4 → "max"   (ultra)
+func deepseekEffort(effort int) (think *apiThinking, reasoningEffort string) {
+	switch effort {
+	case 1:
+		return &apiThinking{Type: "enabled"}, "medium"
+	case 2:
+		return &apiThinking{Type: "enabled"}, "high"
+	case 3:
+		return &apiThinking{Type: "enabled"}, "xhigh"
+	case 4:
+		return &apiThinking{Type: "enabled"}, "max"
+	default:
+		return nil, ""
+	}
 }
 
 // apiStreamOptions tweaks the OpenAI-compatible SSE response. include_usage
@@ -140,28 +169,22 @@ type apiResponse struct {
 
 // --- Client interface -----------------------------------------------------
 
-// effectiveModel selects the model for the next request based on effort.
-// Low effort picks the fast/cheap model; medium+ uses the configured model.
-func (c *Client) effectiveModel() string {
-	if c.params.Effort == 1 {
-		return string(constant.DEEPSEEK_V4_FLASH)
-	}
-	return c.model
-}
-
 func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet []tools.Tool) (llm.Response, error) {
 	if c.apiKey == "" {
 		return llm.Response{}, fmt.Errorf("deepseek: missing API key (type in /config to setup)")
 	}
 
+	think, reasoningEffort := deepseekEffort(c.params.Effort)
 	body := apiRequest{
-		Model:       c.effectiveModel(),
-		Messages:    toAPIMessages(messages, c.params.System),
-		Temperature: c.params.Temperature,
-		TopP:        c.params.TopP,
-		MaxTokens:   c.params.MaxTokens,
-		Stop:        c.params.StopSequences,
-		Tools:       toAPITools(toolSet),
+		Model:           c.model,
+		Messages:        toAPIMessages(messages, c.params.System),
+		Temperature:     c.params.Temperature,
+		TopP:            c.params.TopP,
+		MaxTokens:       c.params.MaxTokens,
+		Stop:            c.params.StopSequences,
+		Tools:           toAPITools(toolSet),
+		Thinking:        think,
+		ReasoningEffort: reasoningEffort,
 	}
 
 	payload, err := json.Marshal(body)
@@ -288,16 +311,19 @@ func (c *Client) Stream(ctx context.Context, messages []llm.Message, toolSet []t
 		sink = llm.DiscardChunks
 	}
 
+	think, reasoningEffort := deepseekEffort(c.params.Effort)
 	body := apiRequest{
-		Model:         c.effectiveModel(),
-		Messages:      toAPIMessages(messages, c.params.System),
-		Temperature:   c.params.Temperature,
-		TopP:          c.params.TopP,
-		MaxTokens:     c.params.MaxTokens,
-		Stop:          c.params.StopSequences,
-		Tools:         toAPITools(toolSet),
-		Stream:        true,
-		StreamOptions: &apiStreamOptions{IncludeUsage: true},
+		Model:           c.model,
+		Messages:        toAPIMessages(messages, c.params.System),
+		Temperature:     c.params.Temperature,
+		TopP:            c.params.TopP,
+		MaxTokens:       c.params.MaxTokens,
+		Stop:            c.params.StopSequences,
+		Tools:           toAPITools(toolSet),
+		Thinking:        think,
+		ReasoningEffort: reasoningEffort,
+		Stream:          true,
+		StreamOptions:   &apiStreamOptions{IncludeUsage: true},
 	}
 
 	payload, err := json.Marshal(body)

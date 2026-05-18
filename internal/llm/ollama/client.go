@@ -110,9 +110,8 @@ type apiResponse struct {
 
 // --- Client interface -----------------------------------------------------
 
-// Note on llm.LLMParams.Effort: Ollama exposes no provider-level reasoning
-// knob and currently offers a single model, so effort is a no-op. If more
-// models are added, effort can select among them (similar to DeepSeek).
+// Note on llm.LLMParams.Effort: Ollama exposes no reasoning-effort API
+// parameter, so effort is ignored.
 func (c *Client) Complete(ctx context.Context, messages []llm.Message, toolSet []tools.Tool) (llm.Response, error) {
 	body := apiRequest{
 		Model:    c.model,

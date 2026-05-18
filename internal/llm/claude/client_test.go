@@ -201,3 +201,23 @@ func TestToolResultRoundTripJSON(t *testing.T) {
 		t.Errorf("expected content array; got %s", string(inner))
 	}
 }
+
+func TestAnthropicEffort(t *testing.T) {
+	tests := []struct {
+		level int
+		want  string
+	}{
+		{0, ""},
+		{1, "low"},
+		{2, "medium"},
+		{3, "high"},
+		{4, "max"},
+		{5, ""},
+	}
+	for _, tt := range tests {
+		got := anthropicEffort(tt.level)
+		if got != tt.want {
+			t.Errorf("anthropicEffort(%d) = %q, want %q", tt.level, got, tt.want)
+		}
+	}
+}

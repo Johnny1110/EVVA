@@ -66,7 +66,7 @@ Foundation. Every later phase ships prompt strings, so the prompt scaffold needs
 - Rewrite the harness / tool-guide sections against `ref/src/constants/prompts.ts` and the per-tool prompt files.
 - Wire cross-references (Read ↔ Edit, Agent ↔ subagent_type list, plan-mode ↔ AskUserQuestion) through string constants so descriptions stay consistent as tools evolve.
 
-### Phase 1 — Filesystem parity (Read / Write / Edit / Glob)
+### Phase 1 — Filesystem parity (Read / Write / Edit / Glob) ✅️
 
 Port `ref/src/tools/FileReadTool / FileEditTool / FileWriteTool / GlobTool` descriptions verbatim; drop evva current Write/Edit/Read tools (many bug in current evva fs tools), can copy claude code design.
 
@@ -83,7 +83,7 @@ Port `ref/src/tools/FileReadTool / FileEditTool / FileWriteTool / GlobTool` desc
 - `internal/agent/profiles.go:Explore()` lists the active tools for the Explore subagent: currently `READ_FILE, WEB_SEARCH, TREE, GREP, JSON_QUERY`. When Glob lands, swap (or augment) TREE → GLOB. The Explore subagent prompt at `explore_agent.go` also mentions `tree` in its guidelines — update both.
 - The new fs tool descriptions should be ported from `ref/src/tools/FileReadTool/prompt.ts`, `FileEditTool/constants.ts`, `FileWriteTool/prompt.ts`, `GlobTool/prompt.ts`. Each ref TS file exports a `*_TOOL_NAME` constant; the prompt-side mirror in `toolnames.go` is evva's equivalent of that pattern (Go can't do the prompt↔tool round-trip without creating an import cycle, which is why the link test exists).
 
-### Phase 1b — Image returns via multimodal `tool_result` blocks
+### Phase 1b — Image returns via multimodal `tool_result` blocks ✅️
 
 Phase 1 ships text-only reads (UTF-8 text, PDF page extraction, Jupyter cell rendering) because returning **image bytes** to the LLM requires a cross-cutting refactor that goes beyond `internal/tools/fs/`. This phase delivers that refactor.
 
@@ -100,6 +100,10 @@ Work:
 - TUI: render the inline image block in the transcript (terminal protocol support is best-effort — Kitty / iTerm2 / Sixel where available, fallback to "[image: <path>, <bytes>B]").
 
 Prerequisite for any "look at this screenshot" workflow. Out of Phase 1 because it touches four LLM clients and the session store, not just `fs/`.
+
+### Phase 1c - Add agent's logger into tool
+- Currently the agent's logger is not pass into tools, so tool error or debug info can't be logged.
+- let tools Execute function add logger param.
 
 ### Phase 2 — ToolSearch + AgentTool polish + agent loader
 
@@ -196,7 +200,7 @@ Niche. Ship after the higher-leverage phases.
 - port ref/ system prompt to evva make evva stronger on tool usage and enhance coding ability.
 - port ref claude code all system prompt 1:1 (except for evva name and tool name interpolation, which is already handled by `toolnames.go`), and add evva style prompt (mix them together)
 
-### Phase 12 - Model Efforts
+### Phase 12 - Model Efforts ✅️
 
 - support switch Model effort in TUI with `/effort` slash command
 - 4 class of model effort:

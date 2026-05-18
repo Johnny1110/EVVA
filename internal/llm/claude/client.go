@@ -23,33 +23,26 @@ const (
 	messagesPath     = "/v1/messages"
 )
 
-// budgetForEffort maps user-facing effort levels (via LLMParams.Effort) to
-// Anthropic thinking budget_tokens:
+// anthropicEffort maps evva effort levels to Anthropic's native
+// output_config.effort strings:
 //
-//	0 → disabled (no extended thinking)
-//	1 → 1024   (low)
-//	2 → 4096   (medium, default)
-//	3 → 8192   (high)
-//	4 → 16384  (ultra)
-//	5+ → 24576 (future expansion)
-//
-// The tiers are deliberately coarse — the caller picks "how hard should
-// it think" not "exactly how many tokens." Levels 5+ saturate at the max
-// useful budget for non-Opus models.
-func budgetForEffort(effort int) int {
-	switch {
-	case effort <= 0:
-		return 0
-	case effort == 1:
-		return 1024
-	case effort == 2:
-		return 4096
-	case effort == 3:
-		return 8192
-	case effort == 4:
-		return 16384
+//	0 → ""       (not set)
+//	1 → "low"
+//	2 → "medium" (default)
+//	3 → "high"
+//	4 → "max"    (evva "ultra")
+func anthropicEffort(effort int) string {
+	switch effort {
+	case 1:
+		return "medium"
+	case 2:
+		return "high"
+	case 3:
+		return "xhigh"
+	case 4:
+		return "max"
 	default:
-		return 24576
+		return ""
 	}
 }
 
@@ -121,9 +114,9 @@ type block struct {
 // blockContentItem is one element of a tool_result's content array.
 // Used when a tool returns multimodal content (text + image blocks).
 type blockContentItem struct {
-	Type   string             `json:"type"`
-	Text   string             `json:"text,omitempty"`
-	Source *blockImageSource  `json:"source,omitempty"`
+	Type   string            `json:"type"`
+	Text   string            `json:"text,omitempty"`
+	Source *blockImageSource `json:"source,omitempty"`
 }
 
 type blockImageSource struct {
@@ -132,13 +125,11 @@ type blockImageSource struct {
 	Data      string `json:"data"`
 }
 
-// apiThinking enables extended thinking. BudgetTokens caps how many tokens
-// the model may spend reasoning before producing a reply; it must be less
-// than apiRequest.MaxTokens. Temperature/top_p/top_k must equal defaults
-// when thinking is enabled — the client clears them on the request.
-type apiThinking struct {
-	Type         string `json:"type"`
-	BudgetTokens int    `json:"budget_tokens"`
+// apiOutputConfig carries the Anthropic output_config.effort parameter.
+// Maps from evva's user-facing effort levels to Anthropic's native effort
+// strings: low→low, medium→medium, high→high, ultra→max.
+type apiOutputConfig struct {
+	Effort string `json:"effort"`
 }
 
 type apiTool struct {
@@ -148,17 +139,17 @@ type apiTool struct {
 }
 
 type apiRequest struct {
-	Model         string       `json:"model"`
-	Messages      []apiMessage `json:"messages"`
-	System        string       `json:"system,omitempty"`
-	MaxTokens     int          `json:"max_tokens"`
-	Temperature   *float64     `json:"temperature,omitempty"`
-	TopP          *float64     `json:"top_p,omitempty"`
-	TopK          *int         `json:"top_k,omitempty"`
-	StopSequences []string     `json:"stop_sequences,omitempty"`
-	Tools         []apiTool    `json:"tools,omitempty"`
-	Thinking      *apiThinking `json:"thinking,omitempty"`
-	Stream        bool         `json:"stream,omitempty"`
+	Model         string           `json:"model"`
+	Messages      []apiMessage     `json:"messages"`
+	System        string           `json:"system,omitempty"`
+	MaxTokens     int              `json:"max_tokens"`
+	Temperature   *float64         `json:"temperature,omitempty"`
+	TopP          *float64         `json:"top_p,omitempty"`
+	TopK          *int             `json:"top_k,omitempty"`
+	StopSequences []string         `json:"stop_sequences,omitempty"`
+	Tools         []apiTool        `json:"tools,omitempty"`
+	OutputConfig  *apiOutputConfig `json:"output_config,omitempty"`
+	Stream        bool             `json:"stream,omitempty"`
 }
 
 type apiResponse struct {
@@ -198,17 +189,10 @@ func (c *Client) buildRequestBody(messages []llm.Message, toolSet []tools.Tool) 
 		body.MaxTokens = DefaultMaxTokens
 	}
 
-	// Extended thinking: map effort tier to a budget. Anthropic requires
-	// MaxTokens > BudgetTokens and rejects non-default temperature/top_p/top_k
-	// while thinking is on, so clear those knobs and grow MaxTokens if needed.
-	if budget := budgetForEffort(c.params.Effort); budget > 0 {
-		body.Thinking = &apiThinking{Type: "enabled", BudgetTokens: budget}
-		if body.MaxTokens <= budget {
-			body.MaxTokens = budget + DefaultMaxTokens
-		}
-		body.Temperature = nil
-		body.TopP = nil
-		body.TopK = nil
+	// Map evva effort levels to Anthropic's native output_config.effort:
+	//   low → low, medium → medium, high → high, ultra → max.
+	if effort := anthropicEffort(c.params.Effort); effort != "" {
+		body.OutputConfig = &apiOutputConfig{Effort: effort}
 	}
 	return body
 }

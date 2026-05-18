@@ -87,6 +87,7 @@ const (
 	// this is for explore agent (read only)
 	GREP ToolName = "grep"
 	TREE ToolName = "tree"
+	GLOB ToolName = "glob"
 
 	// Others — deferred.
 	JSON_QUERY ToolName = "json_query"

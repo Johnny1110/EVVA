@@ -20,6 +20,7 @@ const (
 	nameBash       = "bash"
 	nameGrep       = "grep"
 	nameTree       = "tree"
+	nameGlob       = "glob"
 	nameAgent      = "agent"
 	nameToolSearch = "tool_search"
 	nameSkill      = "skill"

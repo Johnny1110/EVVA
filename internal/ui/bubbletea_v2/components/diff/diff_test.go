@@ -89,3 +89,42 @@ func TestRenderWidthFill(t *testing.T) {
 		t.Errorf("width=80 output should be longer than width=0 (got %d vs %d)", len(wide), len(narrow))
 	}
 }
+
+// TestRenderGutterAdaptsToMaxLineNumber — a tiny diff with single-digit
+// line numbers reserves a narrower gutter than a diff with 4-digit
+// numbers. Visible in the rendered string length when content is held
+// constant.
+func TestRenderGutterAdaptsToMaxLineNumber(t *testing.T) {
+	mk := func(maxLn int) *fs.FileDiff {
+		return &fs.FileDiff{Path: "x", Op: fs.OpEdit, Hunks: []fs.DiffHunk{{
+			OldStart: maxLn, NewStart: maxLn, OldCount: 1, NewCount: 1,
+			Lines: []fs.DiffLine{{Kind: fs.LineContext, Old: maxLn, New: maxLn, Text: "ctx"}},
+		}}}
+	}
+	small := Render(mk(9), theme.Default(), 0)
+	big := Render(mk(9999), theme.Default(), 0)
+	if len(small) >= len(big) {
+		t.Errorf("max-9 diff should have a shorter gutter than max-9999 (got %d vs %d)", len(small), len(big))
+	}
+}
+
+// TestRenderCreateOp — pure-add diff (newly-created file) renders
+// every line as an add and no remove lines.
+func TestRenderCreateOp(t *testing.T) {
+	d := &fs.FileDiff{
+		Path: "new.go", Op: fs.OpCreate,
+		Hunks: []fs.DiffHunk{{
+			OldStart: 0, OldCount: 0, NewStart: 1, NewCount: 2,
+			Lines: []fs.DiffLine{
+				{Kind: fs.LineAdd, New: 1, Text: "package x"},
+				{Kind: fs.LineAdd, New: 2, Text: "var v int"},
+			},
+		}},
+	}
+	out := Render(d, theme.Default(), 0)
+	for _, want := range []string{"diff create a/new.go b/new.go", "package x", "var v int", "@@ -0,0 +1,2 @@"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in create-op render: %q", want, out)
+		}
+	}
+}

@@ -47,6 +47,7 @@ func TestToolNamesAppearInMainPrompt(t *testing.T) {
 		tools.BASH,
 		tools.GREP,
 		tools.TREE,
+		tools.GLOB,
 		tools.AGENT,
 		tools.TOOL_SEARCH,
 		tools.SKILL,

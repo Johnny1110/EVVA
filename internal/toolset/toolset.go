@@ -279,6 +279,8 @@ func buildOne(name tools.ToolName, s *ToolState) (tools.Tool, error) {
 		return fs.NewWrite(s.ReadTracker()), nil
 	case tools.EDIT_FILE:
 		return fs.NewEdit(s.ReadTracker()), nil
+	case tools.GLOB:
+		return fs.NewGlob(), nil
 
 	// --- shell (stateless) ---
 	case tools.BASH:

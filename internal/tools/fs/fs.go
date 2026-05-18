@@ -16,7 +16,7 @@ import (
 
 // Names lists every tool name this package contributes, in canonical order.
 func Names() []tools.ToolName {
-	return []tools.ToolName{tools.READ_FILE, tools.WRITE_FILE, tools.EDIT_FILE}
+	return []tools.ToolName{tools.READ_FILE, tools.WRITE_FILE, tools.EDIT_FILE, tools.GLOB}
 }
 
 // resolvePath normalizes a model-supplied file path into a cleaned
@@ -98,7 +98,3 @@ func resolveUserHome() (string, error) {
 	return "", errors.New("could not determine user home directory")
 }
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}

@@ -57,7 +57,7 @@ One schema, one loader, two visibility surfaces. This is also the seam Phase 6 (
 
 Phases are ordered by dependency — earlier phases unblock later ones. Each phase is one focused chunk of work: Go ports of the reference TypeScript, plus the connective tissue (memory, permissions, hooks) that ties the harness together.
 
-### Phase 0 — Sysprompt rework + EVVA.md + USER_PROFILE.md
+### Phase 0 — Sysprompt rework + EVVA.md + USER_PROFILE.md ✅️
 
 Foundation. Every later phase ships prompt strings, so the prompt scaffold needs to be stable first.
 
@@ -83,12 +83,30 @@ Port `ref/src/tools/FileReadTool / FileEditTool / FileWriteTool / GlobTool` desc
 - `internal/agent/profiles.go:Explore()` lists the active tools for the Explore subagent: currently `READ_FILE, WEB_SEARCH, TREE, GREP, JSON_QUERY`. When Glob lands, swap (or augment) TREE → GLOB. The Explore subagent prompt at `explore_agent.go` also mentions `tree` in its guidelines — update both.
 - The new fs tool descriptions should be ported from `ref/src/tools/FileReadTool/prompt.ts`, `FileEditTool/constants.ts`, `FileWriteTool/prompt.ts`, `GlobTool/prompt.ts`. Each ref TS file exports a `*_TOOL_NAME` constant; the prompt-side mirror in `toolnames.go` is evva's equivalent of that pattern (Go can't do the prompt↔tool round-trip without creating an import cycle, which is why the link test exists).
 
+### Phase 1b — Image returns via multimodal `tool_result` blocks
+
+Phase 1 ships text-only reads (UTF-8 text, PDF page extraction, Jupyter cell rendering) because returning **image bytes** to the LLM requires a cross-cutting refactor that goes beyond `internal/tools/fs/`. This phase delivers that refactor.
+
+Today `tools.Result.Content` is a plain `string`, and every provider serializes `tool_result` blocks as text-only (see `internal/llm/claude/client.go` — `Content: tr.Content` is a string field, no `[{type:"image", source:{...}}]` support). Until that changes, `read` of a `.png`/`.jpg` will return an "image reads not yet supported" error pointing at this phase.
+
+Work:
+
+- Widen `tools.Result` (and the wire-shape `llm.ToolResult`) to carry a content **list** of typed blocks — text and image at minimum — alongside the existing `IsError` + `Metadata` fields.
+- Update each provider's tool-result serialization:
+  - **Anthropic** (`internal/llm/claude/client.go`): emit `content: [{type:"text",...},{type:"image",source:{type:"base64",media_type,data}}]`.
+  - **DeepSeek / OpenAI / Ollama**: providers that don't natively accept multimodal tool results need a documented fallback (text caption + base-64-as-text, or refusal). Decide per-provider.
+- Extend `internal/tools/fs/read.go` to dispatch on image MIME (`.png`/`.jpg`/`.jpeg`/`.gif`/`.webp`) and emit a base-64-encoded image block. Resize/downsample to a token budget if needed (mirror `ref/src/tools/FileReadTool/imageUtils.ts`).
+- Round-trip multimodal tool results through `internal/session/` so transcripts persist correctly.
+- TUI: render the inline image block in the transcript (terminal protocol support is best-effort — Kitty / iTerm2 / Sixel where available, fallback to "[image: <path>, <bytes>B]").
+
+Prerequisite for any "look at this screenshot" workflow. Out of Phase 1 because it touches four LLM clients and the session store, not just `fs/`.
+
 ### Phase 2 — ToolSearch + AgentTool polish + agent loader
 
 Both tools already exist in evva (`internal/tools/meta/`) and roughly match Claude Code's behavior. This phase finishes parity and lays the **extensibility seam** Phase 6 and external projects depend on.
 
-- Port the latest ToolSearch description (`ref/src/tools/ToolSearchTool/prompt.ts`).
-- Port the AgentTool description (`ref/src/tools/AgentTool/prompt.ts`), including the "writing the prompt" / "never delegate understanding" guidance.
+- Port 1:1 the latest ToolSearch (`ref/src/tools/ToolSearchTool`).
+- Port 1:1 the AgentTool (`ref/src/tools/AgentTool`), including the "writing the prompt" / "never delegate understanding" guidance.
 - New `internal/agent/loader/` — reads `<EVVA_HOME>/agents/{name}/` definitions and registers them. Built-ins stay as Go-defined structs; the loader merges Go + disk into one `AgentRegistry`.
 - Replace `toolset.buildOne`'s hard-coded switch (currently ~370 LOC closed enum) with a `Registry.Register(name, factory)` API so external projects can register their own tools at startup.
 
@@ -99,17 +117,17 @@ Unblocks plan mode (Phase 7) and worktree (Phase 10). Plan mode is a permission 
 Design questions resolved at the start of this phase:
 
 - Rule grammar — glob? regex? per-tool? Reference: `ref/src/utils/permissions/permissionRuleParser.ts`.
-- Storage scope — per-project (`.evva/permissions.yml`) vs per-user vs per-session.
-- Lifecycle — ask-once vs always-allow vs deny; mode transitions (`default` → `accept_edits` → `plan` → `bypass`).
+- Storage scope — per-project (`.evva/permissions.json`) vs per-user vs per-session.
+- Lifecycle — ask-once vs always-allow vs deny; mode transitions (`default: accept_edits` → `plan` → `bypass`).
 - Override flow — equivalent of `--dangerously-skip-permissions`, sandbox flag, etc.
-- Subagent inheritance — do subagents inherit parent permissions or get their own?
+- Subagent inheritance — follow the ref source code design.
 
 Work:
 
 - New `internal/permission/` — rule grammar, mode state machine, pre-tool-use hook in the agent loop.
 - Port `ref/src/tools/BashTool/bashClassifier.ts` + `dangerousPatterns.ts` into `internal/tools/shell/classifier.go`.
 - TUI: approval prompt component under `components/approval/`, mode indicator in the status bar.
-- Modes: `default | accept_edits | plan | bypass | auto`.
+- Modes: `default = accept_edits | plan | bypass | auto`.
 
 ### Phase 4 — Hooks system
 
@@ -132,10 +150,11 @@ evva's current `internal/tools/task/` is **conceptually TodoWrite** — in-sessi
 
 This is the **payoff phase** for everything in Phases 0–2: evva, nono, noen become first-class swappable personas, and `evva → nono` delegation works.
 
-- `/profile` slash command + TUI picker (lists every agent in the registry with `as: [main, ...]`).
+- `/profile` slash command + TUI picker (lists every agent in the registry with `as: [evva, nono, ...]`) also rename Main profile to Evva profile, make a default profile into evva-config.yml.
 - Profile switch resets the session — provider-locked state (Anthropic `ThinkingSignature`, DeepSeek `reasoning_content`) can't carry across personas, and the system prompt is fully different anyway.
 - The Agent tool's `subagent_type` enum becomes the union of every agent with `as: [subagent, ...]` — including personas marked `as: [main, subagent]`. That union is how `evva` ends up able to spawn `nono` as a subagent.
 - The "subagents cannot spawn subagents" invariant stays in place.
+- TUI refine, add main agent profile name to the status bar (replace curren hardcode evva).
 
 ### Phase 7 — Plan mode (EnterPlanMode / ExitPlanMode)
 
@@ -159,8 +178,8 @@ The agent that maintains `<EVVA_HOME>/USER_PROFILE.md`.
 
 Design points:
 
-- **Trigger** — end-of-session by default. `/profile-update` slash command for manual refresh.
-- **Tools** — `read` on session log + `USER_PROFILE.md`; `write` on `USER_PROFILE.md` only. No shell, no web, no subagent spawning.
+- **Trigger** — `/profile-update` slash command for manual refresh.
+- **Tools** — `update_user_profile` (writes to `USER_PROFILE.md`).
 - **Output shape** — fixed sections (`## Preferences`, `## Working style`, `## Recurring topics`) so updates merge cleanly. Free-form rewrites drift and become useless within a few sessions.
 - **Opt-out** — enabled by default; one-line notice on first session; `/config` toggles it off.
 

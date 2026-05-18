@@ -80,7 +80,8 @@ func mainHarnessSection() string {
 // shipping a stale prompt.
 func mainToolsGuideSection() string {
 	return "# Tools\n" +
-		"- Prefer dedicated tools over bash when one fits: `" + nameRead + "` for known paths, `" + nameEdit + "` / `" + nameWrite + "` for files, `" + nameGrep + "` / `" + nameTree + "` for search. Reserve `" + nameBash + "` for shell-only operations (git, build, test).\n" +
+		"- Prefer dedicated tools over bash when one fits: `" + nameRead + "` for known paths, `" + nameEdit + "` / `" + nameWrite + "` for files, `" + nameGlob + "` for finding files by name pattern (e.g. `**/*.go`), `" + nameGrep + "` for searching file contents, `" + nameTree + "` for directory inspection. Reserve `" + nameBash + "` for shell-only operations (git, build, test).\n" +
+		"- `" + nameGlob + "` returns matches sorted by modification time and caps at 100 entries. When the search would require multiple rounds of globbing and grepping, delegate to `" + nameAgent + "` instead.\n" +
 		"- Make independent tool calls in parallel — emit multiple tool_use blocks in one assistant turn when they don't depend on each other. Sequence only when one call's output feeds the next.\n" +
 		"- Quote file paths that contain spaces. Use absolute paths; avoid `cd` chains across calls.\n\n" +
 		"## Deferred tools and `" + nameToolSearch + "`\n" +

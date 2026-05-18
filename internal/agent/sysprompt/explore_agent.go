@@ -32,8 +32,9 @@ func buildExplorePrompt(_ PromptContext) string {
 		"- Reading and analyzing file contents\n\n" +
 
 		"Guidelines:\n" +
-		"- Use `" + nameTree + "` for broad file-pattern matching and directory inspection\n" +
+		"- Use `" + nameGlob + "` for finding files by name pattern (e.g. `**/*.go`, `src/**/*.ts`) — results are sorted by modification time, capped at 100\n" +
 		"- Use `" + nameGrep + "` for searching file contents with regex\n" +
+		"- Use `" + nameTree + "` only when you need a directory-structure overview (not for file-pattern matching — that's `" + nameGlob + "`)\n" +
 		"- Use `" + nameRead + "` when you know the specific file path you need to read\n" +
 		"- Use `" + nameBash + "` ONLY for read-only operations (ls, git status, git log, git diff, find, cat, head, tail)\n" +
 		"- NEVER use `" + nameBash + "` for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification\n" +

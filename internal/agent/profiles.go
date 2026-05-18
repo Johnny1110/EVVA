@@ -159,7 +159,7 @@ func Explore(cfg *config.AppConfig, provider constant.LLMProvider, model constan
 	return Profile{
 		Type:         EXPLORE,
 		SystemPrompt: sp,
-		ActiveTools:  []tools.ToolName{tools.READ_FILE, tools.WEB_SEARCH, tools.TREE, tools.GREP, tools.JSON_QUERY},
+		ActiveTools:  []tools.ToolName{tools.READ_FILE, tools.WEB_SEARCH, tools.GLOB, tools.TREE, tools.GREP, tools.JSON_QUERY},
 		LLMProvider:  provider,
 		LLMModel:     model,
 		LLMOptions:   options,

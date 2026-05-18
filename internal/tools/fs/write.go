@@ -11,13 +11,10 @@ import (
 	"github.com/johnny1110/evva/internal/tools"
 )
 
-// WriteTool creates or overwrites a file.
 type WriteTool struct {
 	tracker *ReadTracker
 }
 
-// NewWrite creates a WriteTool that enforces the read-before-overwrite guard
-// via the given tracker.
 func NewWrite(tracker *ReadTracker) *WriteTool {
 	return &WriteTool{tracker: tracker}
 }
@@ -25,18 +22,16 @@ func NewWrite(tracker *ReadTracker) *WriteTool {
 func (t *WriteTool) Name() string { return string(tools.WRITE_FILE) }
 
 func (t *WriteTool) Description() string {
-	return "Writes a file to the local filesystem. file_path must be absolute. " +
-		"Use this for creating new files or fully overwriting an existing " +
-		"one. For partial edits to an existing file, prefer edit_file — it " +
-		"preserves surrounding content and is harder to misuse.\n\n" +
-		"Overwriting an existing file requires you to have called " +
-		"read_file on it first in this session — the tool refuses to " +
-		"blindly clobber a file you haven't loaded into context. New " +
-		"files (path doesn't exist) need no prior read. Missing parent " +
-		"directories are created automatically.\n\n" +
-		"Never create documentation files (*.md) or README files unless " +
-		"the user explicitly asked for them. Only use emojis if the user " +
-		"explicitly requested them."
+	return `Writes a file to the local filesystem.
+
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.
+- If this is an existing file, you MUST use the ` + "`read`" + ` tool first to read the file's contents. This tool will fail if you did not read the file first, if the file's mtime has advanced since the read, or if the prior read was a partial-view (offset/limit).
+- Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.
+- NEVER create documentation files (*.md) or README files unless explicitly requested by the User.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
+- Missing parent directories are created automatically. New files do not require a prior read.
+- If the file already exists with a UTF-16 encoding (Windows / Notepad default with BOM), the new content is re-encoded as UTF-16 so the file's encoding is preserved. Line endings in the content you provide are written verbatim — write_file does NOT re-introduce CRLF.`
 }
 
 func (t *WriteTool) Schema() json.RawMessage {
@@ -45,8 +40,8 @@ func (t *WriteTool) Schema() json.RawMessage {
 		"additionalProperties":false,
 		"required":["file_path","content"],
 		"properties":{
-			"file_path":{"type":"string","description":"Absolute path to the file to write (must be absolute, not relative)."},
-			"content":{"type":"string","description":"Full text content to write to the file."}
+			"file_path":{"type":"string","description":"The absolute path to the file to write (must be absolute, not relative)."},
+			"content":{"type":"string","description":"The content to write to the file."}
 		}
 	}`)
 }
@@ -73,38 +68,39 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 		return tools.Result{IsError: true, Content: "write: " + err.Error()}, nil
 	}
 
-	existedBefore := fileExists(resolved)
-
-	// Read-before-overwrite guard. New files are exempt.
-	if existedBefore && t.tracker != nil && !t.tracker.WasRead(resolved) {
-		return tools.Result{
-			IsError: true,
-			Content: fmt.Sprintf(
-				"write: you must use read_file on %s before overwriting it. "+
-					"Read the file first so you don't blindly clobber existing "+
-					"content; if you want a partial change use edit_file instead.",
-				in.FilePath,
-			),
-		}, nil
+	priorInfo, statErr := os.Stat(resolved)
+	existedBefore := statErr == nil && !priorInfo.IsDir()
+	if statErr == nil && priorInfo.IsDir() {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("write: %s is a directory, not a regular file.", in.FilePath)}, nil
 	}
 
-	// Capture prior content. We need this for two things on the
-	// overwrite path: the proposed diff (Metadata for the UI) and the
-	// "was M / now N" summary line on the model-facing result.
-	var oldByteCount, oldLineCount int
-	var priorContent string
-	if existedBefore {
-		prior, perr := os.ReadFile(resolved)
-		if perr == nil {
-			priorContent = string(prior)
-			oldByteCount = len(prior)
-			oldLineCount = countLines(priorContent)
+	if existedBefore && t.tracker != nil {
+		if ok, reason := t.tracker.CanWrite(resolved, priorInfo.ModTime()); !ok {
+			return tools.Result{
+				IsError: true,
+				Content: fmt.Sprintf("write: %s — path: %s", reason, in.FilePath),
+			}, nil
 		}
 	}
 
-	// Build the proposed diff for the final tools.Result.Metadata. New
-	// files render every line as an add; overwrites use difflib for a
-	// minimal unified diff.
+	// Encoding detection: existing UTF-16 LE files (Notepad / Windows
+	// default) must be re-encoded as UTF-16 on overwrite or the file
+	// becomes unreadable in its original consumer. New files default
+	// to UTF-8.
+	//
+	// Prior content (CRLF-normalized via readFileWithEncoding) is what
+	// we feed to buildOverwriteDiff so the diff renders cleanly even
+	// for Windows / UTF-16 files.
+	enc := encUTF8
+	var priorContent string
+	if existedBefore {
+		mem, merr := readFileWithEncoding(resolved)
+		if merr == nil {
+			enc = mem.enc
+			priorContent = mem.content
+		}
+	}
+
 	var diff *FileDiff
 	if existedBefore {
 		diff = buildOverwriteDiff(resolved, priorContent, in.Content)
@@ -115,16 +111,27 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("write: could not create parent dirs: %s", err)}, nil
 	}
-	if err := os.WriteFile(resolved, []byte(in.Content), 0o644); err != nil {
+	// Write is a full replacement: the model sent explicit line
+	// endings and meant them. Do NOT restore CRLF even if the original
+	// file used CRLF. Encoding (UTF-16 / UTF-8) IS preserved so the
+	// file's consumer still recognizes it. Matches ref FileWriteTool
+	// (writeTextContent(..., enc, 'LF')).
+	if err := writeFileWithEncoding(resolved, in.Content, enc, false); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("write: could not write %s: %s", in.FilePath, err)}, nil
 	}
 
 	if t.tracker != nil {
-		t.tracker.MarkRead(resolved)
+		if newInfo, statErr := os.Stat(resolved); statErr == nil {
+			t.tracker.Record(resolved, newInfo.ModTime(), false)
+		} else {
+			t.tracker.Forget(resolved)
+		}
 	}
 
 	newLineCount := countLines(in.Content)
 	newByteCount := len(in.Content)
+	oldLineCount := countLines(priorContent)
+	oldByteCount := len(priorContent)
 
 	if !existedBefore {
 		return tools.Result{
@@ -139,9 +146,6 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 	}, nil
 }
 
-// countLines counts the lines in s the way users count them — a final "\n"
-// is the terminator of the last line, not a marker for an extra empty line.
-// Empty string → 0 lines.
 func countLines(s string) int {
 	if s == "" {
 		return 0
@@ -153,9 +157,6 @@ func countLines(s string) int {
 	return n
 }
 
-// jsonFieldPresent reports whether key appears at the top level of raw
-// (which must be a JSON object). Used to distinguish missing "content" from
-// "content":"" — both unmarshal to "", but only the former should error.
 func jsonFieldPresent(raw json.RawMessage, key string) bool {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {

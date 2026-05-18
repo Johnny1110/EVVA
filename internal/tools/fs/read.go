@@ -5,24 +5,43 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/johnny1110/evva/internal/tools"
-	"github.com/johnny1110/evva/internal/tools/shell"
 )
 
-// DefaultReadLimit caps an unbounded Read at this many lines, matching
-// Claude Code. The model can pass an explicit larger limit when it really
-// needs more, but the default protects the context window from accidental
-// 50k-line dumps.
+// DefaultReadLimit caps an unbounded Read at this many lines. The model
+// can pass an explicit larger limit when it really needs more, but the
+// default protects the context window from accidental 50k-line dumps.
+// Matches Claude Code's MAX_LINES_TO_READ.
 const DefaultReadLimit = 2000
 
-// ReadTool reads a file and returns it in cat -n format.
+// fileUnchangedStub is what we return when the model re-reads a file
+// whose mtime hasn't moved since the last full-file read. Reading it
+// again would just burn cache tokens for the same content.
+const fileUnchangedStub = "File unchanged since last read. The content from the earlier Read tool_result in this conversation is still current — refer to that instead of re-reading."
+
+// imageExts is the set of extensions we route to the Phase 1b stub
+// (images aren't yet round-tripped through tool_result blocks; see
+// CLAUDE.md Phase 1b for the cross-cutting refactor). PDF lives in the
+// shared binaryExtensions blocklist; this set is consulted before that
+// check so we emit the Phase 1b message instead of a generic
+// "binary file" rejection.
+var imageExts = map[string]struct{}{
+	".png":  {},
+	".jpg":  {},
+	".jpeg": {},
+	".gif":  {},
+	".webp": {},
+	".bmp":  {},
+	".svg":  {},
+}
+
 type ReadTool struct {
 	tracker *ReadTracker
 }
 
-// NewRead creates a ReadTool that records reads in the given tracker.
 func NewRead(tracker *ReadTracker) *ReadTool {
 	return &ReadTool{tracker: tracker}
 }
@@ -30,23 +49,22 @@ func NewRead(tracker *ReadTracker) *ReadTool {
 func (t *ReadTool) Name() string { return string(tools.READ_FILE) }
 
 func (t *ReadTool) Description() string {
-	return "Reads a file from the local filesystem. file_path must be absolute.\n\n" +
-		"Output is cat -n format: each line is prefixed with its 1-based " +
-		"line number and a tab (e.g. `   42\\thello`). A header " +
-		"`[File: <path> (N lines)]` precedes the body and notes the slice " +
-		"when offset/limit are used.\n\n" +
-		"By default at most 2000 lines are returned starting from line 1. " +
-		"Use `offset` (1-based) to start later in the file and `limit` to " +
-		"control the slice size — pass an explicit larger `limit` when you " +
-		"need more than 2000 lines.\n\n" +
-		"Reading marks the file as loaded into the session — edit_file and " +
-		"write_file (overwrite) refuse to touch a file you haven't read " +
-		"first. When you later call edit_file, DO NOT include the " +
-		"`<line>\\t` prefix in old_string — strip it. Only the raw line " +
-		"content is what's actually in the file.\n\n" +
-		"Multimodal reads (images, PDFs, Jupyter notebooks) are not yet " +
-		"supported — see the README wish list. The `pages` parameter is " +
-		"reserved for future PDF support and is rejected today."
+	return `Reads a file from the local filesystem. You can access any file directly by using this tool.
+Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
+
+Usage:
+- The file_path parameter must be an absolute path, not a relative path
+- By default, it reads up to 2000 lines starting from the beginning of the file
+- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
+- Results are returned using cat -n format, with line numbers starting at 1
+- This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific page ranges (e.g., pages: "1-5"). Reading a large PDF without the pages parameter will fail. Maximum 20 pages per request.
+- This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs, combining code, text, and visualizations.
+- This tool can only read files, not directories. To list a directory, run ` + "`ls`" + ` via the bash tool.
+- Image file reads (PNG/JPG/GIF/WebP/BMP/SVG) are not yet supported — tracked in CLAUDE.md as Phase 1b. Attempting to read an image file returns an error today.
+- Binary files (executables, archives, fonts, native libraries, etc.) are rejected — their bytes would corrupt the conversation context. Use the bash tool with specialized utilities (file, hexdump, strings, jq, etc.) if you need to inspect a binary.
+- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
+- Reading a file marks it as loaded into the session — edit_file and write_file (overwrite) refuse to touch a file you haven't read first, and force a re-read if the file's mtime advances on disk between reads.
+- When editing text from this tool's output, strip the leading "<line_number>\t" prefix from each line — that's the line-number gutter, not file content.`
 }
 
 func (t *ReadTool) Schema() json.RawMessage {
@@ -55,10 +73,10 @@ func (t *ReadTool) Schema() json.RawMessage {
 		"additionalProperties":false,
 		"required":["file_path"],
 		"properties":{
-			"file_path":{"type":"string","description":"Absolute path to the file to read."},
-			"offset":{"type":"integer","minimum":1,"description":"1-based line number to start reading from. Defaults to 1."},
-			"limit":{"type":"integer","exclusiveMinimum":0,"description":"Maximum number of lines to return. Defaults to 2000. Pass a larger value to read more."},
-			"pages":{"type":"string","description":"Reserved for PDF page range (not yet supported)."}
+			"file_path":{"type":"string","description":"The absolute path to the file to read."},
+			"offset":{"type":"integer","minimum":1,"description":"The line number to start reading from. Only provide if the file is too large to read at once."},
+			"limit":{"type":"integer","exclusiveMinimum":0,"description":"The number of lines to read. Only provide if the file is too large to read at once."},
+			"pages":{"type":"string","description":"Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum 20 pages per request."}
 		}
 	}`)
 }
@@ -76,16 +94,18 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 		return tools.Result{IsError: true, Content: "read: decode input: " + err.Error()}, nil
 	}
 
-	if in.Pages != "" {
-		return tools.Result{
-			IsError: true,
-			Content: "read: PDF/pages support is not yet implemented (tracked in README wish list). Use this tool only on text files.",
-		}, nil
-	}
-
 	resolved, err := resolvePath(in.FilePath)
 	if err != nil {
 		return tools.Result{IsError: true, Content: "read: " + err.Error()}, nil
+	}
+
+	// Device-path check runs before stat — /dev/tty etc. would block
+	// or stream forever if we let os.Stat or os.ReadFile reach them.
+	if isBlockedDevicePath(resolved) {
+		return tools.Result{
+			IsError: true,
+			Content: fmt.Sprintf("read: cannot read '%s': this device file would block or produce infinite output.", in.FilePath),
+		}, nil
 	}
 
 	info, err := os.Stat(resolved)
@@ -93,29 +113,99 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 		return tools.Result{IsError: true, Content: fmt.Sprintf("read: file not found: %s", in.FilePath)}, nil
 	}
 	if info.IsDir() {
-		treeInput := fmt.Sprintf(`{"path":"%s"}`, resolved)
-		return shell.Tree.Execute(ctx, json.RawMessage(treeInput))
+		return tools.Result{
+			IsError: true,
+			Content: fmt.Sprintf("read: %s is a directory — this tool only reads files. To list the directory run `ls` via the bash tool.", in.FilePath),
+		}, nil
 	}
 
-	data, err := os.ReadFile(resolved)
+	ext := strings.ToLower(filepath.Ext(resolved))
+
+	if _, isImage := imageExts[ext]; isImage {
+		return tools.Result{
+			IsError: true,
+			Content: fmt.Sprintf("read: image file reads (%s) are not yet supported in evva. Tracked in CLAUDE.md as Phase 1b — multimodal tool_result blocks across providers.", ext),
+		}, nil
+	}
+
+	if ext == ".pdf" {
+		res := readPDF(resolved, in.Pages)
+		if !res.IsError && t.tracker != nil {
+			t.tracker.Record(resolved, info.ModTime(), in.Pages != "")
+		}
+		return res, nil
+	}
+
+	if ext == ".ipynb" {
+		if in.Offset > 0 || in.Limit > 0 || in.Pages != "" {
+			return tools.Result{
+				IsError: true,
+				Content: "read: offset/limit/pages are not supported for Jupyter notebooks (.ipynb). Drop those parameters and re-call.",
+			}, nil
+		}
+		res := readNotebook(resolved)
+		if !res.IsError && t.tracker != nil {
+			t.tracker.Record(resolved, info.ModTime(), false)
+		}
+		return res, nil
+	}
+
+	// Binary-extension rejection runs after PDF / notebook / image
+	// dispatch so handled formats aren't caught by the generic
+	// blocklist (PDF is in BINARY_EXTENSIONS in ref).
+	if hasBinaryExtension(resolved) {
+		return tools.Result{
+			IsError: true,
+			Content: fmt.Sprintf("read: %s appears to be a binary %s file — its bytes can't be meaningfully presented as text. Use the bash tool with file/hexdump/strings/jq for binary inspection.", in.FilePath, ext),
+		}, nil
+	}
+
+	if in.Pages != "" {
+		return tools.Result{
+			IsError: true,
+			Content: fmt.Sprintf("read: the `pages` parameter is only valid for PDF files; %s is not a PDF.", in.FilePath),
+		}, nil
+	}
+
+	return t.readText(resolved, info, in)
+}
+
+func (t *ReadTool) readText(resolved string, info os.FileInfo, in readInput) (tools.Result, error) {
+	explicitOffset := in.Offset > 0
+	explicitLimit := in.Limit > 0
+
+	// File-unchanged stub: a re-read of the same full file at the same
+	// mtime is a no-op for the model — point them at the earlier
+	// tool_result instead of dumping the same bytes again.
+	if t.tracker != nil && !explicitOffset && !explicitLimit {
+		if entry, ok := t.tracker.Lookup(resolved); ok && !entry.IsPartialView && entry.Timestamp.Equal(info.ModTime()) {
+			return tools.Result{Content: fileUnchangedStub}, nil
+		}
+	}
+
+	// readFileWithEncoding handles UTF-16 LE BOM detection, UTF-8 BOM
+	// stripping, and CRLF→LF normalization. The model sees clean
+	// LF-only UTF-8 regardless of how Windows / Notepad / cloud-sync
+	// shaped the file.
+	mem, err := readFileWithEncoding(resolved)
 	if err != nil {
-		return tools.Result{IsError: true, Content: fmt.Sprintf("read: could not read %s: %s", in.FilePath, err)}, nil
+		return tools.Result{IsError: true, Content: fmt.Sprintf("read: could not read %s: %s", resolved, err)}, nil
 	}
 
-	if t.tracker != nil {
-		t.tracker.MarkRead(resolved)
-	}
-
-	content := string(data)
-	allLines := strings.Split(content, "\n")
-	// Strip the trailing empty line from Split when the file ends with \n.
-	if len(allLines) > 0 && allLines[len(allLines)-1] == "" && strings.HasSuffix(content, "\n") {
-		allLines = allLines[:len(allLines)-1]
-	}
+	allLines := splitForRead(mem.content)
 	totalLines := len(allLines)
 
 	if totalLines == 0 {
-		return tools.Result{Content: fmt.Sprintf("[File: %s, 0 lines]", resolved)}, nil
+		if t.tracker != nil {
+			t.tracker.Record(resolved, info.ModTime(), false)
+		}
+		// System-reminder framing (ref FILE_READ_TOOL behavior) so
+		// the model treats this as a content warning, not actual
+		// file content.
+		return tools.Result{Content: fmt.Sprintf(
+			"[File: %s, 0 lines]\n<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>",
+			resolved,
+		)}, nil
 	}
 
 	start := in.Offset
@@ -124,8 +214,10 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 	}
 	startIdx := start - 1
 	if startIdx >= totalLines {
+		// Past-EOF doesn't update the tracker — the model didn't
+		// actually see file content. System-reminder framing per ref.
 		return tools.Result{Content: fmt.Sprintf(
-			"[File: %s (%d lines), showing lines %d-%d (offset past end)]",
+			"[File: %s (%d lines)]\n<system-reminder>Warning: the file exists but is shorter than the provided offset (%d). The file has %d lines.</system-reminder>",
 			resolved, totalLines, start, totalLines,
 		)}, nil
 	}
@@ -137,6 +229,11 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 	endIdx := startIdx + limit
 	if endIdx > totalLines {
 		endIdx = totalLines
+	}
+
+	partial := explicitOffset || endIdx < totalLines
+	if t.tracker != nil {
+		t.tracker.Record(resolved, info.ModTime(), partial)
 	}
 
 	selected := allLines[startIdx:endIdx]
@@ -153,8 +250,23 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 	return tools.Result{Content: header + "\n" + body}, nil
 }
 
-// formatLines renders lines with cat -n style prefix: 6-char right-aligned
-// line number + tab + content.
+// splitForRead splits file content into lines using "\n" as terminator
+// (not separator). An empty string yields zero lines; "a\n" yields one;
+// "a\nb" yields two; "a\nb\n" yields two. Matches what the user means
+// by "line count" rather than strings.Split's separator semantics.
+func splitForRead(s string) []string {
+	if s == "" {
+		return nil
+	}
+	lines := strings.Split(s, "\n")
+	if strings.HasSuffix(s, "\n") {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+// formatLines renders the cat -n style prefix: 6-char right-aligned
+// 1-based line number, then a tab, then the line text.
 func formatLines(lines []string, startLine int) string {
 	var b strings.Builder
 	for i, line := range lines {

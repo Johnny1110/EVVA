@@ -3,40 +3,101 @@ package fs
 import (
 	"path/filepath"
 	"sync"
+	"time"
 )
 
-// ReadTracker records file paths the agent has called read_file on.
-// Zero value is ready to use.
+// ReadTracker records every read_file call the agent makes so that
+// edit_file / write_file can refuse to mutate a file whose on-disk
+// state has drifted from what the model has in context.
+//
+// Three failure modes the tracker protects against, mirroring Claude
+// Code's FileReadTool ↔ FileEditTool contract:
+//
+//  1. Never read — the model is editing blind. Reject.
+//  2. Read but mtime advanced on disk afterwards — another process,
+//     or the user, changed the file. Force a re-read so the model's
+//     old_string still matches.
+//  3. Partial-view read (offset / explicit limit) — the model only saw
+//     a slice and has no idea what surrounds the edit. Force a full
+//     re-read before mutating.
+//
+// Zero value is NOT usable; call NewReadTracker.
 type ReadTracker struct {
-	seen map[string]struct{}
-	mu   sync.RWMutex
+	mu    sync.RWMutex
+	state map[string]readEntry
+}
+
+type readEntry struct {
+	// Timestamp is the file's mtime captured at the moment of the
+	// read. We compare against the current on-disk mtime to detect
+	// drift between reads and mutations.
+	Timestamp time.Time
+	// IsPartialView is true when the read used offset>0 or a
+	// non-default limit — only part of the file made it into context.
+	IsPartialView bool
 }
 
 func NewReadTracker() *ReadTracker {
-	return &ReadTracker{
-		seen: make(map[string]struct{}),
-	}
+	return &ReadTracker{state: make(map[string]readEntry)}
 }
 
-// MarkRead records that path was read.
-func (t *ReadTracker) MarkRead(absPath string) {
+// Record stores that absPath was read at the given mtime, with the
+// partial flag indicating whether the read covered only a slice of
+// the file.
+func (t *ReadTracker) Record(absPath string, mtime time.Time, partial bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
-	if t.seen == nil {
-		t.seen = make(map[string]struct{})
+	if t.state == nil {
+		t.state = make(map[string]readEntry)
 	}
-	t.seen[filepath.Clean(absPath)] = struct{}{}
+	t.state[filepath.Clean(absPath)] = readEntry{
+		Timestamp:     mtime,
+		IsPartialView: partial,
+	}
 }
 
-// WasRead reports whether path has been marked via MarkRead.
-func (t *ReadTracker) WasRead(absPath string) bool {
+// Lookup returns the recorded entry, or zero+false if absPath has
+// never been recorded.
+func (t *ReadTracker) Lookup(absPath string) (readEntry, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-
-	if t.seen == nil {
-		return false
+	if t.state == nil {
+		return readEntry{}, false
 	}
-	_, ok := t.seen[filepath.Clean(absPath)]
-	return ok
+	e, ok := t.state[filepath.Clean(absPath)]
+	return e, ok
+}
+
+// CanEdit reports whether an edit_file call against absPath is
+// permitted given the file's current mtime. When false, reason is the
+// model-facing explanation (mirrors ref TS FileEditTool wording).
+func (t *ReadTracker) CanEdit(absPath string, currentMtime time.Time) (bool, string) {
+	entry, found := t.Lookup(absPath)
+	if !found {
+		return false, "File has not been read yet. Read it first before writing to it."
+	}
+	if entry.IsPartialView {
+		return false, "File was only partially read (offset/limit). Re-read the full file before editing."
+	}
+	if currentMtime.After(entry.Timestamp) {
+		return false, "File has been modified since it was last read. Re-read it before editing."
+	}
+	return true, ""
+}
+
+// CanWrite reports whether write_file may overwrite absPath. Same gate
+// as edit — overwriting a stale or partial-view read is the same
+// hazard as editing one.
+func (t *ReadTracker) CanWrite(absPath string, currentMtime time.Time) (bool, string) {
+	return t.CanEdit(absPath, currentMtime)
+}
+
+// Forget drops the entry for absPath. Used by tests; never called in
+// production code.
+func (t *ReadTracker) Forget(absPath string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.state != nil {
+		delete(t.state, filepath.Clean(absPath))
+	}
 }

@@ -86,6 +86,9 @@ type Theme struct {
 	ContextFill lipgloss.Style
 	ContextRail lipgloss.Style
 
+	// Turn separator — barely-there chrome between agent loop iterations.
+	TurnSep lipgloss.Style
+
 	// Spinner color overrides — paired with status-keyed lookup via
 	// SpinnerStyle() so panels and the status bar agree on which
 	// state animates in which color.
@@ -160,6 +163,7 @@ func Default() *Theme {
 	t.Compacting = lipgloss.NewStyle().Foreground(yellow).Bold(true)
 	t.Draining = lipgloss.NewStyle().Foreground(purple).Bold(true)
 	t.FooterHint = lipgloss.NewStyle().Foreground(muted)
+	t.TurnSep = lipgloss.NewStyle().Foreground(think)
 
 	// Tasks / paste / timeline
 	t.TasksDone = lipgloss.NewStyle().Foreground(green).Bold(true)

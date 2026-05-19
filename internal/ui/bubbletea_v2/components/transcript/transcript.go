@@ -421,6 +421,12 @@ func (t *Transcript) IngestEvent(e event.Event) bool {
 		t.resetInflight()
 		t.blocks = append(t.blocks, newCancelledBlock())
 		return true
+	case event.KindTurnEnd:
+		if e.Turn != nil {
+			t.resetInflight()
+			t.blocks = append(t.blocks, newTurnEndBlock(e.Turn.Iteration))
+			return true
+		}
 	case event.KindIterLimit:
 		if e.IterLimit != nil {
 			t.resetInflight()

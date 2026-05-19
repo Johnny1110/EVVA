@@ -3,6 +3,7 @@ package fs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -16,6 +17,10 @@ import (
 	config "github.com/johnny1110/evva/configs"
 	"github.com/johnny1110/evva/internal/tools"
 )
+
+// Default timeout for glob walks — prevents a broad pattern on a large
+// filesystem (e.g. path="/", pattern="**/*.go") from walking indefinitely.
+const defaultGlobTimeout = 2 * time.Minute
 
 // globResultLimit caps how many entries a Glob call returns. Matches
 // ref's 100-file cap; the model gets a `(Results are truncated. ...)`
@@ -130,24 +135,54 @@ func (t *GlobTool) Execute(ctx context.Context, logger *slog.Logger, input json.
 		return tools.Result{IsError: true, Content: fmt.Sprintf("glob: invalid pattern %q", in.Pattern)}, nil
 	}
 
-	matches := make([]globMatch, 0, 64)
-	fsys := os.DirFS(searchDir)
-	walkErr := doublestar.GlobWalk(fsys, searchPattern, func(rel string, d fs.DirEntry) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if d.IsDir() {
+	walkCtx, cancel := context.WithTimeout(ctx, defaultGlobTimeout)
+	defer cancel()
+
+	// Run the walk in a separate goroutine so a hard timeout (or parent
+	// cancellation) can return early even if the walk is stuck in ReadDir
+	// on a slow mount. The callback still checks walkCtx.Err() for a
+	// clean early exit when matching entries arrive.
+	type walkResult struct {
+		matches []globMatch
+		err     error
+	}
+	var matches []globMatch
+	ch := make(chan walkResult, 1)
+	go func() {
+		var m []globMatch
+		fsys := os.DirFS(searchDir)
+		err := doublestar.GlobWalk(fsys, searchPattern, func(rel string, d fs.DirEntry) error {
+			select {
+			case <-walkCtx.Done():
+				return walkCtx.Err()
+			default:
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if len(m) > globResultLimit {
+				return fs.SkipAll
+			}
+			absPath := filepath.Join(searchDir, rel)
+			info, statErr := d.Info()
+			if statErr != nil {
+				return nil
+			}
+			m = append(m, globMatch{Path: absPath, Mtime: info.ModTime()})
 			return nil
-		}
-		absPath := filepath.Join(searchDir, rel)
-		info, statErr := d.Info()
-		if statErr != nil {
-			return nil
-		}
-		matches = append(matches, globMatch{Path: absPath, Mtime: info.ModTime()})
-		return nil
-	})
-	if walkErr != nil && !errorIsContextCancelled(walkErr) {
+		})
+		ch <- walkResult{matches: m, err: err}
+	}()
+
+	var walkErr error
+	select {
+	case <-walkCtx.Done():
+		return tools.Result{IsError: true, Content: "glob: timed out after " + defaultGlobTimeout.String()}, nil
+	case res := <-ch:
+		matches = res.matches
+		walkErr = res.err
+	}
+	if walkErr != nil && !errorIsContextCancelled(walkErr) && !errors.Is(walkErr, fs.SkipAll) {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("glob: walk failed: %s", walkErr)}, nil
 	}
 

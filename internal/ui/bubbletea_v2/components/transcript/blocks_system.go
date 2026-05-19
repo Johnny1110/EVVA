@@ -377,3 +377,38 @@ func (b *SyntheticBlock) PlainText() string { return stripANSI(b.text) }
 func (b *SyntheticBlock) Render(ctx RenderContext) string {
 	return applyLineGutter(b.text, ctx.Width, ctx.Theme, ctx.Opts.Focused, len(ctx.Opts.Highlights) > 0)
 }
+
+// ============================================================================
+// TurnEndBlock — faint separator between agent loop iterations.
+// ============================================================================
+
+// TurnEndBlock draws a barely-there horizontal rule between agent loop
+// iterations so the user can scan the transcript and spot turn boundaries
+// without the separator competing with real content.
+type TurnEndBlock struct {
+	id   uint64
+	rev  uint64
+	iter int // 0-indexed iteration from the agent loop
+}
+
+func newTurnEndBlock(iter int) *TurnEndBlock {
+	return &TurnEndBlock{id: allocID(), rev: 1, iter: iter}
+}
+
+func (b *TurnEndBlock) ID() uint64       { return b.id }
+func (b *TurnEndBlock) Rev() uint64      { return b.rev }
+func (b *TurnEndBlock) Kind() Kind       { return KindSystem }
+func (b *TurnEndBlock) PlainText() string { return "" }
+
+func (b *TurnEndBlock) Render(ctx RenderContext) string {
+	const margin = 4
+	label := fmt.Sprintf(" # iter %d ", b.iter+1)
+	dashCount := ctx.Width - margin - len(label)
+	if dashCount < 4 {
+		dashCount = 4
+	}
+	left := dashCount / 2
+	right := dashCount - left
+	line := strings.Repeat("─", left) + label + strings.Repeat("─", right)
+	return applyLineGutter(ctx.Theme.TurnSep.Render(line), ctx.Width, ctx.Theme, ctx.Opts.Focused, len(ctx.Opts.Highlights) > 0)
+}

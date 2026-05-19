@@ -143,8 +143,8 @@ func TestToolResultFoldsLongBody(t *testing.T) {
 	tr.AppendBlock(tb)
 
 	folded := tr.View()
-	if !strings.Contains(folded, "+27 more lines") {
-		t.Fatalf("expected fold marker '+27 more lines', got:\n%s", folded)
+	if !strings.Contains(folded, "+29 more lines") {
+		t.Fatalf("expected fold marker '+29 more lines', got:\n%s", folded)
 	}
 	// The block must NOT show a line beyond the preview window.
 	lateLine := "line " + string(rune('a'+25%26))
@@ -200,17 +200,16 @@ func TestToolResultDiffNeverFolds(t *testing.T) {
 func TestToolResultShortStaysInline(t *testing.T) {
 	tr := newTestTranscript(t, 80)
 	tb := newToolBlock("bash", "t", json.RawMessage(`{}`), false)
-	tb.SetResult("line one\nline two\nline three", false, nil, nil)
+	// 1-line result — trivially short, fold is a no-op.
+	tb.SetResult("line one", false, nil, nil)
 	tr.AppendBlock(tb)
 
 	out := tr.View()
 	if strings.Contains(out, "more lines") {
-		t.Fatalf("short result should not fold:\n%s", out)
+		t.Fatalf("single-line result should not fold:\n%s", out)
 	}
-	for _, want := range []string{"line one", "line two", "line three"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("short result missing %q:\n%s", want, out)
-		}
+	if !strings.Contains(out, "line one") {
+		t.Fatalf("single-line result missing content:\n%s", out)
 	}
 }
 

@@ -10,12 +10,6 @@ import (
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/diff"
 )
 
-// Fold thresholds — verbatim from v1.
-const (
-	foldThreshold    = 8
-	foldPreviewLines = 3
-)
-
 // ToolBlock holds a tool call's invocation head and (eventually) its
 // result. Pairing with the result event is done by the transcript
 // via ToolID lookup; ToolBlock itself just exposes setters.
@@ -188,28 +182,32 @@ func (b *ToolBlock) styleResultBody(ctx RenderContext) string {
 }
 
 // compose decides between full result, folded preview, or head-only
-// based on per-block + transcript-wide flags. Mirrors v1's
-// composeToolBlock semantics.
+// based on per-block + transcript-wide flags.
 func (b *ToolBlock) compose() string {
 	if b.resultBody == "" {
 		return b.head
 	}
-	// Always full when: explicitly expanded, has structured diff
-	// payload (the diff IS the call's artifact — folding it
-	// defeats the purpose), or short enough not to warrant
-	// folding.
-	if b.expanded || b.hasDiff || b.resultLines <= foldThreshold {
+	// Diff results always show in full — the diff IS the call's
+	// artifact, folding it defeats the purpose. Ctrl+O override
+	// also forces full render for every tool.
+	if b.expanded || b.hasDiff {
 		if b.head == "" {
 			return b.resultBody
 		}
 		return b.head + "\n" + b.resultBody
 	}
-	preview := previewLines(b.resultBody, foldPreviewLines)
-	hidden := b.resultLines - foldPreviewLines
-	// NOTE: marker styling intentionally bare — we don't have ctx
-	// here. v2 should pull this into Render so theme swaps reflow
-	// it. Acceptable for M3 since the marker is plain text; M5+
-	// can route it through ctx if needed.
+	// Non-diff results: only show full when trivially short
+	// (1 line). Everything else collapses to a single summary
+	// line so the transcript stays scannable without drowning
+	// in tool output noise.
+	if b.resultLines <= 1 {
+		if b.head == "" {
+			return b.resultBody
+		}
+		return b.head + "\n" + b.resultBody
+	}
+	preview := previewLines(b.resultBody, 1)
+	hidden := b.resultLines - 1
 	marker := fmt.Sprintf("  … +%d more lines · Ctrl+O to expand", hidden)
 	if b.head == "" {
 		return preview + "\n" + marker

@@ -101,11 +101,11 @@ Work:
 
 Prerequisite for any "look at this screenshot" workflow. Out of Phase 1 because it touches four LLM clients and the session store, not just `fs/`.
 
-### Phase 1c - Add agent's logger into tool
+### Phase 1c - Add agent's logger into tool ✅️
 - Currently the agent's logger is not pass into tools, so tool error or debug info can't be logged.
 - let tools Execute function add logger param.
 
-### Phase 2 — ToolSearch + AgentTool polish + agent loader
+### Phase 2 — ToolSearch + AgentTool polish + agent loader ✅️
 
 Both tools already exist in evva (`internal/tools/meta/`) and roughly match Claude Code's behavior. This phase finishes parity and lays the **extensibility seam** Phase 6 and external projects depend on.
 
@@ -114,7 +114,7 @@ Both tools already exist in evva (`internal/tools/meta/`) and roughly match Clau
 - New `internal/agent/loader/` — reads `<EVVA_HOME>/agents/{name}/` definitions and registers them. Built-ins stay as Go-defined structs; the loader merges Go + disk into one `AgentRegistry`.
 - Replace `toolset.buildOne`'s hard-coded switch (currently ~370 LOC closed enum) with a `Registry.Register(name, factory)` API so external projects can register their own tools at startup.
 
-### Phase 3 — Permission system + Bash classifier + safe/auto modes
+### Phase 3 — Permission system + Bash classifier + safe/auto modes ✅️
 
 Unblocks plan mode (Phase 7) and worktree (Phase 10). Plan mode is a permission mode, not a standalone tool pair.
 
@@ -176,6 +176,7 @@ UI-heavy port. The tool surface is small; the TUI does most of the work.
 - Port `ref/src/tools/AskUserQuestionTool/prompt.ts`.
 - TUI: question/answer overlay with single-select, multi-select, and side-by-side preview support (mockups, code snippets, diagrams).
 - Wire the answers + annotations back into the tool result envelope.
+- Integrate with the plan mode, before make the final plan can ask user several questions.
 
 ### Phase 9 — User-profile background agent
 

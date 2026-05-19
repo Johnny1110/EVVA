@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 )
 
 // NewStub creates a Tool whose Execute always returns a "not implemented"
@@ -31,7 +32,8 @@ func (s *stubTool) Name() string            { return string(s.name) }
 func (s *stubTool) Description() string     { return s.desc }
 func (s *stubTool) Schema() json.RawMessage { return s.schema }
 
-func (s *stubTool) Execute(_ context.Context, _ json.RawMessage) (Result, error) {
+func (s *stubTool) Execute(_ context.Context, logger *slog.Logger, _ json.RawMessage) (Result, error) {
+	logger.Debug("stub.dispatch", "name", string(s.name))
 	return Result{
 		IsError: true,
 		Content: fmt.Sprintf("tool %q is not implemented yet", s.name),

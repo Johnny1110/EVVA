@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,7 +66,7 @@ type globMatch struct {
 	Mtime time.Time
 }
 
-func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *GlobTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in globInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: "glob: decode input: " + err.Error()}, nil
@@ -73,6 +74,7 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 	if in.Pattern == "" {
 		return tools.Result{IsError: true, Content: "glob: pattern is required"}, nil
 	}
+	logger.Debug("glob.dispatch", "pattern", in.Pattern, "path", in.Path)
 
 	// Validate `path` first if supplied — ref does this in
 	// validateInput before any glob work begins.
@@ -163,6 +165,7 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 		matches = matches[:globResultLimit]
 		truncated = true
 	}
+	logger.Debug("glob.result", "matches", total, "truncated", truncated)
 
 	if total == 0 {
 		return tools.Result{Content: globEmptyMessage}, nil

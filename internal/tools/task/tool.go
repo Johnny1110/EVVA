@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -55,7 +56,7 @@ type createInput struct {
 	Metadata    map[string]any `json:"metadata"`
 }
 
-func (t *CreateTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *CreateTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in createInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("task_create: decode: %v", err)}, nil
@@ -69,6 +70,7 @@ func (t *CreateTool) Execute(_ context.Context, input json.RawMessage) (tools.Re
 		ActiveForm:  in.ActiveForm,
 		Metadata:    in.Metadata,
 	})
+	logger.Debug("task.create", "id", created.ID, "subject", created.Subject)
 	return tools.Result{Content: fmt.Sprintf("created task, ID: %s, status: pending, subject: %s", created.ID, created.Subject)}, nil
 }
 
@@ -102,11 +104,12 @@ type getInput struct {
 	TaskID string `json:"taskId"`
 }
 
-func (t *GetTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *GetTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in getInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("task_get: decode: %v", err)}, nil
 	}
+	logger.Debug("task.get", "id", in.TaskID)
 	task, ok := t.store.Get(in.TaskID)
 	if !ok {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("task_get: no task with id %q", in.TaskID)}, nil
@@ -146,8 +149,9 @@ type taskSummary struct {
 	BlockedBy []string `json:"blockedBy,omitempty"`
 }
 
-func (t *ListTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
+func (t *ListTool) Execute(_ context.Context, logger *slog.Logger, _ json.RawMessage) (tools.Result, error) {
 	all := t.store.List()
+	logger.Debug("task.list", "count", len(all))
 	out := make([]taskSummary, 0, len(all))
 	for _, task := range all {
 		out = append(out, taskSummary{
@@ -212,7 +216,7 @@ type updateInput struct {
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
-func (t *UpdateTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *UpdateTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in updateInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("task_update: decode: %v", err)}, nil
@@ -220,6 +224,11 @@ func (t *UpdateTool) Execute(_ context.Context, input json.RawMessage) (tools.Re
 	if in.TaskID == "" {
 		return tools.Result{IsError: true, Content: "task_update: taskId is required"}, nil
 	}
+	var statusVal string
+	if in.Status != nil {
+		statusVal = string(*in.Status)
+	}
+	logger.Debug("task.update", "id", in.TaskID, "status", statusVal)
 
 	patch := UpdatePatch{
 		Status:       in.Status,
@@ -269,7 +278,7 @@ func (t *OutputTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *OutputTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
+func (t *OutputTool) Execute(_ context.Context, _ *slog.Logger, _ json.RawMessage) (tools.Result, error) {
 	return tools.Result{
 		IsError: true,
 		Content: "task_output: background tasks are not implemented yet",
@@ -301,7 +310,7 @@ func (t *StopTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *StopTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
+func (t *StopTool) Execute(_ context.Context, _ *slog.Logger, _ json.RawMessage) (tools.Result, error) {
 	return tools.Result{
 		IsError: true,
 		Content: "task_stop: background tasks are not implemented yet",

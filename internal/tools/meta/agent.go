@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/johnny1110/evva/internal/constant"
@@ -272,7 +273,7 @@ type agentInput struct {
 	AsyncMode    bool   `json:"async_mode"`
 }
 
-func (t *AgentTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *AgentTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in agentInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("agent: decode: %v", err)}, nil
@@ -293,6 +294,7 @@ func (t *AgentTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 	if kind == "" {
 		kind = "general-purpose"
 	}
+	logger.Info("subagent.spawn", "kind", kind, "name", in.Name, "async", in.AsyncMode, "level", in.Level)
 
 	out, err := spawner.Spawn(ctx, SpawnRequest{
 		Name:      in.Name,
@@ -306,10 +308,12 @@ func (t *AgentTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 	if err != nil {
 		if errors.Is(err, ErrSubagentForbidden) {
 			// Recoverable — model can ditch the subagent plan and try something else.
+			logger.Warn("subagent.fail", "kind", kind, "reason", "forbidden", "err", err)
 			return tools.Result{IsError: true, Content: fmt.Sprintf("%s \n [%s]", out, err.Error())}, nil
 		}
 		// Other errors abort the parent loop — they are Go-level failures
 		// (LLM transport, tool panics) the model can't recover from.
+		logger.Warn("subagent.fail", "kind", kind, "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("agent: %s %v", out, err)}, err
 	}
 	// If this is a async mode agent, output will be like "subagent running in background."

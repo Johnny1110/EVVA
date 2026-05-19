@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -76,11 +77,12 @@ type editInput struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
-func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *EditTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in editInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: "edit: decode input: " + err.Error()}, nil
 	}
+	logger.Debug("edit.dispatch", "path", in.FilePath, "replace_all", in.ReplaceAll, "old_bytes", len(in.OldString), "new_bytes", len(in.NewString))
 
 	resolved, err := resolvePath(in.FilePath)
 	if err != nil {
@@ -148,6 +150,7 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 
 	if t.tracker != nil {
 		if ok, reason := t.tracker.CanEdit(resolved, info.ModTime()); !ok {
+			logger.Warn("edit.fail", "path", in.FilePath, "reason", reason)
 			return tools.Result{
 				IsError: true,
 				Content: fmt.Sprintf("edit: %s — path: %s", reason, in.FilePath),

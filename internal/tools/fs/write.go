@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +52,7 @@ type writeInput struct {
 	Content  string `json:"content"`
 }
 
-func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *WriteTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in writeInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: "write: missing required params: need file_path and content"}, nil
@@ -62,6 +63,7 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 	if in.Content == "" && !jsonFieldPresent(input, "content") {
 		return tools.Result{IsError: true, Content: "write: missing required param: content"}, nil
 	}
+	logger.Debug("write.dispatch", "path", in.FilePath, "bytes", len(in.Content))
 
 	resolved, err := resolvePath(in.FilePath)
 	if err != nil {
@@ -117,6 +119,7 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 	// file's consumer still recognizes it. Matches ref FileWriteTool
 	// (writeTextContent(..., enc, 'LF')).
 	if err := writeFileWithEncoding(resolved, in.Content, enc, false); err != nil {
+		logger.Warn("write.fail", "path", in.FilePath, "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("write: could not write %s: %s", in.FilePath, err)}, nil
 	}
 

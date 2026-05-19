@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -62,7 +63,7 @@ type grepInput struct {
 	ContextAfter    int    `json:"context_after"`
 }
 
-func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *GrepTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in grepInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("grep: decode: %v", err)}, nil
@@ -83,6 +84,7 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 	if mode == "" {
 		mode = "content"
 	}
+	logger.Debug("grep.dispatch", "pattern", in.Pattern, "path", root, "mode", mode, "glob", in.Glob)
 
 	cmd, err := buildGrepCmd(in.Pattern, root, mode, in.CaseInsensitive, in.Glob,
 		in.ContextBefore, in.ContextAfter, in.ContextAround, in.HeadLimit)
@@ -90,7 +92,7 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 		return tools.Result{IsError: true, Content: fmt.Sprintf("grep: %v", err)}, nil
 	}
 
-	res, _ := Bash.Execute(ctx, json.RawMessage(
+	res, _ := Bash.Execute(ctx, logger, json.RawMessage(
 		`{"command":`+strconv.Quote(cmd)+`,"description":"grep for pattern"}`,
 	))
 

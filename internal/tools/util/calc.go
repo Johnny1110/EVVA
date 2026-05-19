@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/big"
 	"strconv"
@@ -41,7 +42,7 @@ type calcInput struct {
 	Expression string `json:"expression"`
 }
 
-func (t *calcTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *calcTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in calcInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("calc: decode: %v", err)}, nil
@@ -50,9 +51,11 @@ func (t *calcTool) Execute(_ context.Context, input json.RawMessage) (tools.Resu
 	if expr == "" {
 		return tools.Result{IsError: true, Content: "calc: expression is required"}, nil
 	}
+	logger.Debug("calc.dispatch", "expr", expr)
 
 	val, err := evaluate(expr)
 	if err != nil {
+		logger.Warn("calc.fail", "expr", expr, "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("calc: %v", err)}, nil
 	}
 

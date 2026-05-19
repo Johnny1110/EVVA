@@ -234,7 +234,7 @@ func newToolSearchWith(descs []tools.Descriptor) *ToolSearchTool {
 func TestExecute_SelectReturnsFunctionsBlock(t *testing.T) {
 	ts := newToolSearchWith(testDescriptors())
 	input := json.RawMessage(`{"query":"select:calc,web_search"}`)
-	res, err := ts.Execute(nil, input)
+	res, err := ts.Execute(nil, tools.NopLogger(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestExecute_SelectReturnsFunctionsBlock(t *testing.T) {
 func TestExecute_KeywordReturnsTopMatch(t *testing.T) {
 	ts := newToolSearchWith(testDescriptors())
 	input := json.RawMessage(`{"query":"notebook jupyter"}`)
-	res, err := ts.Execute(nil, input)
+	res, err := ts.Execute(nil, tools.NopLogger(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestExecute_KeywordReturnsTopMatch(t *testing.T) {
 func TestExecute_EmptyQueryError(t *testing.T) {
 	ts := newToolSearchWith(testDescriptors())
 	input := json.RawMessage(`{"query":"   "}`)
-	res, _ := ts.Execute(nil, input)
+	res, _ := ts.Execute(nil, tools.NopLogger(), input)
 	if !res.IsError {
 		t.Fatal("expected error for empty query")
 	}
@@ -279,7 +279,7 @@ func TestExecute_EmptyQueryError(t *testing.T) {
 func TestExecute_NilLookupError(t *testing.T) {
 	ts := NewToolSearch(nil)
 	input := json.RawMessage(`{"query":"task"}`)
-	res, _ := ts.Execute(nil, input)
+	res, _ := ts.Execute(nil, tools.NopLogger(), input)
 	if !res.IsError {
 		t.Fatal("expected error for nil lookup")
 	}
@@ -288,7 +288,7 @@ func TestExecute_NilLookupError(t *testing.T) {
 func TestExecute_LookupReturnsNilError(t *testing.T) {
 	ts := NewToolSearch(func() DeferredLookup { return nil })
 	input := json.RawMessage(`{"query":"task"}`)
-	res, _ := ts.Execute(nil, input)
+	res, _ := ts.Execute(nil, tools.NopLogger(), input)
 	if !res.IsError {
 		t.Fatal("expected error when lookup returns nil")
 	}
@@ -297,7 +297,7 @@ func TestExecute_LookupReturnsNilError(t *testing.T) {
 func TestExecute_NoDeferredTools(t *testing.T) {
 	ts := newToolSearchWith(nil)
 	input := json.RawMessage(`{"query":"task"}`)
-	res, _ := ts.Execute(nil, input)
+	res, _ := ts.Execute(nil, tools.NopLogger(), input)
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -309,7 +309,7 @@ func TestExecute_NoDeferredTools(t *testing.T) {
 func TestExecute_NoMatchMessage(t *testing.T) {
 	ts := newToolSearchWith(testDescriptors())
 	input := json.RawMessage(`{"query":"zzzznonexistent"}`)
-	res, _ := ts.Execute(nil, input)
+	res, _ := ts.Execute(nil, tools.NopLogger(), input)
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}

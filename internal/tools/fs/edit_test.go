@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 	"time"
 )
 
@@ -16,7 +18,7 @@ func TestEdit_FileNotFound_NonEmptyOldString(t *testing.T) {
 	missing := filepath.Join(dir, "nope.txt")
 	tool := NewEdit(NewReadTracker())
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+missing+`","old_string":"a","new_string":"b"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "does not exist") {
@@ -31,7 +33,7 @@ func TestEdit_RejectsDirectory(t *testing.T) {
 	dir := t.TempDir()
 	tool := NewEdit(NewReadTracker())
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+dir+`","old_string":"a","new_string":"b"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "not a regular file") {
@@ -43,7 +45,7 @@ func TestEdit_BlockedWithoutPriorRead(t *testing.T) {
 	path := writeTempFile(t, "hello world")
 	tool := NewEdit(NewReadTracker())
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"hello","new_string":"bye"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "has not been read") {
@@ -72,7 +74,7 @@ func TestEdit_BlockedOnMtimeDrift(t *testing.T) {
 	}
 
 	tool := NewEdit(tr)
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"hello","new_string":"bye"}`))
 	if !res.IsError {
 		t.Fatal("expected mtime-drift error")
@@ -91,7 +93,7 @@ func TestEdit_BlockedOnPartialView(t *testing.T) {
 	tr.Record(path, info.ModTime(), true) // partial
 
 	tool := NewEdit(tr)
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"hello","new_string":"bye"}`))
 	if !res.IsError {
 		t.Fatal("expected partial-view rejection")
@@ -109,7 +111,7 @@ func TestEdit_RejectsIPYNB(t *testing.T) {
 	recordFullRead(t, tr, path)
 
 	tool := NewEdit(tr)
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"a","new_string":"b"}`))
 	if !res.IsError {
 		t.Fatal("expected .ipynb rejection")
@@ -125,7 +127,7 @@ func TestEdit_RejectsIdenticalStrings(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"x","new_string":"x"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "exactly the same") {
@@ -139,7 +141,7 @@ func TestEdit_OldStringNotFound(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"nope","new_string":"yes"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "not found") {
@@ -157,7 +159,7 @@ func TestEdit_OldStringNotFound_LineNumberPrefixHint(t *testing.T) {
 	tool := NewEdit(tr)
 
 	oldWithPrefix := "     1\thello world"
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":`+strconv.Quote(oldWithPrefix)+`,"new_string":"bye"}`))
 
 	if !res.IsError {
@@ -174,7 +176,7 @@ func TestEdit_AmbiguousWithoutReplaceAll(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"foo","new_string":"bar"}`))
 
 	if !res.IsError {
@@ -195,7 +197,7 @@ func TestEdit_SingleReplacement_HappyPath(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"beta","new_string":"BETA"}`))
 
 	if res.IsError {
@@ -224,7 +226,7 @@ func TestEdit_ReplaceAll(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"foo","new_string":"FOO","replace_all":true}`))
 
 	if res.IsError {
@@ -241,7 +243,7 @@ func TestEdit_ReplaceAll(t *testing.T) {
 
 func TestEdit_DecodeError(t *testing.T) {
 	tool := NewEdit(NewReadTracker())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{nope`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{nope`))
 	if !res.IsError || !strings.Contains(res.Content, "decode") {
 		t.Errorf("expected decode error; got isErr=%v content=%q", res.IsError, res.Content)
 	}
@@ -261,7 +263,7 @@ func TestEdit_CreatesNewFileWithEmptyOldString(t *testing.T) {
 	path := filepath.Join(dir, "subdir", "new.go")
 	tool := NewEdit(NewReadTracker())
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"","new_string":"package main\n"}`))
 
 	if res.IsError {
@@ -288,7 +290,7 @@ func TestEdit_EmptyOldStringOnExistingFileRejected(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"","new_string":"new content"}`))
 	if !res.IsError {
 		t.Fatal("expected rejection for empty old_string on non-empty file")
@@ -306,7 +308,7 @@ func TestEdit_EmptyOldStringOnEmptyFile(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"","new_string":"populated"}`))
 	if res.IsError {
 		t.Fatalf("populating empty file should succeed; got: %s", res.Content)
@@ -330,7 +332,7 @@ func TestEdit_CRLFRoundtrip(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"second","new_string":"SECOND"}`))
 	if res.IsError {
 		t.Fatalf("CRLF edit should succeed (LF old_string normalized to LF in mem); got: %s", res.Content)
@@ -361,7 +363,7 @@ func TestEdit_UTF16LERoundtrip(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"hello","new_string":"world"}`))
 	if res.IsError {
 		t.Fatalf("UTF-16 edit should succeed; got: %s", res.Content)
@@ -388,7 +390,7 @@ func TestEdit_CurlyQuoteToStraight(t *testing.T) {
 
 	// Model sends straight quotes — should match the curly version
 	// in the file via normalizeQuotes.
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"say \"hello\" loudly","new_string":"say \"hi\" quietly"}`))
 	if res.IsError {
 		t.Fatalf("curly-quote match should succeed; got: %s", res.Content)
@@ -412,7 +414,7 @@ func TestEdit_StraightQuoteToCurly(t *testing.T) {
 	tool := NewEdit(tr)
 
 	// old_string with curly, new_string with straight.
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"say “hello” loudly","new_string":"say \"hi\" quietly"}`))
 	if res.IsError {
 		t.Fatalf("curly→straight match should succeed; got: %s", res.Content)
@@ -432,7 +434,7 @@ func TestEdit_TrailingNewlineCleanupOnEmptyNewString(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewEdit(tr)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"line2","new_string":""}`))
 	if res.IsError {
 		t.Fatalf("delete-line edit should succeed; got: %s", res.Content)
@@ -453,7 +455,7 @@ func TestEdit_StripTrailingWhitespaceOnNonMarkdown(t *testing.T) {
 	tool := NewEdit(tr)
 
 	// new_string has trailing spaces on each line — should be stripped.
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"foo","new_string":"bar   \n  baz  "}`))
 	if res.IsError {
 		t.Fatalf("edit should succeed; got: %s", res.Content)
@@ -479,7 +481,7 @@ func TestEdit_MarkdownPreservesTrailingSpaces(t *testing.T) {
 
 	// Two trailing spaces on the first line of new_string — should NOT
 	// be stripped because this is markdown.
-	res, _ := tool.Execute(context.Background(), json.RawMessage(
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
 		`{"file_path":"`+path+`","old_string":"foo","new_string":"line1  \nline2"}`))
 	if res.IsError {
 		t.Fatalf("edit should succeed; got: %s", res.Content)

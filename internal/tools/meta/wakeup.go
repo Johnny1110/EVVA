@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -108,7 +109,7 @@ const (
 	wakeupMaxSeconds = 3600.0
 )
 
-func (t *WakeupTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *WakeupTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in wakeupInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("schedule_wakeup: decode: %v", err)}, nil
@@ -130,6 +131,7 @@ func (t *WakeupTool) Execute(ctx context.Context, input json.RawMessage) (tools.
 	case seconds > wakeupMaxSeconds:
 		seconds = wakeupMaxSeconds
 	}
+	logger.Debug("wakeup.dispatch", "delay_s", seconds, "reason", in.Reason)
 
 	dur := time.Duration(seconds * float64(time.Second))
 	timer := time.NewTimer(dur)

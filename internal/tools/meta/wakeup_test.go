@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 	"time"
 )
 
@@ -14,7 +16,7 @@ func TestWakeup_SleepAndEnqueue(t *testing.T) {
 
 	input := json.RawMessage(`{"delaySeconds":0.05,"reason":"unit test","prompt":"check on subagents"}`)
 	start := time.Now()
-	res, err := w.Execute(context.Background(), input)
+	res, err := w.Execute(context.Background(), tools.NopLogger(), input)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("Execute: unexpected error: %v", err)
@@ -45,7 +47,7 @@ func TestWakeup_RequiresPromptAndReason(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := w.Execute(context.Background(), json.RawMessage(tc.in))
+			res, err := w.Execute(context.Background(), tools.NopLogger(), json.RawMessage(tc.in))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -68,7 +70,7 @@ func TestWakeup_CancelDuringSleep(t *testing.T) {
 	}()
 	input := json.RawMessage(`{"delaySeconds":3600,"reason":"r","prompt":"p"}`)
 	start := time.Now()
-	res, err := w.Execute(ctx, input)
+	res, err := w.Execute(ctx, tools.NopLogger(), input)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

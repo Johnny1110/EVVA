@@ -6,6 +6,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 )
 
 func TestCalc_Evaluate(t *testing.T) {
@@ -204,7 +206,7 @@ func TestCalc_ToolExecute(t *testing.T) {
 
 	t.Run("happy path", func(t *testing.T) {
 		in, _ := json.Marshal(calcInput{Expression: "2 + 3 * 4"})
-		res, _ := tool.Execute(context.Background(), in)
+		res, _ := tool.Execute(context.Background(), tools.NopLogger(), in)
 		if res.IsError {
 			t.Fatalf("unexpected error: %s", res.Content)
 		}
@@ -215,14 +217,14 @@ func TestCalc_ToolExecute(t *testing.T) {
 
 	t.Run("empty expression", func(t *testing.T) {
 		in, _ := json.Marshal(calcInput{Expression: ""})
-		res, _ := tool.Execute(context.Background(), in)
+		res, _ := tool.Execute(context.Background(), tools.NopLogger(), in)
 		if !res.IsError || !strings.Contains(res.Content, "expression is required") {
 			t.Errorf("got isErr=%v content=%q", res.IsError, res.Content)
 		}
 	})
 
 	t.Run("decode error", func(t *testing.T) {
-		res, _ := tool.Execute(context.Background(), json.RawMessage(`{bogus`))
+		res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{bogus`))
 		if !res.IsError || !strings.Contains(res.Content, "decode") {
 			t.Errorf("got isErr=%v content=%q", res.IsError, res.Content)
 		}

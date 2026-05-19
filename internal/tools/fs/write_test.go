@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 	"time"
 )
 
@@ -15,7 +17,7 @@ func TestWrite_NewFileSkipsReadGuard(t *testing.T) {
 	path := filepath.Join(dir, "new.txt")
 	tool := NewWrite(NewReadTracker())
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":"hello"}`))
 
 	if res.IsError {
@@ -37,7 +39,7 @@ func TestWrite_OverwriteBlockedWithoutPriorRead(t *testing.T) {
 	path := writeTempFile(t, "old")
 	tool := NewWrite(NewReadTracker())
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
 
 	if !res.IsError {
@@ -66,7 +68,7 @@ func TestWrite_OverwriteBlockedOnMtimeDrift(t *testing.T) {
 	}
 
 	tool := NewWrite(tr)
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
 	if !res.IsError {
 		t.Fatal("expected mtime-drift rejection")
@@ -85,7 +87,7 @@ func TestWrite_OverwriteBlockedOnPartialView(t *testing.T) {
 	tr.Record(path, info.ModTime(), true)
 
 	tool := NewWrite(tr)
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
 	if !res.IsError {
 		t.Fatal("expected partial-view rejection")
@@ -101,7 +103,7 @@ func TestWrite_OverwriteAllowedAfterRead(t *testing.T) {
 	recordFullRead(t, tr, path)
 	tool := NewWrite(tr)
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
 
 	if res.IsError {
@@ -124,7 +126,7 @@ func TestWrite_AutoMkdirsMissingParents(t *testing.T) {
 	deep := filepath.Join(dir, "a", "b", "c", "f.txt")
 	tool := NewWrite(NewReadTracker())
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+deep+`","content":"x"}`))
 
 	if res.IsError {
@@ -140,7 +142,7 @@ func TestWrite_EmptyContent(t *testing.T) {
 	path := filepath.Join(dir, "empty.txt")
 	tool := NewWrite(NewReadTracker())
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":""}`))
 
 	if res.IsError {
@@ -157,7 +159,7 @@ func TestWrite_EmptyContent(t *testing.T) {
 
 func TestWrite_DecodeError(t *testing.T) {
 	tool := NewWrite(NewReadTracker())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{not json`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{not json`))
 	if !res.IsError || !strings.Contains(res.Content, "missing required") {
 		t.Errorf("expected error about missing required params; got isErr=%v content=%q", res.IsError, res.Content)
 	}
@@ -165,7 +167,7 @@ func TestWrite_DecodeError(t *testing.T) {
 
 func TestWrite_EmptyInput(t *testing.T) {
 	tool := NewWrite(NewReadTracker())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(``))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(``))
 	if !res.IsError {
 		t.Fatalf("expected error for empty input")
 	}
@@ -176,7 +178,7 @@ func TestWrite_EmptyInput(t *testing.T) {
 
 func TestWrite_MissingFilePath(t *testing.T) {
 	tool := NewWrite(NewReadTracker())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"content":"hello"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"content":"hello"}`))
 	if !res.IsError {
 		t.Fatalf("expected error for missing file_path")
 	}
@@ -188,7 +190,7 @@ func TestWrite_MissingFilePath(t *testing.T) {
 func TestWrite_MissingContent(t *testing.T) {
 	dir := t.TempDir()
 	tool := NewWrite(NewReadTracker())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"file_path":"`+filepath.Join(dir, "f.txt")+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+filepath.Join(dir, "f.txt")+`"}`))
 	if !res.IsError {
 		t.Fatalf("expected error for missing content")
 	}
@@ -199,7 +201,7 @@ func TestWrite_MissingContent(t *testing.T) {
 
 func TestWrite_EmptyFilePath(t *testing.T) {
 	tool := NewWrite(NewReadTracker())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"file_path":"","content":"hello"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"","content":"hello"}`))
 	if !res.IsError {
 		t.Fatalf("expected error for empty file_path")
 	}
@@ -227,7 +229,7 @@ func TestWrite_PreservesUTF16LEOnOverwrite(t *testing.T) {
 	recordFullRead(t, tr, path)
 
 	tool := NewWrite(tr)
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
 	if res.IsError {
 		t.Fatalf("UTF-16 overwrite should succeed: %s", res.Content)
@@ -258,7 +260,7 @@ func TestWrite_DoesNotRestoreCRLF(t *testing.T) {
 
 	tool := NewWrite(tr)
 	// Model sends LF content — Write must respect that.
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":"x\ny\n"}`))
 	if res.IsError {
 		t.Fatalf("overwrite should succeed: %s", res.Content)
@@ -285,7 +287,7 @@ func TestWrite_DiffUsesNormalizedPriorContent(t *testing.T) {
 	recordFullRead(t, tr, path)
 
 	tool := NewWrite(tr)
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"file_path":"`+path+`","content":"line1\nLINE2\n"}`))
 	if res.IsError {
 		t.Fatalf("overwrite should succeed: %s", res.Content)

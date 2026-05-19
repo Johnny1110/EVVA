@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 )
 
 // Phase 1 analysis — GrepTool.Execute code paths:
@@ -58,7 +60,7 @@ func writeGrepFixture(t *testing.T) string {
 
 func TestGrep_RejectsEmptyPattern(t *testing.T) {
 	tool := &GrepTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"pattern":""}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"pattern":""}`))
 	if !res.IsError || !strings.Contains(res.Content, "required") {
 		t.Errorf("expected 'required'; got %q", res.Content)
 	}
@@ -66,7 +68,7 @@ func TestGrep_RejectsEmptyPattern(t *testing.T) {
 
 func TestGrep_RejectsInvalidRegex(t *testing.T) {
 	tool := &GrepTool{}
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"pattern":"[unclosed"}`))
 	if !res.IsError {
 		t.Fatalf("expected error for invalid regex; got content=%q", res.Content)
@@ -78,7 +80,7 @@ func TestGrep_RejectsInvalidRegex(t *testing.T) {
 
 func TestGrep_RejectsRelativePath(t *testing.T) {
 	tool := &GrepTool{}
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"pattern":"x","path":"relative/dir"}`))
 	if !res.IsError || !strings.Contains(res.Content, "absolute") {
 		t.Errorf("expected absolute-path rejection; got %q", res.Content)
@@ -89,7 +91,7 @@ func TestGrep_ContentMode_DefaultsToPathLineText(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func Foo","path":%q}`, root)))
 
 	if res.IsError {
@@ -118,7 +120,7 @@ func TestGrep_FilesWithMatchesMode(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func Foo","path":%q,"output_mode":"files_with_matches"}`, root)))
 
 	if res.IsError {
@@ -140,7 +142,7 @@ func TestGrep_CountMode(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func ","path":%q,"output_mode":"count"}`, root)))
 
 	if res.IsError {
@@ -159,7 +161,7 @@ func TestGrep_CaseInsensitive(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"foo","path":%q,"case_insensitive":true}`, root)))
 
 	if res.IsError {
@@ -175,7 +177,7 @@ func TestGrep_GlobFiltersByFilename(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"hello","path":%q,"glob":"*.md"}`, root)))
 
 	if res.IsError {
@@ -190,7 +192,7 @@ func TestGrep_GlobExcludesNonMatching(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func Foo","path":%q,"glob":"*.md"}`, root)))
 
 	if res.IsError {
@@ -206,7 +208,7 @@ func TestGrep_HeadLimitCapsOutput(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func ","path":%q,"head_limit":1}`, root)))
 
 	if res.IsError {
@@ -222,7 +224,7 @@ func TestGrep_NoMatchesPlaceholder(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"nonexistent-symbol","path":%q}`, root)))
 
 	if res.IsError {
@@ -237,7 +239,7 @@ func TestGrep_SingleFilePath(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"Bar","path":%q}`, filepath.Join(root, "alpha.go"))))
 
 	if res.IsError {
@@ -250,7 +252,7 @@ func TestGrep_SingleFilePath(t *testing.T) {
 
 func TestGrep_DecodeError(t *testing.T) {
 	tool := &GrepTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{nope`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{nope`))
 	if !res.IsError || !strings.Contains(res.Content, "decode") {
 		t.Errorf("expected decode error; got %q", res.Content)
 	}
@@ -260,7 +262,7 @@ func TestGrep_ContextAfter(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func Foo","path":%q,"context_after":1}`, root)))
 
 	if res.IsError {
@@ -280,7 +282,7 @@ func TestGrep_ContextBefore(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func Foo","path":%q,"context_before":1}`, root)))
 
 	if res.IsError {
@@ -296,7 +298,7 @@ func TestGrep_ContextAround(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func Foo","path":%q,"context_around":1}`, root)))
 
 	if res.IsError {
@@ -320,7 +322,7 @@ func TestGrep_ContextNoOverlap(t *testing.T) {
 	os.WriteFile(path, []byte(content), 0o644)
 
 	tool := &GrepTool{}
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"match","path":%q,"context_after":1}`, root)))
 
 	if res.IsError {
@@ -336,7 +338,7 @@ func TestGrep_ContextDoesNotAffectCountMode(t *testing.T) {
 	root := writeGrepFixture(t)
 	tool := &GrepTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"pattern":"func ","path":%q,"output_mode":"count","context_around":2}`, root)))
 
 	if res.IsError {

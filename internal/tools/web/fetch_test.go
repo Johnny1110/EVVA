@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 	"time"
 
 	config "github.com/johnny1110/evva/configs"
@@ -51,7 +53,7 @@ func setFetchMaxBytes(t *testing.T, n int) {
 
 func TestFetch_RejectsEmptyURL(t *testing.T) {
 	tool := &FetchTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"url":"  "}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"url":"  "}`))
 	if !res.IsError || !strings.Contains(res.Content, "required") {
 		t.Fatalf("expected 'required' error; got isErr=%v content=%q", res.IsError, res.Content)
 	}
@@ -60,7 +62,7 @@ func TestFetch_RejectsEmptyURL(t *testing.T) {
 func TestFetch_RejectsInvalidURL(t *testing.T) {
 	tool := &FetchTool{}
 	// "::not a url" has no host after url.Parse
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"url":"::not a url"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"url":"::not a url"}`))
 	if !res.IsError {
 		t.Fatal("expected IsError for malformed URL")
 	}
@@ -73,7 +75,7 @@ func TestFetch_RejectsUnsupportedScheme(t *testing.T) {
 	tool := &FetchTool{}
 	// Use a URL that parses cleanly (has host) so we reach the scheme
 	// check rather than tripping the empty-host branch.
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"url":"ftp://example.com/x"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"url":"ftp://example.com/x"}`))
 	if !res.IsError {
 		t.Fatal("expected IsError for non-http(s) scheme")
 	}
@@ -93,7 +95,7 @@ func TestFetch_HappyPath_HTMLExtraction(t *testing.T) {
 	setFetchMaxBytes(t, 100_000)
 
 	tool := &FetchTool{}
-	res, err := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
+	res, err := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
 	if err != nil {
 		t.Fatalf("unexpected go error: %v", err)
 	}
@@ -125,7 +127,7 @@ func TestFetch_PlainTextReturnedAsIs(t *testing.T) {
 	setFetchMaxBytes(t, 100_000)
 
 	tool := &FetchTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
 
 	if res.IsError {
 		t.Fatalf("unexpected IsError; content=%s", res.Content)
@@ -145,7 +147,7 @@ func TestFetch_Non2xxIsError(t *testing.T) {
 	setFetchMaxBytes(t, 100_000)
 
 	tool := &FetchTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
 
 	if !res.IsError {
 		t.Fatal("expected IsError on 404")
@@ -168,7 +170,7 @@ func TestFetch_TruncationMarkerAppended(t *testing.T) {
 	setFetchMaxBytes(t, maxBytes)
 
 	tool := &FetchTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
 
 	if res.IsError {
 		t.Fatalf("unexpected IsError; content=%s", res.Content)
@@ -188,7 +190,7 @@ func TestFetch_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	res, err := tool.Execute(ctx, json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
+	res, err := tool.Execute(ctx, tools.NopLogger(), json.RawMessage(fmt.Sprintf(`{"url":%q}`, srv.URL)))
 
 	if err == nil {
 		t.Fatal("expected go-level err on cancelled ctx")

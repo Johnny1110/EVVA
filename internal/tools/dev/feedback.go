@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -46,15 +47,17 @@ type feedbackInput struct {
 	Feedback string `json:"feedback"`
 }
 
-func (t *FeedbackTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *FeedbackTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in feedbackInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("feedback: bad input: %v", err)}, nil
 	}
+	logger.Debug("feedback.dispatch", "category", in.Category)
 
 	cfg := config.Get()
 	dir := filepath.Join(cfg.EvvaHome, "feedbacks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		logger.Warn("feedback.fail", "stage", "mkdir", "dir", dir, "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("feedback: cannot create directory: %v", err)}, nil
 	}
 
@@ -64,6 +67,7 @@ func (t *FeedbackTool) Execute(_ context.Context, input json.RawMessage) (tools.
 
 	body := fmt.Sprintf("> category: %s\n\n%s", in.Category, in.Feedback)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		logger.Warn("feedback.fail", "stage", "write", "path", path, "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("feedback: cannot write file: %v", err)}, nil
 	}
 

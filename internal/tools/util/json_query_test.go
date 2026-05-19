@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 )
 
 func TestJSONQuery_HappyPath(t *testing.T) {
@@ -73,7 +75,7 @@ func TestJSONQuery_HappyPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in, _ := json.Marshal(jsonQueryInput{Input: tt.input, Path: tt.path})
-			res, _ := tool.Execute(context.Background(), in)
+			res, _ := tool.Execute(context.Background(), tools.NopLogger(), in)
 			if res.IsError {
 				t.Fatalf("unexpected error: %s", res.Content)
 			}
@@ -138,7 +140,7 @@ func TestJSONQuery_Errors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in, _ := json.Marshal(jsonQueryInput{Input: tt.input, Path: tt.path})
-			res, _ := tool.Execute(context.Background(), in)
+			res, _ := tool.Execute(context.Background(), tools.NopLogger(), in)
 			if !res.IsError {
 				t.Fatalf("expected error, got content=%q", res.Content)
 			}
@@ -151,7 +153,7 @@ func TestJSONQuery_Errors(t *testing.T) {
 
 func TestJSONQuery_DecodeError(t *testing.T) {
 	tool := &jsonQueryTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{bogus`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{bogus`))
 	if !res.IsError || !strings.Contains(res.Content, "decode") {
 		t.Errorf("expected decode error; got isErr=%v content=%q", res.IsError, res.Content)
 	}
@@ -160,7 +162,7 @@ func TestJSONQuery_DecodeError(t *testing.T) {
 func TestJSONQuery_RootArray(t *testing.T) {
 	tool := &jsonQueryTool{}
 	in, _ := json.Marshal(jsonQueryInput{Input: `[10, 20, 30]`, Path: ".[1]"})
-	res, _ := tool.Execute(context.Background(), in)
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), in)
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -175,7 +177,7 @@ func TestJSONQuery_EmptyPathWholeValue(t *testing.T) {
 	// (This test confirms the early-return validation fires, not a silent nil.)
 	tool := &jsonQueryTool{}
 	in, _ := json.Marshal(jsonQueryInput{Input: `{"a":1}`, Path: "."})
-	res, _ := tool.Execute(context.Background(), in)
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), in)
 	if !res.IsError || !strings.Contains(res.Content, "empty field name") {
 		t.Errorf("expected empty-field error; got isErr=%v content=%q", res.IsError, res.Content)
 	}

@@ -9,6 +9,7 @@ import (
 	_ "image/gif"  // register GIF decoder
 	"image/jpeg"
 	_ "image/png" // register PNG decoder
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,11 +96,12 @@ type readInput struct {
 	Pages    string `json:"pages"`
 }
 
-func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *ReadTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in readInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: "read: decode input: " + err.Error()}, nil
 	}
+	logger.Debug("read.dispatch", "path", in.FilePath, "offset", in.Offset, "limit", in.Limit, "pages", in.Pages)
 
 	resolved, err := resolvePath(in.FilePath)
 	if err != nil {
@@ -117,6 +119,7 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 
 	info, err := os.Stat(resolved)
 	if err != nil {
+		logger.Warn("read.fail", "path", in.FilePath, "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("read: file not found: %s", in.FilePath)}, nil
 	}
 	if info.IsDir() {

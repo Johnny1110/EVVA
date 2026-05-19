@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/johnny1110/evva/internal/tools"
@@ -65,7 +66,7 @@ type skillInput struct {
 	Args  string `json:"args"`
 }
 
-func (t *SkillTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *SkillTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in skillInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("skill: decode: %v", err)}, nil
@@ -74,6 +75,7 @@ func (t *SkillTool) Execute(_ context.Context, input json.RawMessage) (tools.Res
 	if name == "" {
 		return tools.Result{IsError: true, Content: "skill: `skill` is required"}, nil
 	}
+	logger.Debug("skill.dispatch", "name", name, "has_args", in.Args != "")
 	if t.lookup == nil {
 		return tools.Result{IsError: true, Content: "skill: no registry lookup configured"}, nil
 	}
@@ -86,6 +88,7 @@ func (t *SkillTool) Execute(_ context.Context, input json.RawMessage) (tools.Res
 		if avail == "" {
 			avail = "(none)"
 		}
+		logger.Warn("skill.unknown", "name", name)
 		return tools.Result{
 			IsError: true,
 			Content: fmt.Sprintf("skill: %q not found; available: %s", name, avail),
@@ -93,6 +96,7 @@ func (t *SkillTool) Execute(_ context.Context, input json.RawMessage) (tools.Res
 	}
 	body, err := reg.LoadBody(name)
 	if err != nil {
+		logger.Warn("skill.fail", "name", name, "stage", "load_body", "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("skill: load body: %v", err)}, nil
 	}
 

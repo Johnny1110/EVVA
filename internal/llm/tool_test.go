@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 
 	"github.com/johnny1110/evva/internal/tools"
@@ -21,7 +22,7 @@ type fakeTool struct {
 func (f fakeTool) Name() string            { return "fake" }
 func (f fakeTool) Description() string     { return "test tool" }
 func (f fakeTool) Schema() json.RawMessage { return f.schema }
-func (f fakeTool) Execute(_ context.Context, _ json.RawMessage) (tools.Result, error) {
+func (f fakeTool) Execute(_ context.Context, _ *slog.Logger, _ json.RawMessage) (tools.Result, error) {
 	return tools.Result{}, nil
 }
 

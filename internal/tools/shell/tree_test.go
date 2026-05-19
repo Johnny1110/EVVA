@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 )
 
 // Phase 1 analysis — TreeTool.Execute code paths:
@@ -61,7 +63,7 @@ func writeTreeFixture(t *testing.T) string {
 
 func TestTree_RejectsEmptyPath(t *testing.T) {
 	tool := &TreeTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"path":""}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"path":""}`))
 	if !res.IsError || !strings.Contains(res.Content, "required") {
 		t.Errorf("expected 'required'; got %q", res.Content)
 	}
@@ -69,7 +71,7 @@ func TestTree_RejectsEmptyPath(t *testing.T) {
 
 func TestTree_RejectsRelativePath(t *testing.T) {
 	tool := &TreeTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"path":"relative/dir"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"path":"relative/dir"}`))
 	if !res.IsError || !strings.Contains(res.Content, "absolute") {
 		t.Errorf("expected 'absolute'; got %q", res.Content)
 	}
@@ -79,7 +81,7 @@ func TestTree_BasicWalk_SkipsHiddenAndVendoredByDefault(t *testing.T) {
 	root := writeTreeFixture(t)
 	tool := &TreeTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"path":%q}`, root)))
 
 	if res.IsError {
@@ -109,7 +111,7 @@ func TestTree_ShowHiddenIncludesDotEntries(t *testing.T) {
 	root := writeTreeFixture(t)
 	tool := &TreeTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"path":%q,"show_hidden":true}`, root)))
 
 	if res.IsError {
@@ -130,7 +132,7 @@ func TestTree_MaxDepthLimitsRecursion(t *testing.T) {
 	root := writeTreeFixture(t)
 	tool := &TreeTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"path":%q,"max_depth":1}`, root)))
 
 	if res.IsError {
@@ -152,7 +154,7 @@ func TestTree_NegativeMaxDepthFallsThroughToDefault(t *testing.T) {
 	root := writeTreeFixture(t)
 	tool := &TreeTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"path":%q,"max_depth":0}`, root)))
 
 	if res.IsError {
@@ -168,7 +170,7 @@ func TestTree_DirectoriesSortBeforeFiles(t *testing.T) {
 	root := writeTreeFixture(t)
 	tool := &TreeTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"path":%q}`, root)))
 
 	if res.IsError {
@@ -188,7 +190,7 @@ func TestTree_DirectorySuffixedWithSlash(t *testing.T) {
 	root := writeTreeFixture(t)
 	tool := &TreeTool{}
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"path":%q,"max_depth":1}`, root)))
 
 	if res.IsError {
@@ -204,7 +206,7 @@ func TestTree_DirectorySuffixedWithSlash(t *testing.T) {
 func TestTree_MissingPathSurfacesIOError(t *testing.T) {
 	tool := &TreeTool{}
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(fmt.Sprintf(`{"path":%q}`, missing)))
 	if !res.IsError {
 		t.Fatalf("expected IsError for missing path; got %q", res.Content)
@@ -213,7 +215,7 @@ func TestTree_MissingPathSurfacesIOError(t *testing.T) {
 
 func TestTree_DecodeError(t *testing.T) {
 	tool := &TreeTool{}
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{nope`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{nope`))
 	if !res.IsError || !strings.Contains(res.Content, "decode") {
 		t.Errorf("expected decode error; got %q", res.Content)
 	}

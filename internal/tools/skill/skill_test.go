@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 )
 
 func mustExec(t *testing.T, tool *SkillTool, raw string) (string, bool) {
 	t.Helper()
-	res, err := tool.Execute(context.Background(), json.RawMessage(raw))
+	res, err := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(raw))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

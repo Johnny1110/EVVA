@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 )
 
 // Phase 1 analysis — task tool Execute paths:
@@ -33,7 +35,7 @@ func TestTaskNames_CanonicalSix(t *testing.T) {
 
 func TestCreateTool_DecodeError(t *testing.T) {
 	tool := NewCreate(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{not json`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{not json`))
 	if !res.IsError || !strings.Contains(res.Content, "decode") {
 		t.Errorf("expected decode error; got %q", res.Content)
 	}
@@ -41,7 +43,7 @@ func TestCreateTool_DecodeError(t *testing.T) {
 
 func TestCreateTool_EmptySubjectRejected(t *testing.T) {
 	tool := NewCreate(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"subject":"   ","description":"x"}`))
 	if !res.IsError || !strings.Contains(res.Content, "required") {
 		t.Errorf("expected 'required' rejection; got %q", res.Content)
@@ -52,7 +54,7 @@ func TestCreateTool_HappyPath(t *testing.T) {
 	store := NewTaskGroup()
 	tool := NewCreate(store)
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"subject":"do thing","description":"why","activeForm":"Doing thing"}`))
 
 	if res.IsError {
@@ -77,7 +79,7 @@ func TestCreateTool_HappyPath(t *testing.T) {
 
 func TestGetTool_DecodeError(t *testing.T) {
 	tool := NewGet(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{nope`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{nope`))
 	if !res.IsError || !strings.Contains(res.Content, "decode") {
 		t.Errorf("expected decode error; got %q", res.Content)
 	}
@@ -85,7 +87,7 @@ func TestGetTool_DecodeError(t *testing.T) {
 
 func TestGetTool_NotFoundIsError(t *testing.T) {
 	tool := NewGet(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"taskId":"t99"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"taskId":"t99"}`))
 	if !res.IsError || !strings.Contains(res.Content, "no task") {
 		t.Errorf("expected 'no task' err; got %q", res.Content)
 	}
@@ -96,7 +98,7 @@ func TestGetTool_FoundReturnsJSON(t *testing.T) {
 	store.Create(Task{Subject: "find me", Description: "details"})
 	tool := NewGet(store)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"taskId":"t1"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"taskId":"t1"}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -115,7 +117,7 @@ func TestGetTool_FoundReturnsJSON(t *testing.T) {
 
 func TestListTool_EmptyStoreReturnsEmptyArray(t *testing.T) {
 	tool := NewList(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{}`))
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -132,7 +134,7 @@ func TestListTool_SortsByNumericIDSuffix(t *testing.T) {
 	}
 	tool := NewList(store)
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{}`))
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -159,7 +161,7 @@ func TestListTool_SortsByNumericIDSuffix(t *testing.T) {
 
 func TestUpdateTool_DecodeError(t *testing.T) {
 	tool := NewUpdate(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{nope`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{nope`))
 	if !res.IsError || !strings.Contains(res.Content, "decode") {
 		t.Errorf("expected decode error; got %q", res.Content)
 	}
@@ -167,7 +169,7 @@ func TestUpdateTool_DecodeError(t *testing.T) {
 
 func TestUpdateTool_RejectsMissingTaskId(t *testing.T) {
 	tool := NewUpdate(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{}`))
 	if !res.IsError || !strings.Contains(res.Content, "taskId is required") {
 		t.Errorf("expected 'taskId is required'; got %q", res.Content)
 	}
@@ -178,7 +180,7 @@ func TestUpdateTool_InvalidStatus(t *testing.T) {
 	store.Create(Task{Subject: "x"})
 	tool := NewUpdate(store)
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"taskId":"t1","status":"BOGUS"}`))
 	if !res.IsError || !strings.Contains(res.Content, "invalid status") {
 		t.Errorf("expected 'invalid status'; got %q", res.Content)
@@ -187,7 +189,7 @@ func TestUpdateTool_InvalidStatus(t *testing.T) {
 
 func TestUpdateTool_NotFound(t *testing.T) {
 	tool := NewUpdate(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"taskId":"t-nope"}`))
 	if !res.IsError || !strings.Contains(res.Content, "no task with id") {
 		t.Errorf("expected 'no task with id'; got %q", res.Content)
@@ -199,7 +201,7 @@ func TestUpdateTool_HappyPath(t *testing.T) {
 	store.Create(Task{Subject: "orig"})
 	tool := NewUpdate(store)
 
-	res, _ := tool.Execute(context.Background(),
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"taskId":"t1","status":"in_progress","subject":"renamed"}`))
 
 	if res.IsError {
@@ -221,7 +223,7 @@ func TestUpdateTool_HappyPath(t *testing.T) {
 
 func TestOutputTool_NotImplemented(t *testing.T) {
 	tool := NewOutput(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"task_id":"t1"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"task_id":"t1"}`))
 	if !res.IsError || !strings.Contains(res.Content, "not implemented") {
 		t.Errorf("expected 'not implemented'; got %q", res.Content)
 	}
@@ -229,7 +231,7 @@ func TestOutputTool_NotImplemented(t *testing.T) {
 
 func TestStopTool_NotImplemented(t *testing.T) {
 	tool := NewStop(NewTaskGroup())
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"task_id":"t1"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"task_id":"t1"}`))
 	if !res.IsError || !strings.Contains(res.Content, "not implemented") {
 		t.Errorf("expected 'not implemented'; got %q", res.Content)
 	}

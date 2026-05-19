@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -61,7 +62,7 @@ type fetchInput struct {
 	URL string `json:"url"`
 }
 
-func (t *FetchTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *FetchTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in fetchInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("web_fetch: decode input: %v", err)}, nil
@@ -70,6 +71,7 @@ func (t *FetchTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 	if raw == "" {
 		return tools.Result{IsError: true, Content: "web_fetch: url is required"}, nil
 	}
+	logger.Debug("fetch.dispatch", "url", raw)
 
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" {
@@ -101,12 +103,14 @@ func (t *FetchTool) Execute(ctx context.Context, input json.RawMessage) (tools.R
 		if ctx.Err() != nil {
 			return tools.Result{IsError: true, Content: "web_fetch: cancelled"}, ctx.Err()
 		}
+		logger.Warn("fetch.fail", "url", target, "stage", "do", "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("web_fetch: request failed: %v", err)}, nil
 	}
 	defer resp.Body.Close()
 
 	finalURL := resp.Request.URL.String()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logger.Warn("fetch.fail", "url", finalURL, "status", resp.StatusCode)
 		return tools.Result{
 			IsError: true,
 			Content: fmt.Sprintf("web_fetch: %s on %s", resp.Status, finalURL),

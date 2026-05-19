@@ -288,7 +288,8 @@ func (a *Agent) execTool(ctx context.Context, call *tools.Call, tool tools.Tool,
 		return &llm.ToolResult{ID: call.ID, Content: msg, IsError: true}, nil
 	}
 
-	result, err := tool.Execute(ctx, call.Input)
+	toolLogger := a.logger.With("tool", call.Name, "tool_id", call.ID)
+	result, err := tool.Execute(ctx, toolLogger, call.Input)
 	if err != nil {
 		// Go-level failure, not a tool-reported error.
 		a.logger.Error("tool.exec.fail", "name", call.Name, "err", err)

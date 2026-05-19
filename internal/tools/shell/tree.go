@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,7 +45,7 @@ type treeInput struct {
 	ShowHidden bool   `json:"show_hidden"`
 }
 
-func (t *TreeTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *TreeTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in treeInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("tree: decode: %v", err)}, nil
@@ -59,6 +60,7 @@ func (t *TreeTool) Execute(_ context.Context, input json.RawMessage) (tools.Resu
 	if in.MaxDepth != nil && *in.MaxDepth > 0 {
 		depth = *in.MaxDepth
 	}
+	logger.Debug("tree.dispatch", "path", in.Path, "depth", depth, "show_hidden", in.ShowHidden)
 
 	var b strings.Builder
 	b.WriteString(filepath.Base(in.Path))

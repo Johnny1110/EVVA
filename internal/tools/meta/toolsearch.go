@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -62,7 +63,7 @@ type toolSearchInput struct {
 	MaxResults int    `json:"max_results"`
 }
 
-func (t *ToolSearchTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *ToolSearchTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in toolSearchInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("tool_search: decode: %v", err)}, nil
@@ -81,6 +82,7 @@ func (t *ToolSearchTool) Execute(_ context.Context, input json.RawMessage) (tool
 	if max <= 0 {
 		max = 5
 	}
+	logger.Debug("toolsearch.dispatch", "query", in.Query, "max", max)
 
 	descriptors, err := allDescriptors(lookup)
 	if err != nil {
@@ -91,6 +93,7 @@ func (t *ToolSearchTool) Execute(_ context.Context, input json.RawMessage) (tool
 	}
 
 	matches := search(in.Query, max, descriptors)
+	logger.Debug("toolsearch.result", "matched", len(matches))
 	if len(matches) == 0 {
 		return tools.Result{Content: fmt.Sprintf("(no matches for %q)", in.Query)}, nil
 	}

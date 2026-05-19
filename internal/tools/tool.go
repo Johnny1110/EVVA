@@ -4,16 +4,28 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
+	"log/slog"
 )
 
 // Tool is the contract every tool must satisfy.
 // Stateless tools are typically package-level singletons (shell.Bash).
 // Stateful tools receive backing state via constructor (fs.NewRead, task.NewCreate).
+//
+// logger is pre-scoped by the agent dispatcher with "tool" and "tool_id"
+// attrs so every line a tool emits is correlated with the call. Tools must
+// not assume logger is non-nil only in production — tests pass NopLogger().
 type Tool interface {
 	Name() string
 	Description() string
 	Schema() json.RawMessage
-	Execute(ctx context.Context, input json.RawMessage) (Result, error)
+	Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (Result, error)
+}
+
+// NopLogger returns a *slog.Logger that discards all records.
+// Used by tests and by internal cross-tool calls that have no agent context.
+func NopLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 // ContentBlockType discriminates the kind of content in a block.

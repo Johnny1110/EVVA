@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -73,7 +74,7 @@ type bashInput struct {
 	_                         float64 // silence unused-field warnings if any
 }
 
-func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *BashTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in bashInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("bash: decode input: %v", err)}, nil
@@ -81,6 +82,11 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 	if strings.TrimSpace(in.Command) == "" {
 		return tools.Result{IsError: true, Content: "bash: command is required"}, nil
 	}
+	var timeoutMs int64
+	if in.Timeout != nil {
+		timeoutMs = *in.Timeout
+	}
+	logger.Debug("bash.dispatch", "cmd", in.Command, "timeout_ms", timeoutMs, "desc", in.Description)
 	if in.RunInBackground {
 		return tools.Result{
 			IsError: true,
@@ -158,11 +164,13 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (tools.Re
 		// model can reason about the failure.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
+			logger.Warn("bash.fail", "exit", exitErr.ExitCode(), "bytes", len(out))
 			msg := fmt.Sprintf("%s\n--- exit code %d ---", out, exitErr.ExitCode())
 			return tools.Result{IsError: true, Content: msg}, nil
 		}
 		// Spawn-level error (binary not found, etc.) — surface as IsError;
 		// the model can suggest a different command.
+		logger.Warn("bash.fail", "stage", "spawn", "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("bash: %v", err)}, nil
 	}
 

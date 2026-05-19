@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/johnny1110/evva/internal/tools"
 	"time"
 
 	config "github.com/johnny1110/evva/configs"
@@ -60,7 +62,7 @@ func TestSearch_RejectsEmptyQuery(t *testing.T) {
 	setTavilyKey(t, "tvly-test")
 
 	// Act
-	res, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"   "}`))
+	res, err := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"query":"   "}`))
 
 	// Assert
 	if err != nil {
@@ -80,7 +82,7 @@ func TestSearch_RejectsMissingAPIKey(t *testing.T) {
 	setTavilyKey(t, "")
 
 	// Act
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"query":"hello"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"query":"hello"}`))
 
 	// Assert
 	if !res.IsError {
@@ -95,7 +97,7 @@ func TestSearch_RejectsDecodeError(t *testing.T) {
 	tool := &SearchTool{}
 	setTavilyKey(t, "tvly-test")
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{not-json`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{not-json`))
 
 	if !res.IsError {
 		t.Fatal("expected IsError on malformed JSON input")
@@ -125,7 +127,7 @@ func TestSearch_HappyPath_RendersResults(t *testing.T) {
 	setTavilyKey(t, "tvly-secret")
 
 	// Act
-	res, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"latest go release"}`))
+	res, err := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"query":"latest go release"}`))
 
 	// Assert request shape
 	if err != nil {
@@ -175,7 +177,7 @@ func TestSearch_EmptyResults_ReturnsNoResultsLine(t *testing.T) {
 	tool := &SearchTool{}
 	setTavilyKey(t, "tvly-test")
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"query":"nothing matches"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"query":"nothing matches"}`))
 
 	if res.IsError {
 		t.Fatalf("empty results should not be an error; got %q", res.Content)
@@ -203,7 +205,7 @@ func TestSearch_Non2xxSurfacesStatusAndBody(t *testing.T) {
 			tool := &SearchTool{}
 			setTavilyKey(t, "tvly-test")
 
-			res, _ := tool.Execute(context.Background(), json.RawMessage(`{"query":"q"}`))
+			res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"query":"q"}`))
 
 			if !res.IsError {
 				t.Fatal("expected IsError on non-2xx")
@@ -222,7 +224,7 @@ func TestSearch_MalformedResponseJSON(t *testing.T) {
 	tool := &SearchTool{}
 	setTavilyKey(t, "tvly-test")
 
-	res, _ := tool.Execute(context.Background(), json.RawMessage(`{"query":"q"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"query":"q"}`))
 
 	if !res.IsError {
 		t.Fatal("expected IsError on undecodable response")
@@ -242,7 +244,7 @@ func TestSearch_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
 
-	res, err := tool.Execute(ctx, json.RawMessage(`{"query":"q"}`))
+	res, err := tool.Execute(ctx, tools.NopLogger(), json.RawMessage(`{"query":"q"}`))
 
 	if err == nil {
 		t.Fatal("expected go-level error on cancelled ctx")

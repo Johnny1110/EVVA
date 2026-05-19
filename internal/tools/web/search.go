@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -78,7 +79,7 @@ type tavilyResponse struct {
 	Results []tavilyResult `json:"results"`
 }
 
-func (t *SearchTool) Execute(ctx context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *SearchTool) Execute(ctx context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in searchInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("web_search: decode input: %v", err)}, nil
@@ -87,6 +88,7 @@ func (t *SearchTool) Execute(ctx context.Context, input json.RawMessage) (tools.
 	if query == "" {
 		return tools.Result{IsError: true, Content: "web_search: query is required"}, nil
 	}
+	logger.Debug("search.dispatch", "query", query)
 
 	apiKey := config.Get().TavilyAPIKey
 	if apiKey == "" {
@@ -118,12 +120,14 @@ func (t *SearchTool) Execute(ctx context.Context, input json.RawMessage) (tools.
 		if ctx.Err() != nil {
 			return tools.Result{IsError: true, Content: "web_search: cancelled"}, ctx.Err()
 		}
+		logger.Warn("search.fail", "query", query, "stage", "do", "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("web_search: request failed: %v", err)}, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		logger.Warn("search.fail", "query", query, "status", resp.StatusCode)
 		return tools.Result{
 			IsError: true,
 			Content: fmt.Sprintf("web_search: %s: %s", resp.Status, strings.TrimSpace(string(snippet))),

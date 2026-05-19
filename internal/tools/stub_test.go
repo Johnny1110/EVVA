@@ -43,7 +43,7 @@ func TestNewStub_AccessorsReturnSuppliedValues(t *testing.T) {
 func TestNewStub_Execute_ReturnsIsErrorWithName(t *testing.T) {
 	tool := NewStub(ToolName("magic_wand"), "wave", `{}`)
 
-	res, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	res, err := tool.Execute(context.Background(), NopLogger(), json.RawMessage(`{}`))
 
 	if err != nil {
 		t.Errorf("Execute should return nil go error (IsError is the channel); got %v", err)
@@ -73,7 +73,7 @@ func TestNewStub_Execute_IgnoresInput(t *testing.T) {
 		json.RawMessage(`not even json`),
 	}
 	for _, in := range cases {
-		res, err := tool.Execute(context.Background(), in)
+		res, err := tool.Execute(context.Background(), NopLogger(), in)
 		if err != nil {
 			t.Errorf("input %q: unexpected go err %v", in, err)
 		}

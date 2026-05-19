@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -42,7 +43,7 @@ type jsonQueryInput struct {
 	Path  string `json:"path"`
 }
 
-func (t *jsonQueryTool) Execute(_ context.Context, input json.RawMessage) (tools.Result, error) {
+func (t *jsonQueryTool) Execute(_ context.Context, logger *slog.Logger, input json.RawMessage) (tools.Result, error) {
 	var in jsonQueryInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.Result{IsError: true, Content: fmt.Sprintf("json_query: decode: %v", err)}, nil
@@ -53,14 +54,17 @@ func (t *jsonQueryTool) Execute(_ context.Context, input json.RawMessage) (tools
 	if in.Path == "" {
 		return tools.Result{IsError: true, Content: "json_query: path is required"}, nil
 	}
+	logger.Debug("json_query.dispatch", "path", in.Path, "input_bytes", len(in.Input))
 
 	var root any
 	if err := json.Unmarshal([]byte(in.Input), &root); err != nil {
+		logger.Warn("json_query.fail", "stage", "parse", "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("json_query: invalid JSON: %v", err)}, nil
 	}
 
 	val, err := resolvePath(root, in.Path)
 	if err != nil {
+		logger.Warn("json_query.fail", "path", in.Path, "err", err)
 		return tools.Result{IsError: true, Content: fmt.Sprintf("json_query: %v", err)}, nil
 	}
 

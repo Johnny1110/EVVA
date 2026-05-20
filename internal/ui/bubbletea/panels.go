@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/johnny1110/evva/internal/tools/meta"
-	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/tools/todo"
 	"github.com/johnny1110/evva/internal/toolset"
 )
 
@@ -18,37 +18,30 @@ import (
 // or "code-reviewer".
 const agentChipMaxName = 12
 
-// renderTaskPanel returns the bottom task panel string, or "" when no
-// non-deleted tasks remain. Each row prefixes a status glyph in the
-// shared palette so the visual vocabulary matches the subagent panel
-// and the all-tasks-complete transcript snapshot.
+// renderTodoPanel returns the bottom todo panel string, or "" when the
+// store is empty. Each row prefixes a status glyph in the shared palette
+// so the visual vocabulary matches the subagent panel and the
+// all-todos-complete transcript snapshot.
 //
 // Width is the available column count; rows are truncated to fit.
-func renderTaskPanel(ts *toolset.ToolState, width int) string {
+func renderTodoPanel(ts *toolset.ToolState, width int) string {
 	if ts == nil {
 		return ""
 	}
-	store := ts.TaskStore()
+	store := ts.TodoStore()
 	if store == nil {
 		return ""
 	}
-	all := store.List()
-	rows := make([]task.Task, 0, len(all))
-	for _, t := range all {
-		if t.Status == task.StatusDeleted {
-			continue
-		}
-		rows = append(rows, t)
-	}
+	rows := store.List()
 	if len(rows) == 0 {
 		return ""
 	}
 
 	var b strings.Builder
-	b.WriteString(renderPanelHeader("TASKS", width))
+	b.WriteString(renderPanelHeader("TODOS", width))
 	b.WriteByte('\n')
 	for _, t := range rows {
-		b.WriteString(renderTaskRow(t, width))
+		b.WriteString(renderTodoRow(t, width))
 		b.WriteByte('\n')
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -67,69 +60,66 @@ func renderPanelHeader(label string, width int) string {
 	return left + tail
 }
 
-// renderTaskRow formats one task with its status glyph + subject.
-// Subjects longer than the available width are truncated; the glyph
-// stays visible so the user can always read progress at a glance.
-func renderTaskRow(t task.Task, width int) string {
+// renderTodoRow formats one todo with its status glyph + label. Labels
+// longer than the available width are truncated; the glyph stays visible
+// so the user can always read progress at a glance.
+func renderTodoRow(t todo.Todo, width int) string {
 	g := glyphFor(string(t.Status))
-	subject := t.Subject
-	// Reserve room for "  G  " (2 spaces + symbol + 2 spaces).
-	body := fmt.Sprintf("  %s  %s", styled(g.Symbol, g.Color), subject)
+	label := t.Content
+	if t.Status == todo.StatusInProgress && t.ActiveForm != "" {
+		label = t.ActiveForm
+	}
+	body := fmt.Sprintf("  %s  %s", styled(g.Symbol, g.Color), label)
 	maxLen := width - 6
-	if maxLen > 0 && len(subject) > maxLen {
-		body = fmt.Sprintf("  %s  %s", styled(g.Symbol, g.Color), truncate(subject, maxLen))
+	if maxLen > 0 && len(label) > maxLen {
+		body = fmt.Sprintf("  %s  %s", styled(g.Symbol, g.Color), truncate(label, maxLen))
 	}
 	return body
 }
 
-// AllTasksCompleted reports whether every non-deleted task in the store
-// has reached StatusCompleted. The TUI watches this on every task
-// KindStoreUpdate to decide when to auto-fold the panel.
+// AllTodosCompleted reports whether every todo in the store has reached
+// StatusCompleted. The TUI watches this on every todo KindStoreUpdate
+// to decide when to auto-fold the panel.
 //
-// Returns false on an empty/all-deleted store so a fresh store doesn't
-// trigger a phantom "tasks complete" snapshot.
-func AllTasksCompleted(ts *toolset.ToolState) bool {
+// Returns false on an empty store so a fresh store doesn't trigger a
+// phantom "todos complete" snapshot.
+func AllTodosCompleted(ts *toolset.ToolState) bool {
 	if ts == nil {
 		return false
 	}
-	store := ts.TaskStore()
+	store := ts.TodoStore()
 	if store == nil {
 		return false
 	}
-	all := store.List()
-	any := false
-	for _, t := range all {
-		if t.Status == task.StatusDeleted {
-			continue
-		}
-		any = true
-		if t.Status != task.StatusCompleted {
+	rows := store.List()
+	if len(rows) == 0 {
+		return false
+	}
+	for _, t := range rows {
+		if t.Status != todo.StatusCompleted {
 			return false
 		}
 	}
-	return any
+	return true
 }
 
-// renderTasksCompleteSnapshot renders the green "all tasks complete"
+// renderTodosCompleteSnapshot renders the green "all todos complete"
 // block that gets folded into the transcript when the panel auto-clears.
-// Mirrors renderTaskPanel's row shape but uses the green header style
+// Mirrors renderTodoPanel's row shape but uses the green header style
 // so the snapshot reads as a definite "done" event.
-func renderTasksCompleteSnapshot(ts *toolset.ToolState, width int) string {
+func renderTodosCompleteSnapshot(ts *toolset.ToolState, width int) string {
 	if ts == nil {
 		return ""
 	}
-	store := ts.TaskStore()
+	store := ts.TodoStore()
 	if store == nil {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(styles.TasksDone.Render("✔ TASKS COMPLETE"))
+	b.WriteString(styles.TasksDone.Render("✔ TODOS COMPLETE"))
 	for _, t := range store.List() {
-		if t.Status == task.StatusDeleted {
-			continue
-		}
 		b.WriteByte('\n')
-		b.WriteString(renderTaskRow(t, width))
+		b.WriteString(renderTodoRow(t, width))
 	}
 	return b.String()
 }

@@ -29,14 +29,7 @@ const (
 	nameJSONQuery  = "json_query"
 	nameCalc       = "calc"
 	nameFeedback   = "feedback"
-
-	// Phase 5 will replace these three with nameTodoWrite. Keeping the
-	// constants here (and the prompt copy that uses them) verbatim from
-	// the current section-toggle harness so this phase doesn't regress
-	// planning behavior.
-	nameTaskCreate = "task_create"
-	nameTaskUpdate = "task_update"
-	nameTaskList   = "task_list"
+	nameTodoWrite  = "todo_write"
 )
 
 // Subagent identifiers — the strings the main agent quotes in its

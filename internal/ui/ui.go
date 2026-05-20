@@ -79,8 +79,8 @@ type Controller interface {
 	Session() *session.Session
 
 	// ToolState exposes the shared backing-store registry. UIs that want
-	// to render task or subagent panels read state through
-	// ToolState().TaskStore() / ToolState().AgentGroup(), and
+	// to render todo or subagent panels read state through
+	// ToolState().TodoStore() / ToolState().AgentGroup(), and
 	// subscribe to observable.Change events via ToolState().Subscribe().
 	ToolState() *toolset.ToolState
 

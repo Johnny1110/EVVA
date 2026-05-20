@@ -29,7 +29,7 @@ import (
 	"github.com/johnny1110/evva/internal/tools/notebook"
 	"github.com/johnny1110/evva/internal/tools/shell"
 	"github.com/johnny1110/evva/internal/tools/skill"
-	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/tools/todo"
 	"github.com/johnny1110/evva/internal/tools/util"
 	"github.com/johnny1110/evva/internal/tools/ux"
 	"github.com/johnny1110/evva/internal/tools/web"
@@ -111,13 +111,12 @@ type Profile struct {
 // Callers who want the old buffered behavior can pass WithStream(false) at
 // agent construction.
 func Main(cfg *config.AppConfig, provider constant.LLMProvider, model constant.Model, skills []sysprompt.SkillRef, mem memdir.Snapshot, options []llm.Option) Profile {
-	activeTools := slices.Concat(fs.Names(), shell.Names(), meta.Names(), skill.Names())
+	activeTools := slices.Concat(fs.Names(), shell.Names(), meta.Names(), skill.Names(), todo.Names())
 	// dev env tools for collect agent feedback
 	if cfg.IsDevelopment() {
 		activeTools = append(activeTools, dev.Names()...)
 	}
 	deferredTools := slices.Concat(
-		task.Names(),
 		monitor.Names(),
 		mode.Names(),
 		notebook.Names(),

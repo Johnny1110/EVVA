@@ -23,7 +23,7 @@ import (
 	"github.com/johnny1110/evva/internal/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/skill"
-	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/tools/todo"
 	"github.com/johnny1110/evva/internal/ui"
 	bubbleteav2 "github.com/johnny1110/evva/internal/ui/bubbletea_v2"
 	"github.com/joho/godotenv"
@@ -338,9 +338,12 @@ func (s cliSink) Emit(e event.Event) {
 
 func (s cliSink) printStoreUpdate(p *event.StoreUpdatePayload) {
 	switch p.Domain {
-	case task.Domain:
-		if t, ok := p.Payload.(task.Summary); ok {
-			fmt.Fprintf(s.out, "[task:%s] %s [%s] %s\n", p.Op, p.ID, t.Status, t.Subject)
+	case todo.Domain:
+		if list, ok := p.Payload.([]todo.Todo); ok {
+			fmt.Fprintf(s.out, "[todo:%s] %d entries\n", p.Op, len(list))
+			for i, t := range list {
+				fmt.Fprintf(s.out, "  %d. [%s] %s\n", i+1, t.Status, t.Content)
+			}
 		}
 	case meta.SpawnGroupDomain:
 		if sn, ok := p.Payload.(meta.SubagentSnapshot); ok {

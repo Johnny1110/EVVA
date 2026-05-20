@@ -24,9 +24,9 @@ import (
 //  5. harness       — software-engineering conduct rules (Claude-Code-style).
 //  6. tools guide   — dedicated tools, deferred / tool_search protocol,
 //     subagent guidance.
-//  7. task planning — multi-step work protocol. Phase 5 rewrites this as
-//     TodoWrite; until then the current task_* guidance
-//     lives here verbatim.
+//  7. todo planning — multi-step work protocol. Tells the model when to
+//     reach for todo_write; the tool's own Description holds
+//     the full usage guide.
 //  8. skills        — only if any skills are installed.
 //  9. dev feedback  — only if ctx.Env == "dev".
 func buildMainPrompt(ctx PromptContext) string {
@@ -37,7 +37,7 @@ func buildMainPrompt(ctx PromptContext) string {
 		memorySection("User profile (from USER_PROFILE.md)", ctx.UserProfile),
 		mainHarnessSection(),
 		mainToolsGuideSection(),
-		mainTaskPlanningSection(),
+		mainTodoSection(),
 		skillsSection(ctx.Skills),
 		mainDeferredToolsSection(ctx.DeferredTools),
 		devSectionIfEnabled(ctx),
@@ -137,7 +137,7 @@ func mainToolsGuideSection() string {
 		"Some tools are deferred — they don't appear in the main `<functions>` block at the top of this prompt. Their schemas are pre-loaded further down (the \"Deferred tools (pre-loaded schemas)\" section). You can call a deferred tool by name directly whenever you know it exists.\n\n" +
 		"Use `" + nameToolSearch + "` for DISCOVERY: when you're not sure which tool fits the job, or want to confirm a tool is available before relying on it. The result is a compact JSON envelope `{\"matches\": [...], \"query\": \"...\", \"total_deferred_tools\": N}` — names only, no schemas (those are already in your context).\n\n" +
 		"Query forms:\n" +
-		"- `{\"query\": \"select:" + nameTaskCreate + "," + nameTaskUpdate + "\"}` — exact-name selection. Useful as a \"does this exist?\" check.\n" +
+		"- `{\"query\": \"select:ask_user_question,push_notification\"}` — exact-name selection. Useful as a \"does this exist?\" check.\n" +
 		"- `{\"query\": \"notebook jupyter\"}` — keyword search across name / search-hint / description / tags. Tolerates typos and subsequences (e.g. \"noteboook\", \"jpyter\" still match).\n" +
 		"- `{\"query\": \"+web search\"}` — `+`-prefixed term required; the rest only contribute to ranking.\n\n" +
 		"Rules:\n" +
@@ -168,20 +168,19 @@ func mainToolsGuideSection() string {
 		"- Subagents cannot spawn subagents — the hierarchy is one layer. Don't ask one to \"use the agent tool to delegate further.\""
 }
 
-// mainTaskPlanningSection instructs the model on when to use the task_*
-// family. Three or more discrete steps = always plan; one or two = skip the
-// overhead. task_create is itself deferred, so the model must tool_search
-// it first.
-//
-// Phase 5 will rewrite this section against the TodoWrite tool — see the
-// CLAUDE.md Phase 5 entry pointing at this function.
-func mainTaskPlanningSection() string {
+// mainTodoSection tells the model when to reach for `todo_write`. The full
+// usage guide (when to use, when not, status enum, examples) lives in the
+// tool's own Description, ported verbatim from
+// ref/src/tools/TodoWriteTool/prompt.ts. This section only covers the
+// project-level protocol — what to do on the very first call and how to
+// keep the list honest as work progresses.
+func mainTodoSection() string {
 	return "# Multi-step work\n" +
-		"For any complex goal you think require 3+ distinct steps, plan it explicitly with the `task_*` tools before you start working.\n" +
-		"One goal can only split into 3~15 tasks, and you should follow the plan to do exactly.\n\n" +
-		"How to plan:\n" +
-		"1. Call `" + nameTaskCreate + "` for each discrete step. (Schemas for `" + nameTaskCreate + "` / `" + nameTaskUpdate + "` / `" + nameTaskList + "` are already loaded in the deferred-tools section below — no `" + nameToolSearch + "` round trip needed.)\n" +
-		"2. As you start a step, `" + nameTaskUpdate + "` it to `in_progress`. <Only 1 task should be in_progress at a time>.\n" +
-		"3. The moment a step is done, `" + nameTaskUpdate + "` it to `completed`. Don't batch updates at the end of the turn, finish one update one then mark next task as in_progress.\n" +
-		"4. If you discover a new step mid-flight, add it with `" + nameTaskCreate + "`. If a step turns out to be unnecessary, remove and note why."
+		"For any non-trivial goal (3+ distinct steps, multi-file work, anything the user could lose track of), publish a plan with `" + nameTodoWrite + "` before you start. One goal usually splits into 3–15 todos.\n\n" +
+		"`" + nameTodoWrite + "` rewrites the full list every call — there is no separate create / update / delete. To change the plan, send the new list.\n\n" +
+		"Protocol:\n" +
+		"1. First call: the full list, with the first todo as `in_progress` and the rest `pending`.\n" +
+		"2. As soon as a todo finishes, call `" + nameTodoWrite + "` again with that todo flipped to `completed` and the next one to `in_progress`. Don't batch — flip the moment work is done.\n" +
+		"3. Exactly one todo is `in_progress` at any moment. Not zero, not two.\n" +
+		"4. If scope changes mid-flight, emit a fresh `" + nameTodoWrite + "` with the revised list. Dropping a todo means leaving it out of the new list."
 }

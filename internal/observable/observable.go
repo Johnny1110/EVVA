@@ -8,7 +8,7 @@
 // every store's changes through one Subscribe call.
 //
 // Payload is intentionally untyped at this layer. Each store publishes a
-// domain-typed snapshot (task.Summary, meta.SubagentSnapshot, ...) in
+// domain-typed snapshot ([]todo.Todo, meta.SubagentSnapshot, ...) in
 // Change.Payload; consumers switch on Domain and type-assert. This trades a
 // small amount of compile-time safety at the boundary for the ability to
 // add a new domain without touching the event or agent packages at all.

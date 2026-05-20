@@ -11,7 +11,7 @@ import (
 	"github.com/johnny1110/evva/internal/tools/notebook"
 	"github.com/johnny1110/evva/internal/tools/shell"
 	"github.com/johnny1110/evva/internal/tools/skill"
-	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/tools/todo"
 	"github.com/johnny1110/evva/internal/tools/util"
 	"github.com/johnny1110/evva/internal/tools/ux"
 	"github.com/johnny1110/evva/internal/tools/web"
@@ -44,13 +44,8 @@ func registerBuiltins(r *Registry) {
 	r.MustRegister(tools.SKILL, func(s *ToolState) (tools.Tool, error) { return skill.NewSkill(s.SkillRegistry), nil })
 	r.MustRegister(tools.SCHEDULE_WAKEUP, func(s *ToolState) (tools.Tool, error) { return meta.NewWakeup(s.WakeupQueue()), nil })
 
-	// --- task (stateful — all six share one *TaskGroup via ToolState) ---
-	r.MustRegister(tools.TASK_CREATE, func(s *ToolState) (tools.Tool, error) { return task.NewCreate(s.TaskStore()), nil })
-	r.MustRegister(tools.TASK_GET, func(s *ToolState) (tools.Tool, error) { return task.NewGet(s.TaskStore()), nil })
-	r.MustRegister(tools.TASK_LIST, func(s *ToolState) (tools.Tool, error) { return task.NewList(s.TaskStore()), nil })
-	r.MustRegister(tools.TASK_UPDATE, func(s *ToolState) (tools.Tool, error) { return task.NewUpdate(s.TaskStore()), nil })
-	r.MustRegister(tools.TASK_OUTPUT, func(s *ToolState) (tools.Tool, error) { return task.NewOutput(s.TaskStore()), nil })
-	r.MustRegister(tools.TASK_STOP, func(s *ToolState) (tools.Tool, error) { return task.NewStop(s.TaskStore()), nil })
+	// --- todo (stateful — backed by one *TodoStore via ToolState) ---
+	r.MustRegister(tools.TODO_WRITE, func(s *ToolState) (tools.Tool, error) { return todo.NewWrite(s.TodoStore()), nil })
 
 	// --- monitor / mode / notebook (stateless stubs) ---
 	r.MustRegister(tools.MONITOR, func(s *ToolState) (tools.Tool, error) { return monitor.Monitor, nil })

@@ -25,13 +25,8 @@ var toolTags = map[tools.ToolName][]string{
 	tools.SKILL:           {"skill", "invoke", "instructions", "markdown", "user-defined"},
 	tools.SCHEDULE_WAKEUP: {"loop", "schedule", "wake", "pace", "interval"},
 
-	// task
-	tools.TASK_CREATE: {"task", "todo", "create", "track", "plan"},
-	tools.TASK_GET:    {"task", "todo", "get", "fetch", "detail"},
-	tools.TASK_LIST:   {"task", "todo", "list", "all", "overview"},
-	tools.TASK_UPDATE: {"task", "todo", "update", "status", "progress"},
-	tools.TASK_OUTPUT: {"task", "output", "log", "stdout", "result"},
-	tools.TASK_STOP:   {"task", "stop", "kill", "cancel", "abort"},
+	// todo
+	tools.TODO_WRITE: {"todo", "task", "plan", "track", "progress", "list"},
 
 	// monitor / mode / notebook
 	tools.MONITOR:         {"watch", "tail", "follow", "stream", "stdout", "process"},
@@ -89,13 +84,8 @@ var toolHints = map[tools.ToolName]string{
 	tools.SKILL:           "Invoke a user-installed Markdown skill for task-specific instructions.",
 	tools.SCHEDULE_WAKEUP: "Sleep, then re-enter the conversation with a queued prompt.",
 
-	// task
-	tools.TASK_CREATE: "Add a structured task to the in-session task list.",
-	tools.TASK_GET:    "Retrieve full details for one task by ID.",
-	tools.TASK_LIST:   "List every task in the current session with status and dependencies.",
-	tools.TASK_UPDATE: "Change a task's status, owner, subject, or dependencies.",
-	tools.TASK_OUTPUT: "Read stdout/stderr from a backgrounded task (reserved, not implemented).",
-	tools.TASK_STOP:   "Cancel a running background task (reserved, not implemented).",
+	// todo
+	tools.TODO_WRITE: "Write the session's todo list (full-list replacement; flip statuses by writing a new list).",
 
 	// monitor / mode / notebook
 	tools.MONITOR:         "Stream events from a background task or process.",

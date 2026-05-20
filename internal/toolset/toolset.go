@@ -9,7 +9,7 @@
 //   - toolset.Build is the single name → instance resolver. One switch lists
 //     every tool the agent supports; auditing the surface = reading this file.
 //
-//   - toolset.ToolState holds per-agent shared state (e.g. *task.TaskGroup) so
+//   - toolset.ToolState holds per-agent shared state (e.g. *todo.TodoStore) so
 //     stateful tool families can be constructed with the right backing data.
 //     The agent constructs one ToolState per agent instance, so two agents
 //     built from the same profile get isolated state.
@@ -27,7 +27,7 @@ import (
 	"github.com/johnny1110/evva/internal/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/skill"
-	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/tools/todo"
 )
 
 // ToolState carries the shared backing state for stateful tool families.
@@ -39,7 +39,7 @@ import (
 // agent (via agent.ToolState()) and read state through the typed accessors
 // rather than peeking into tool internals.
 type ToolState struct {
-	taskStore       *task.TaskGroup
+	todoStore       *todo.TodoStore
 	subagentSpawner meta.SubagentSpawner
 	deferredLookup  meta.DeferredLookup
 	readTracker     *fs.ReadTracker
@@ -114,16 +114,17 @@ func (s *ToolState) fanout(c observable.Change) {
 // peek at an empty panel).
 func (s *ToolState) HasAgentGroupPanel() bool { return s.subAgentGroup != nil }
 
-// TaskStore returns the task subsystem's backing store, allocating one on
-// first use. All six task tools constructed against the same ToolState share it.
-// First-use also registers the store on the change stream so the agent's
-// event bridge picks up every task mutation without per-store wiring.
-func (s *ToolState) TaskStore() *task.TaskGroup {
-	if s.taskStore == nil {
-		s.taskStore = task.NewTaskGroup()
-		s.RegisterStore(s.taskStore)
+// TodoStore returns the todo subsystem's backing store, allocating one on
+// first use. The todo_write tool constructed against the same ToolState
+// shares it. First-use also registers the store on the change stream so
+// the agent's event bridge picks up every todo mutation without per-store
+// wiring.
+func (s *ToolState) TodoStore() *todo.TodoStore {
+	if s.todoStore == nil {
+		s.todoStore = todo.NewTodoStore()
+		s.RegisterStore(s.todoStore)
 	}
-	return s.taskStore
+	return s.todoStore
 }
 
 // SubagentSpawner returns the currently-installed spawner, or nil if none.

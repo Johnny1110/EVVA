@@ -14,14 +14,14 @@ import (
 
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/internal/llm"
-	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/tools/todo"
 	"github.com/johnny1110/evva/internal/ui"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/agents"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/input"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/overlays"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/slash"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/status"
-	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/tasks"
+	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/todos"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/transcript"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/events"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/mouse"
@@ -322,21 +322,21 @@ func (a *App) handleAgentEvent(e event.Event) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if e.Kind == event.KindStoreUpdate && e.StoreUpdate != nil &&
-		e.StoreUpdate.Domain == task.Domain && a.controller != nil {
-		if tasks.AllCompleted(a.controller.ToolState()) {
+		e.StoreUpdate.Domain == todo.Domain && a.controller != nil {
+		if todos.AllCompleted(a.controller.ToolState()) {
 			width := a.transcriptWidth()
-			snap := tasks.RenderCompleteSnapshot(a.controller.ToolState(), width, a.theme)
+			snap := todos.RenderCompleteSnapshot(a.controller.ToolState(), width, a.theme)
 			a.transcript.AppendSynthetic(snap)
 			a.view.MarkDirty()
 			ts := a.controller.ToolState()
 			cmd = func() tea.Msg {
-				ts.TaskStore().Clear()
+				ts.TodoStore().Clear()
 				return nil
 			}
 		}
 	}
 
-	// Panel content may have changed (tasks added/removed/completed,
+	// Panel content may have changed (todos added/removed/completed,
 	// subagents spawned/finished). Re-derive the viewport height so
 	// new panels push the input/status up instead of off-screen.
 	if e.Kind == event.KindStoreUpdate {
@@ -354,7 +354,7 @@ func (a *App) handleAgentEvent(e event.Event) (tea.Model, tea.Cmd) {
 // Layout vertical reservations:
 //   - 5 rows: input box (3 textarea + 2 border)
 //   - 2 rows: hint line + status bar
-//   - ≥0 rows: tasks panel (header + N task rows)
+//   - ≥0 rows: todos panel (header + N todo rows)
 //   - ≥0 rows: agents chip strip (one row per wrapped line)
 func (a *App) relayout() {
 	if a.width == 0 || a.height == 0 {
@@ -362,7 +362,7 @@ func (a *App) relayout() {
 	}
 	used := 5 + 2 // input + hint+status
 	if a.controller != nil {
-		if panel := tasks.Render(a.controller.ToolState(), a.transcriptWidth(), a.theme); panel != "" {
+		if panel := todos.Render(a.controller.ToolState(), a.transcriptWidth(), a.theme); panel != "" {
 			used += strings.Count(panel, "\n") + 1
 		}
 		if strip := agents.Render(a.controller.ToolState(), a.transcriptWidth(), a.theme, a.state.Frame()); strip != "" {
@@ -709,7 +709,7 @@ func (a *App) startContinue() {
 // each layer collapses to zero height when its backing data is empty:
 //
 //	viewport / banner / transcript          (scrollable area)
-//	tasks panel                             (only when tasks tracked)
+//	todos panel                             (only when todos tracked)
 //	agents chip strip                       (only when subagents tracked)
 //	overlay panel                           (only when focus stack non-empty)
 //	slash suggestion                        (only when "/<x>" in input)
@@ -725,7 +725,7 @@ func (a *App) View() string {
 
 	width := a.transcriptWidth()
 	if a.controller != nil {
-		if panel := tasks.Render(a.controller.ToolState(), width, a.theme); panel != "" {
+		if panel := todos.Render(a.controller.ToolState(), width, a.theme); panel != "" {
 			b.WriteByte('\n')
 			b.WriteString(panel)
 		}

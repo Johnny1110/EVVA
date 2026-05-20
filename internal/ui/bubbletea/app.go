@@ -53,7 +53,7 @@ import (
 
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/internal/llm"
-	"github.com/johnny1110/evva/internal/tools/task"
+	"github.com/johnny1110/evva/internal/tools/todo"
 	"github.com/johnny1110/evva/internal/ui"
 	"github.com/johnny1110/evva/pkg/banner"
 )
@@ -366,7 +366,7 @@ func (m *rootModel) layoutSizes() {
 	// tool runs but everything else keeps updating".
 	wasAtBottom := m.viewport.AtBottom()
 
-	taskHeight := lineCount(m.taskPanel(bodyWidth))
+	taskHeight := lineCount(m.todoPanel(bodyWidth))
 	stripHeight := lineCount(m.agentStrip(bodyWidth))
 	configHeight := lineCount(m.configPanel(bodyWidth))
 	modelHeight := lineCount(m.modelPanel(bodyWidth))
@@ -800,27 +800,27 @@ func (m *rootModel) handleAgentEvent(e event.Event) (tea.Model, tea.Cmd) {
 	if m.transcript.foldEvent(e) {
 		// noop — state captured above
 	}
-	// Task auto-fold: every time a task store update arrives, check
-	// if every task is completed. If so, fold the snapshot into the
+	// Todo auto-fold: every time a todo store update arrives, check
+	// if every todo is completed. If so, fold the snapshot into the
 	// transcript as a green block and clear the live store so the
 	// panel collapses. Agent-owned data — no user action required.
 	//
-	// The Clear must NOT happen on this goroutine. Clear notifies one
-	// "removed" change per task; each notify reaches a.emit which calls
+	// The Clear must NOT happen on this goroutine. Clear notifies a
+	// "replaced" change; the notify reaches a.emit which calls
 	// program.Send, and bubbletea v1.3.x's msgs channel is unbuffered
 	// with the Update goroutine as its only drainer — calling Send from
 	// inside Update deadlocks the whole UI (and then the agent loop,
 	// once it next tries to emit through a.emitMu). We return a tea.Cmd
-	// so the Clear runs off-goroutine; the cascade of "removed" events
-	// is then free to flow through the normal msg → Update path.
+	// so the Clear runs off-goroutine; the "replaced" event is then
+	// free to flow through the normal msg → Update path.
 	var cmd tea.Cmd
-	if e.Kind == event.KindStoreUpdate && e.StoreUpdate != nil && e.StoreUpdate.Domain == task.Domain {
-		if m.controller != nil && AllTasksCompleted(m.controller.ToolState()) {
-			snap := renderTasksCompleteSnapshot(m.controller.ToolState(), m.bodyWidth())
+	if e.Kind == event.KindStoreUpdate && e.StoreUpdate != nil && e.StoreUpdate.Domain == todo.Domain {
+		if m.controller != nil && AllTodosCompleted(m.controller.ToolState()) {
+			snap := renderTodosCompleteSnapshot(m.controller.ToolState(), m.bodyWidth())
 			m.transcript.appendBlock(snap)
 			ts := m.controller.ToolState()
 			cmd = func() tea.Msg {
-				ts.TaskStore().Clear()
+				ts.TodoStore().Clear()
 				return nil
 			}
 		}
@@ -916,7 +916,7 @@ func (m *rootModel) View() string {
 	width := m.width
 
 	sections := []string{m.viewport.View()}
-	if tp := m.taskPanel(width); tp != "" {
+	if tp := m.todoPanel(width); tp != "" {
 		sections = append(sections, tp)
 	}
 	if strip := m.agentStrip(width); strip != "" {
@@ -1014,11 +1014,11 @@ func (m *rootModel) bodyWidth() int {
 	return m.width
 }
 
-func (m *rootModel) taskPanel(width int) string {
+func (m *rootModel) todoPanel(width int) string {
 	if m.controller == nil {
 		return ""
 	}
-	return renderTaskPanel(m.controller.ToolState(), width)
+	return renderTodoPanel(m.controller.ToolState(), width)
 }
 
 func (m *rootModel) modelName() string {

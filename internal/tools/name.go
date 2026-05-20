@@ -38,20 +38,20 @@ const (
 	// SCHEDULE_WAKEUP — self-pace iterations in /loop dynamic mode.
 	// Not relevant outside loops.
 	SCHEDULE_WAKEUP ToolName = "schedule_wakeup"
+
+	// TODO_WRITE — write the session's todo list (full-list replacement).
+	// Used proactively at the start of any non-trivial task; subsequent calls
+	// flip statuses and add/remove entries. One in_progress entry at a time.
+	TODO_WRITE ToolName = "todo_write"
 )
 
 // Deferred tools — name-only until loaded with TOOL_SEARCH. ================
 // Grouped by purpose to match docs/claude-tool/claude-code-tool-summary.md.
 
-// Task & process management.
+// Process management. Reserved for background-process work tied to a future
+// Bash run_in_background phase; today only MONITOR is registered (returns
+// "not implemented" until that phase lands).
 const (
-	TASK_CREATE ToolName = "task_create"
-	TASK_GET    ToolName = "task_get"
-	TASK_LIST   ToolName = "task_list"
-	TASK_UPDATE ToolName = "task_update"
-	TASK_OUTPUT ToolName = "task_output"
-	TASK_STOP   ToolName = "task_stop"
-
 	MONITOR ToolName = "monitor"
 
 	ENTER_PLAN_MODE ToolName = "enter_plan_mode"

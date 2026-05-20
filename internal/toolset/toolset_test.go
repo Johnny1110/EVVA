@@ -23,9 +23,8 @@ func TestAllToolSchemasAreValidJSON(t *testing.T) {
 		tools.BASH, tools.GREP, tools.TREE,
 		// meta
 		tools.AGENT, tools.TOOL_SEARCH, tools.SKILL, tools.SCHEDULE_WAKEUP,
-		// task
-		tools.TASK_CREATE, tools.TASK_GET, tools.TASK_LIST,
-		tools.TASK_UPDATE, tools.TASK_OUTPUT, tools.TASK_STOP,
+		// todo
+		tools.TODO_WRITE,
 		// monitor / mode / notebook
 		tools.MONITOR,
 		tools.ENTER_PLAN_MODE, tools.EXIT_PLAN_MODE,

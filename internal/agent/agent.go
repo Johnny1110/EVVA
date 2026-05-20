@@ -44,7 +44,7 @@ import (
 //
 // toolState holds the shared state container toolset.Build threads into
 // stateful tool constructors. The TUI and session-persist layer read state
-// through it (e.g. agent.ToolState().TaskStore().List()).
+// through it (e.g. agent.ToolState().TodoStore().List()).
 //
 // sink is the event consumer (nil => Discard). ParentID is empty for the root
 // agent and the root's AgentID for subagents — see Option AsSubagent.

@@ -134,14 +134,14 @@ Work:
 - TUI: approval prompt component under `components/approval/`, mode indicator in the status bar.
 - Modes: `default = accept_edits | plan | bypass | auto`.
 
-### Phase 4 — Hooks system
+### Phase 4 — Hooks system ✅️
 
 Compositional with permissions. Lets users wire validation, auto-format, custom logging, or block known-bad commands without touching evva's source.
 
 - New `internal/hooks/` — event types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`, `Notification`), dispatcher, settings-file bindings.
 - Wire hook invocations into `internal/agent/loop.go` between iterations and around tool dispatch.
 
-### Phase 5 — TodoWrite (replaces current task_* tools)
+### Phase 5 — TodoWrite (replaces current task_* tools) ✅️
 
 evva's current `internal/tools/task/` is **conceptually TodoWrite** — in-session ephemeral planning. The six-tool layout (`task_create`, `task_get`, `task_list`, `task_update`, `task_output`, `task_stop`) doesn't match Claude Code's design and conflates planning with background-process management. Rebuild it.
 

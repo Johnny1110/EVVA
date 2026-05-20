@@ -43,5 +43,5 @@ const (
 const (
 	subagentExplore = "explore"
 	subagentGeneral = "general-purpose"
-	// Phase 7 will add: subagentPlan = "plan".
+	subagentPlan    = "plan"
 )

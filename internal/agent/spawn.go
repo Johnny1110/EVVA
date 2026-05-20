@@ -161,12 +161,15 @@ func (a *Agent) subagentProfile(kind string) (Profile, error) {
 		return Profile{}, fmt.Errorf("subagent_type %q is reserved and not yet implemented", kind)
 	}
 
-	// Built-in fast paths. Explore and General are constructed via their
-	// dedicated Profile constructors which carry hard-coded tool lists and
-	// sysprompt builders — duplicating that here would diverge over time.
+	// Built-in fast paths. Explore, General, and Plan are constructed via
+	// their dedicated Profile constructors which carry hard-coded tool
+	// lists and sysprompt builders — duplicating that here would diverge
+	// over time.
 	switch k {
 	case "explore":
 		return Explore(cfg, a.profile.LLMProvider, a.profile.LLMModel, inherited), nil
+	case "plan":
+		return Plan(cfg, a.profile.LLMProvider, a.profile.LLMModel, inherited), nil
 	case "general-purpose":
 		toolNames := []tools.ToolName{
 			tools.TREE,
@@ -181,11 +184,11 @@ func (a *Agent) subagentProfile(kind string) (Profile, error) {
 	// (test harness, legacy callers) we can't resolve disk agents and the
 	// kind is unknown.
 	if a.agentRegistry == nil {
-		return Profile{}, fmt.Errorf("unknown subagent_type %q (want \"explore\" or \"general-purpose\")", kind)
+		return Profile{}, fmt.Errorf("unknown subagent_type %q (want \"explore\", \"plan\", or \"general-purpose\")", kind)
 	}
 	def, ok := a.agentRegistry.Get(k)
 	if !ok || !def.IsSubagent() {
-		return Profile{}, fmt.Errorf("unknown subagent_type %q (want \"explore\" or \"general-purpose\")", kind)
+		return Profile{}, fmt.Errorf("unknown subagent_type %q (want \"explore\", \"plan\", or \"general-purpose\")", kind)
 	}
 	return profileFromDiskAgent(def, cfg, a.profile.LLMProvider, a.profile.LLMModel, inherited), nil
 }

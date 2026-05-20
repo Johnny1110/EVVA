@@ -48,6 +48,15 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 	}
 	defer a.running.Store(false)
 
+	// Inject any plan-mode reminders before the user's prompt lands so
+	// the model sees them framed correctly relative to the input — the
+	// reminder explains the current mode, the user's text comes next.
+	// drainUserPrompts handles the same job for prompts queued mid-run.
+	if !a.IsSubagent() {
+		for _, reminder := range a.computePlanModeAttachments() {
+			a.session.Append(llm.Message{Role: llm.RoleUser, Content: reminder})
+		}
+	}
 	a.session.Append(llm.Message{Role: llm.RoleUser, Content: prompt})
 	a.logger.Debug("run.start", "name", a.Name, "prompt_bytes", len(prompt),
 		"messages", len(a.session.Messages), "prompt", prompt)

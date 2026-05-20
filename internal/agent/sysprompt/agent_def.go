@@ -72,8 +72,9 @@ func (d AgentDefinition) IsSubagent() bool {
 	return false
 }
 
-// Built-in agent registry. Three vars today; Phase 7 adds PlanAgent;
-// Phase 6 may add more main-tier personas (nono, noen) as siblings.
+// Built-in agent registry. Phase 11 adds PlanAgent for design-phase work
+// inside plan mode; Phase 6 may add more main-tier personas (nono, noen)
+// as siblings.
 var (
 	MainAgent = AgentDefinition{
 		Name:              "evva",
@@ -99,6 +100,15 @@ var (
 		OmitMemory:        true,
 		AdvertiseSkills:   false,
 		BuildSystemPrompt: buildGeneralPrompt,
+		As:                []string{"subagent"},
+	}
+
+	PlanAgent = AgentDefinition{
+		Name:              subagentPlan,
+		WhenToUse:         planWhenToUse,
+		OmitMemory:        true,
+		AdvertiseSkills:   false,
+		BuildSystemPrompt: buildPlanPrompt,
 		As:                []string{"subagent"},
 	}
 )

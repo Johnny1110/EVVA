@@ -90,6 +90,18 @@ func TestGeneralSubagentNameMatchesAgentDefinition(t *testing.T) {
 	}
 }
 
+func TestPlanSubagentNameMatchesAgentDefinition(t *testing.T) {
+	if sysprompt.PlanAgent.Name != "plan" {
+		t.Errorf("PlanAgent.Name drift: got %q, want %q", sysprompt.PlanAgent.Name, "plan")
+	}
+
+	ctx := sysprompt.PromptContext{AgentName: "evva"}
+	prompt := sysprompt.MainAgent.BuildSystemPrompt(ctx)
+	if !contains(prompt, `subagent_type: "plan"`) {
+		t.Errorf("main prompt should reference subagent_type: \"plan\" by literal string")
+	}
+}
+
 func contains(haystack, needle string) bool {
 	// Tiny local helper so this test file doesn't drag in another import.
 	for i := 0; i+len(needle) <= len(haystack); i++ {

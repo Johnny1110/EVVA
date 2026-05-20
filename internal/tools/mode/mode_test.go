@@ -50,6 +50,17 @@ func (c *fakeController) SetPermissionMode(m permission.Mode) {
 	c.mu.Lock()
 	c.modeCalls = append(c.modeCalls, string(m))
 	c.mu.Unlock()
+	// Mirror Agent.SetPermissionMode's transition-hub side effect: when
+	// the call flips into / out of plan mode, stash / clear prePlanMode
+	// just like the real agent does. The mode tools rely on this
+	// contract — they call SetPermissionMode and expect PrePlanMode to
+	// reflect the transition.
+	prev := c.PermissionMode()
+	if m != permission.ModePlan && prev == permission.ModePlan {
+		c.SetPrePlanMode("")
+	} else if m == permission.ModePlan && prev != permission.ModePlan {
+		c.SetPrePlanMode(prev)
+	}
 	c.mode.Store(m)
 }
 func (c *fakeController) PrePlanMode() permission.Mode {

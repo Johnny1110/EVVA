@@ -243,6 +243,7 @@ func (t *AgentTool) Description() string {
 
 Available agent types and the tools they have access to:
 - explore: Fast read-only search agent for locating code. Use it to find files by pattern (e.g. "src/**/*.go"), grep for symbols or keywords, or answer "where is X defined / which files reference Y." Do NOT use it for code review, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: "quick" for a single targeted lookup, "medium" for moderate exploration, or "very thorough" to search across multiple locations and naming conventions.
+- plan: Software architect agent for designing implementation plans. Use when you need a step-by-step plan and a list of critical files to modify, especially during plan-mode Phase 2 (Design). Read-only — returns a written plan, never edits files. Multiple Plan agents in parallel can produce different perspectives (simplicity vs performance vs maintainability) on the same problem.
 - general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. Use when searching for a keyword or file and you are not confident you will find the right match in the first few tries.
 
 When using the agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.
@@ -338,7 +339,7 @@ func (t *AgentTool) subagentTypes() []string {
 			}
 		}
 	}
-	return []string{"explore", "general-purpose"}
+	return []string{"explore", "plan", "general-purpose"}
 }
 
 type agentInput struct {

@@ -77,6 +77,14 @@ const (
 	KindStoreUpdate Kind = "store_update"
 
 	KindUsage Kind = "usage" // per-turn token usage report
+
+	// KindModeChanged fires whenever the agent's permission mode changes
+	// — Shift+Tab cycle, EnterPlanMode / ExitPlanMode tool calls, or a
+	// SwitchProfile that resets the mode. Lets the TUI sync the status-
+	// bar indicator without having to poll Agent.PermissionMode each
+	// render. Emitted only by the root agent; subagent mode changes
+	// stay internal.
+	KindModeChanged Kind = "mode_changed"
 )
 
 // Event is the envelope. Exactly one of the *Payload fields is non-nil per
@@ -108,6 +116,16 @@ type Event struct {
 	Usage         *UsagePayload         `json:",omitempty"`
 	Compacting    *CompactingPayload    `json:",omitempty"`
 	CompactingEnd *CompactingEndPayload `json:",omitempty"`
+	ModeChanged   *ModeChangedPayload   `json:",omitempty"`
+}
+
+// ModeChangedPayload reports a permission-mode transition. PrevMode is the
+// mode that was active before the change (empty on the very first
+// initialization); Mode is the new mode. Both are the wire string form
+// (permission.Mode is type-aliased to string for the same reason).
+type ModeChangedPayload struct {
+	PrevMode string
+	Mode     string
 }
 
 // --- payload types ---

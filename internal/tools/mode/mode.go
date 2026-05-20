@@ -162,22 +162,24 @@ func (t *EnterPlanModeTool) Execute(_ context.Context, logger *slog.Logger, _ js
 		}, nil
 	}
 
+	planPath := PlanFilePath(ctrl.Workdir())
 	if ctrl.PermissionMode() == permission.ModePlan {
 		return tools.Result{
-			Content: "Already in plan mode. The plan file is at " + PlanFilePath(ctrl.Workdir()) +
+			Content: "Already in plan mode. The plan file is at " + planPath +
 				". Continue exploring and writing your plan; call exit_plan_mode when ready.",
 		}, nil
 	}
 
+	// Side effects (stash prePlanMode, reset attachment counters, emit
+	// KindModeChanged) live on the transition hub now — calling
+	// SetPermissionMode is enough.
 	prev := ctrl.PermissionMode()
-	if prev == "" {
-		prev = permission.ModeDefault
-	}
-	ctrl.SetPrePlanMode(prev)
 	ctrl.SetPermissionMode(permission.ModePlan)
 
-	workdir := ctrl.Workdir()
-	planPath := PlanFilePath(workdir)
+	// Ensure the plan directory exists. Don't truncate an existing plan
+	// file — re-entering plan mode after a rejection should pick up where
+	// the model left off, not nuke its in-progress draft. Only create an
+	// empty file when none exists.
 	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
 		logger.Warn("enter_plan_mode: mkdir failed", "err", err, "path", planPath)
 		return tools.Result{
@@ -185,23 +187,24 @@ func (t *EnterPlanModeTool) Execute(_ context.Context, logger *slog.Logger, _ js
 			Content: "enter_plan_mode: cannot create plan directory: " + err.Error(),
 		}, nil
 	}
-	if err := os.WriteFile(planPath, []byte{}, 0o644); err != nil {
-		logger.Warn("enter_plan_mode: truncate failed", "err", err, "path", planPath)
-		return tools.Result{
-			IsError: true,
-			Content: "enter_plan_mode: cannot prepare plan file: " + err.Error(),
-		}, nil
+	if _, err := os.Stat(planPath); errors.Is(err, os.ErrNotExist) {
+		if werr := os.WriteFile(planPath, []byte{}, 0o644); werr != nil {
+			logger.Warn("enter_plan_mode: create failed", "err", werr, "path", planPath)
+			return tools.Result{
+				IsError: true,
+				Content: "enter_plan_mode: cannot prepare plan file: " + werr.Error(),
+			}, nil
+		}
 	}
 
 	logger.Info("enter_plan_mode", "prev_mode", string(prev), "plan_file", planPath)
+	// Short confirmation. The detailed plan-mode workflow lands on the
+	// next user-prompt turn via the per-turn attachment system
+	// (internal/agent/attachments). Duplicating it here would bloat the
+	// transcript without changing model behavior.
 	return tools.Result{
-		Content: "You are now in plan mode.\n\n" +
-			"Plan file: " + planPath + "\n\n" +
-			"Use read-only tools (read, grep, glob, tree, agent) to explore. " +
-			"Write your plan as markdown to the plan file — Write or Edit is permitted ONLY for this exact path. " +
-			"Every other write is denied until plan mode exits.\n\n" +
-			"When the plan is complete and ready for user approval, call exit_plan_mode. " +
-			"Do NOT call ask_user_question to ask \"is this plan okay?\" — exit_plan_mode is the approval signal.",
+		Content: "You are now in plan mode. Plan file: " + planPath +
+			". The plan-mode workflow will be injected on the next user prompt.",
 	}, nil
 }
 
@@ -291,17 +294,24 @@ func (t *ExitPlanModeTool) Execute(ctx context.Context, logger *slog.Logger, inp
 	workdir := ctrl.Workdir()
 	planPath := PlanFilePath(workdir)
 	body, err := os.ReadFile(planPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return tools.Result{
 			IsError: true,
-			Content: "exit_plan_mode: cannot read plan file: " + err.Error(),
+			Content: "exit_plan_mode: no plan file found at " + planPath +
+				". Create it with the `write` tool (plan mode allows writes to this path only) before calling exit_plan_mode again.",
+		}, nil
+	case err != nil:
+		return tools.Result{
+			IsError: true,
+			Content: "exit_plan_mode: cannot read plan file at " + planPath + ": " + err.Error(),
 		}, nil
 	}
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" {
 		return tools.Result{
 			IsError: true,
-			Content: "exit_plan_mode: plan file is empty — write your plan to " + planPath + " before calling exit_plan_mode",
+			Content: "exit_plan_mode: plan file at " + planPath + " exists but is empty. Write your plan body to it (use the `write` tool) before calling exit_plan_mode again.",
 		}, nil
 	}
 
@@ -312,16 +322,20 @@ func (t *ExitPlanModeTool) Execute(ctx context.Context, logger *slog.Logger, inp
 		_ = json.Unmarshal(input, &parsed)
 	}
 
+	// Compute the restore target once, before the broker round-trip.
+	// The transition hub clears prePlanMode on exit, so the value
+	// captured here is the source of truth for either branch (approved
+	// or no-broker fallback).
+	restore := ctrl.PrePlanMode()
+	if restore == "" || restore == permission.ModePlan {
+		restore = permission.ModeDefault
+	}
+
 	broker := ctrl.Broker()
 	if broker == nil {
 		// No broker installed (headless tests or runs without TUI). Skip
-		// the prompt and restore the prior mode optimistically. The
-		// scenario should be rare in production — the bootstrap always
-		// installs a broker.
-		restore := ctrl.PrePlanMode()
-		if restore == "" || restore == permission.ModePlan {
-			restore = permission.ModeDefault
-		}
+		// the prompt and restore the prior mode optimistically. Bootstrap
+		// always installs a broker in production.
 		ctrl.SetPermissionMode(restore)
 		logger.Info("exit_plan_mode: no broker — auto-restored", "mode", string(restore))
 		return tools.Result{
@@ -343,10 +357,6 @@ func (t *ExitPlanModeTool) Execute(ctx context.Context, logger *slog.Logger, inp
 	}
 
 	if dec.Behavior == permission.BehaviorAllow {
-		restore := ctrl.PrePlanMode()
-		if restore == "" || restore == permission.ModePlan {
-			restore = permission.ModeDefault
-		}
 		ctrl.SetPermissionMode(restore)
 		logger.Info("exit_plan_mode: approved", "restored_mode", string(restore))
 		return tools.Result{

@@ -46,6 +46,7 @@ const (
 	MAIN AgentType = iota
 	EXPLORE
 	GENERAL_PURPOSE
+	PLAN
 )
 
 // String returns a short human label suitable for logs and the system prompt.
@@ -57,6 +58,8 @@ func (t AgentType) String() string {
 		return "explore"
 	case GENERAL_PURPOSE:
 		return "general"
+	case PLAN:
+		return "plan"
 	default:
 		return "unknown"
 	}
@@ -136,6 +139,7 @@ func Main(cfg *config.AppConfig, provider constant.LLMProvider, model constant.M
 	ctx.ProjectMemory = mem.ProjectMemory
 	ctx.UserProfile = mem.UserProfile
 	ctx.DeferredTools = deferredToolSpecs(deferredTools)
+	ctx.Model = string(model)
 	sp := sysprompt.MainAgent.BuildSystemPrompt(ctx)
 	options = append(options, llm.WithSystem(sp))
 
@@ -208,6 +212,7 @@ func mainProfileFromDiskAgent(def sysprompt.AgentDefinition, cfg *config.AppConf
 		ctx.UserProfile = mem.UserProfile
 	}
 	ctx.DeferredTools = deferredToolSpecs(def.DeferredTools)
+	ctx.Model = string(model)
 	body := def.BuildSystemPrompt(ctx)
 	sp := sysprompt.ComposeDiskMainPrompt(body, ctx, def)
 	options = append(options, llm.WithSystem(sp))
@@ -266,11 +271,38 @@ func deferredToolSpecs(names []tools.ToolName) []sysprompt.DeferredToolSpec {
 // declares OmitMemory: true.
 func Explore(cfg *config.AppConfig, provider constant.LLMProvider, model constant.Model, options []llm.Option) Profile {
 	ctx := sysprompt.DetectContext(cfg.AppName, cfg.EvvaHome, cfg.AppEnv)
+	ctx.Model = string(model)
 	sp := sysprompt.ExploreAgent.BuildSystemPrompt(ctx)
 	options = append(options, llm.WithSystem(sp))
 
 	return Profile{
 		Type:         EXPLORE,
+		SystemPrompt: sp,
+		ActiveTools:  []tools.ToolName{tools.READ_FILE, tools.WEB_SEARCH, tools.GLOB, tools.TREE, tools.GREP, tools.JSON_QUERY},
+		LLMProvider:  provider,
+		LLMModel:     model,
+		LLMOptions:   options,
+	}
+}
+
+// Plan returns a read-only profile for design-phase planning work — same
+// tool kit as Explore (read, web_search, glob, tree, grep, json_query)
+// plus an architect-flavored system prompt that asks for a step-by-step
+// plan and a critical-files list. Used by the main agent during plan-mode
+// Phase 2 (Design) to delegate per-perspective design takes.
+//
+// Plan deliberately does not get edit/write/enter_plan_mode/exit_plan_mode
+// — its job is to explore and recommend, not modify state. Like Explore,
+// the prompt does not include EVVA.md / USER_PROFILE.md
+// (sysprompt.PlanAgent declares OmitMemory: true).
+func Plan(cfg *config.AppConfig, provider constant.LLMProvider, model constant.Model, options []llm.Option) Profile {
+	ctx := sysprompt.DetectContext(cfg.AppName, cfg.EvvaHome, cfg.AppEnv)
+	ctx.Model = string(model)
+	sp := sysprompt.PlanAgent.BuildSystemPrompt(ctx)
+	options = append(options, llm.WithSystem(sp))
+
+	return Profile{
+		Type:         PLAN,
 		SystemPrompt: sp,
 		ActiveTools:  []tools.ToolName{tools.READ_FILE, tools.WEB_SEARCH, tools.GLOB, tools.TREE, tools.GREP, tools.JSON_QUERY},
 		LLMProvider:  provider,
@@ -285,6 +317,7 @@ func Explore(cfg *config.AppConfig, provider constant.LLMProvider, model constan
 // Like Explore, the General prompt does not include EVVA.md / USER_PROFILE.md.
 func General(cfg *config.AppConfig, provider constant.LLMProvider, model constant.Model, options []llm.Option, toolset ...tools.ToolName) Profile {
 	ctx := sysprompt.DetectContext(cfg.AppName, cfg.EvvaHome, cfg.AppEnv)
+	ctx.Model = string(model)
 	sp := sysprompt.GeneralAgent.BuildSystemPrompt(ctx)
 	options = append(options, llm.WithSystem(sp))
 

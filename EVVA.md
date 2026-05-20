@@ -200,7 +200,7 @@ Niche. Ship after the higher-leverage phases.
 - Implement `git worktree add / remove` plumbing.
 - Wire AgentTool's `isolation: "worktree"` parameter to the same code path.
 
-### Phase  11 - Refine the Agent System Prompt
+### Phase  11 - Refine the Agent System Prompt  ✅️
 
 Currently evva is kind of stupid like strange to all the tools the feature we built so far. 
 

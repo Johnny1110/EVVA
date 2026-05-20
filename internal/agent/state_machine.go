@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	config "github.com/johnny1110/evva/configs"
+	"github.com/johnny1110/evva/internal/agent/attachments"
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/internal/constant"
 	"github.com/johnny1110/evva/internal/llm"
 	"github.com/johnny1110/evva/internal/permission"
 	"github.com/johnny1110/evva/internal/tools"
 	"github.com/johnny1110/evva/internal/tools/meta"
+	"github.com/johnny1110/evva/internal/tools/mode"
 	"github.com/johnny1110/evva/internal/tools/shell"
 )
 
@@ -131,6 +134,13 @@ func (a *Agent) drainWakeupPrompts() {
 // lands AFTER the previous turn's tool_results and the conversation
 // stays well-formed for the next LLM call.
 //
+// Before the user prompts land, computePlanModeAttachments runs once
+// per call. When plan mode is active (or just exited) it returns
+// <system-reminder>-wrapped messages that get prepended to the session
+// — this is how the model learns turn-to-turn that it is currently in
+// plan mode (the static system prompt only knows plan mode exists as a
+// concept).
+//
 // Subagents are skipped: they have no user-facing input channel, so
 // the queue on their per-agent ToolState is always empty in practice.
 // We gate explicitly for clarity (and to avoid the lazy allocation
@@ -143,10 +153,44 @@ func (a *Agent) drainUserPrompts() {
 	if len(prompts) == 0 {
 		return
 	}
+	for _, reminder := range a.computePlanModeAttachments() {
+		a.session.Append(llm.Message{Role: llm.RoleUser, Content: reminder})
+	}
 	for _, p := range prompts {
 		a.session.Append(llm.Message{Role: llm.RoleUser, Content: p})
 	}
 	a.logger.Debug("user_prompts.drained", "count", len(prompts))
+}
+
+// computePlanModeAttachments runs the per-turn attachment computer and
+// returns the reminder texts to prepend (already wrapped in
+// <system-reminder> tags). Returns nil when no reminders are owed.
+//
+// Workflow variant defaults to "interview" (the iterative pair-planning
+// loop). Set EVVA_PLAN_MODE_WORKFLOW=v2 to opt into the 5-phase
+// ref-Claude-Code workflow.
+func (a *Agent) computePlanModeAttachments() []string {
+	if a.planModeState == nil {
+		return nil
+	}
+	planPath := mode.PlanFilePath(a.workdir)
+	planExists := false
+	if planPath != "" {
+		if info, err := os.Stat(planPath); err == nil && !info.IsDir() && info.Size() > 0 {
+			planExists = true
+		}
+	}
+	variant := attachments.WorkflowInterview
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("EVVA_PLAN_MODE_WORKFLOW"))); v == "v2" {
+		variant = attachments.WorkflowV2
+	}
+	return attachments.ComputePlanMode(attachments.Input{
+		State:           a.planModeState,
+		Mode:            a.PermissionMode(),
+		PlanFilePath:    planPath,
+		PlanExists:      planExists,
+		WorkflowVariant: variant,
+	})
 }
 
 // thinking opens an LLM call to advance the conversation. The actual

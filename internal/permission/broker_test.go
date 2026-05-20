@@ -9,9 +9,9 @@ import (
 
 func TestBroker_RequestRespond(t *testing.T) {
 	b := NewBroker()
-	var got ApprovalRequest
+	gotCh := make(chan ApprovalRequest, 1)
 	SetOnRequest(b, func(r ApprovalRequest) {
-		got = r
+		gotCh <- r
 	})
 
 	done := make(chan Decision, 1)
@@ -20,15 +20,11 @@ func TestBroker_RequestRespond(t *testing.T) {
 		done <- d
 	}()
 
-	// Wait until the broker has registered the request (the callback set
-	// `got.ID`). 100ms is a generous ceiling; the goroutine schedules
-	// within microseconds in practice.
-	deadline := time.Now().Add(100 * time.Millisecond)
-	for got.ID == "" && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if got.ID == "" {
-		t.Fatal("expected request ID to be assigned + callback to fire")
+	var got ApprovalRequest
+	select {
+	case got = <-gotCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for broker callback")
 	}
 
 	if err := b.Respond(got.ID, Decision{Behavior: BehaviorAllow, Reason: "ok"}); err != nil {

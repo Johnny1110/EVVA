@@ -34,8 +34,8 @@ func TestAgentTool_Schema_FallsBackWhenLookupNil(t *testing.T) {
 	for i, v := range enum {
 		got[i] = v.(string)
 	}
-	if len(got) != 2 || got[0] != "explore" || got[1] != "general-purpose" {
-		t.Errorf("fallback enum: want [explore general-purpose], got %v", got)
+	if len(got) != 3 || got[0] != "explore" || got[1] != "plan" || got[2] != "general-purpose" {
+		t.Errorf("fallback enum: want [explore plan general-purpose], got %v", got)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestAgentTool_Schema_EmptyDynamicListFallsBack(t *testing.T) {
 	props := schema["properties"].(map[string]any)
 	st := props["subagent_type"].(map[string]any)
 	enum := st["enum"].([]any)
-	if len(enum) != 2 {
-		t.Errorf("empty dynamic enum should fall back to 2 builtins, got %d", len(enum))
+	if len(enum) != 3 {
+		t.Errorf("empty dynamic enum should fall back to 3 builtins, got %d", len(enum))
 	}
 }

@@ -342,6 +342,14 @@ func (a *App) handleAgentEvent(e event.Event) (tea.Model, tea.Cmd) {
 	if e.Usage != nil {
 		a.status.SetUsage(e.Usage.Cumulative)
 	}
+	// Plan-mode side effects (enter / exit) and Shift+Tab cycles both
+	// route through Agent.SetPermissionMode, which emits this event.
+	// Sync the status bar here so tool-driven changes show up
+	// immediately instead of waiting for the next user keystroke.
+	if e.Kind == event.KindModeChanged && e.ModeChanged != nil {
+		a.status.SetPermissionMode(e.ModeChanged.Mode)
+		a.view.MarkDirty()
+	}
 	if a.transcript.IngestEvent(e) {
 		a.view.MarkDirty()
 	}

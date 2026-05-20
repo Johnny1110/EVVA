@@ -25,13 +25,19 @@ func TestMainAgent_ContainsAllStaticSections(t *testing.T) {
 	got := buildMainPrompt(mainCtx())
 
 	for _, want := range []string{
-		"You are evva, a coding agent for the terminal.",
-		"# Environment",
+		"You are evva, an interactive coding agent for the terminal.",
 		"# Core Rules",
-		"# Software Engineering",
+		"# System",
+		"# Doing tasks",
+		"# Executing actions with care",
 		"# Tools",
-		"## Deferred tools and `tool_search`",
+		"# Tone and style",
+		"# Communicating with the user",
+		"# Environment",
+		"# Session-specific guidance",
 		"# Multi-step work",
+		"## Deferred tools and `tool_search`",
+		"When working with tool results, write down any important information",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing section/marker %q\nfull:\n%s", want, got)
@@ -42,14 +48,24 @@ func TestMainAgent_ContainsAllStaticSections(t *testing.T) {
 func TestMainAgent_SectionOrder(t *testing.T) {
 	got := buildMainPrompt(mainCtx())
 
+	// Order mirrors ref Claude Code's getSystemPrompt: static general rules
+	// first, then context-specific blocks (environment, memory, session
+	// guidance), then catalogs at the bottom.
 	markers := []struct {
 		name string
 		key  string
 	}{
 		{"identity", "You are evva,"},
-		{"environment", "# Environment"},
 		{"core-rules", "# Core Rules"},
+		{"system", "# System"},
+		{"doing-tasks", "# Doing tasks"},
+		{"actions", "# Executing actions with care"},
 		{"tools", "# Tools"},
+		{"tone", "# Tone and style"},
+		{"communicating", "# Communicating with the user"},
+		{"environment", "# Environment"},
+		{"session-guidance", "# Session-specific guidance"},
+		{"summarize", "When working with tool results"},
 		{"multi-step", "# Multi-step work"},
 	}
 
@@ -73,6 +89,35 @@ func TestMainAgent_IdentityFallbackOnBlankName(t *testing.T) {
 	got := buildMainPrompt(ctx)
 	if !strings.Contains(got, "You are evva,") {
 		t.Errorf("expected fallback name 'evva' on blank AgentName; got prompt without it")
+	}
+}
+
+func TestMainAgent_EnvironmentIncludesModelWhenSet(t *testing.T) {
+	ctx := mainCtx()
+	ctx.Model = "claude-opus-4-7"
+	got := buildMainPrompt(ctx)
+	if !strings.Contains(got, "- Model: claude-opus-4-7") {
+		t.Errorf("model line missing from environment when Model is set")
+	}
+	if !strings.Contains(got, "Assistant knowledge cutoff: January 2026") {
+		t.Errorf("knowledge cutoff missing for opus-4-7")
+	}
+}
+
+func TestMainAgent_EnvironmentOmitsModelWhenUnset(t *testing.T) {
+	got := buildMainPrompt(mainCtx())
+	if strings.Contains(got, "- Model:") {
+		t.Errorf("model line should be absent when Model is empty")
+	}
+}
+
+func TestMainAgent_NoStaticPlanModeSection(t *testing.T) {
+	// Plan-mode guidance moved to per-turn attachments (Phase 11). The
+	// static prompt may reference enter_plan_mode in the tools guide, but
+	// the dedicated "# Plan mode" workflow section should be gone.
+	got := buildMainPrompt(mainCtx())
+	if strings.Contains(got, "# Plan mode\n") {
+		t.Errorf("# Plan mode section should no longer appear in the static prompt — guidance moved to per-turn attachments")
 	}
 }
 

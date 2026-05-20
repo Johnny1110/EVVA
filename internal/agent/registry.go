@@ -113,6 +113,7 @@ func BuildAgentRegistry(evvaHome string) (*AgentRegistry, []loader.Warning) {
 	r.Register(sysprompt.MainAgent)
 	r.Register(sysprompt.ExploreAgent)
 	r.Register(sysprompt.GeneralAgent)
+	r.Register(sysprompt.PlanAgent)
 
 	defs, warns := loader.Load(evvaHome)
 	for _, def := range defs {

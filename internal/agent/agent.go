@@ -99,11 +99,13 @@ type Agent struct {
 	// Shift+Tab cycle).
 	permissionMode atomic.Value // permission.Mode
 
-	// prePlanMode stashes whatever mode was active when EnterPlanMode
-	// flipped the session into ModePlan. ExitPlanMode restores from here
-	// (defaults to ModeDefault when the field is empty — e.g. mode was
-	// already ModePlan before EnterPlanMode was ever called).
-	prePlanMode atomic.Value // permission.Mode
+	// planModeState collects every plan-mode-specific bit of session
+	// state: the stashed pre-plan-mode, exit/re-entry flags that drive
+	// the per-turn attachment system (internal/agent/attachments), and
+	// the reminder-cycle / throttle counters. Single ownership of these
+	// fields keeps the side-effects of Shift+Tab, EnterPlanMode, and
+	// ExitPlanMode consistent — see permission.Transition.
+	planModeState *permission.PlanModeState
 
 	// workdir is the agent's process working directory, captured once at
 	// construction. Used by the permission gate's plan-file carve-out and
@@ -202,6 +204,7 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	a.maxIters.Store(int64(cfg.DefaultMaxIterations))
 	a.effort = cfg.DefaultEffort
 	a.permissionMode.Store(permission.ModeDefault)
+	a.planModeState = permission.NewPlanModeState()
 	if wd, err := os.Getwd(); err == nil {
 		a.workdir = wd
 	}
@@ -457,11 +460,11 @@ func (a *Agent) ListMainProfiles() []ui.ProfileChoice {
 // registry is installed.
 func (a *Agent) SubagentTypes() []string {
 	if a.agentRegistry == nil {
-		return []string{"explore", "general-purpose"}
+		return []string{"explore", "plan", "general-purpose"}
 	}
 	defs := a.agentRegistry.ListSubagent()
 	if len(defs) == 0 {
-		return []string{"explore", "general-purpose"}
+		return []string{"explore", "plan", "general-purpose"}
 	}
 	out := make([]string, 0, len(defs))
 	for _, d := range defs {
@@ -494,9 +497,15 @@ func (a *Agent) PermissionMode() permission.Mode {
 	return v.(permission.Mode)
 }
 
-// SetPermissionMode updates the agent's permission stance at runtime
-// (Shift+Tab cycle from the TUI). Validates the mode; ignores unknown
-// values to keep the system in a known-good state.
+// SetPermissionMode updates the agent's permission stance at runtime.
+// Every entry path (Shift+Tab cycle, EnterPlanMode / ExitPlanMode tools,
+// future SDK control messages) routes through here so the plan-mode
+// transition hub runs exactly once per mode change and the TUI receives
+// a single KindModeChanged event per change.
+//
+// Validates the mode; ignores unknown values to keep the system in a
+// known-good state. Idempotent on no-op transitions: same-mode calls
+// neither run side effects nor emit the change event.
 //
 // Mode changes don't propagate to already-spawned subagents — they
 // captured the mode at spawn time. New spawns see the updated mode.
@@ -504,8 +513,21 @@ func (a *Agent) SetPermissionMode(m permission.Mode) {
 	if !m.Valid() {
 		return
 	}
+	prev := a.PermissionMode()
+	if prev == m {
+		return
+	}
 	a.permissionMode.Store(m)
+	a.planModeState.Transition(prev, m)
 	a.logger.Info("agent: permission mode set", "mode", string(m))
+	if !a.IsSubagent() {
+		a.emit(event.KindModeChanged, func(e *event.Event) {
+			e.ModeChanged = &event.ModeChangedPayload{
+				PrevMode: string(prev),
+				Mode:     string(m),
+			}
+		})
+	}
 }
 
 // PermissionStore exposes the shared rule store. Returns nil if the
@@ -527,22 +549,24 @@ func (a *Agent) Broker() permission.Broker { return a.permissionBroker }
 // os.Getwd failed at startup (unusual).
 func (a *Agent) Workdir() string { return a.workdir }
 
-// PrePlanMode returns the mode that was active immediately before
-// EnterPlanMode flipped the session into ModePlan. Empty until the first
-// EnterPlanMode call; ExitPlanMode falls back to ModeDefault when empty.
-func (a *Agent) PrePlanMode() permission.Mode {
-	v := a.prePlanMode.Load()
-	if v == nil {
-		return ""
-	}
-	m, _ := v.(permission.Mode)
-	return m
-}
+// PrePlanMode returns the mode that was active immediately before plan
+// mode became active. Empty until the first plan-mode entry; ExitPlanMode
+// falls back to ModeDefault when empty.
+//
+// Reads through the unified plan-mode state holder so the TUI's Shift+Tab
+// path and the EnterPlanMode tool path agree on what was stashed.
+func (a *Agent) PrePlanMode() permission.Mode { return a.planModeState.PrePlanMode() }
 
-// SetPrePlanMode stashes the mode active right before plan-mode entry.
-// Called by EnterPlanMode; read by ExitPlanMode on user-approval to
-// restore the prior stance.
-func (a *Agent) SetPrePlanMode(m permission.Mode) { a.prePlanMode.Store(m) }
+// SetPrePlanMode is retained on the PlanModeController interface for the
+// EnterPlanMode tool, but new code should rely on SetPermissionMode (which
+// runs the transition hub and stashes the prior mode automatically).
+func (a *Agent) SetPrePlanMode(m permission.Mode) { a.planModeState.SetPrePlanMode(m) }
+
+// PlanModeState exposes the unified plan-mode state holder so the
+// attachment computer (internal/agent/attachments) can read the
+// reminder-cycle counters without going through the agent's narrow
+// permission-mode interface.
+func (a *Agent) PlanModeState() *permission.PlanModeState { return a.planModeState }
 
 // CyclePermissionMode advances the mode in Shift+Tab order and returns
 // the new mode name. Implements ui.Controller.

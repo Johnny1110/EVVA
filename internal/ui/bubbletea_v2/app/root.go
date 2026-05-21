@@ -328,6 +328,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return a.handleKey(m)
 	}
+
+	// Fallthrough: route anything the explicit cases didn't claim to the
+	// focused modal overlay. Overlays that fire their own async messages
+	// (e.g. /update's updateCheckResult, updateApplyResult) depend on
+	// this path to receive their own results; without it the overlay
+	// stays in its initial phase forever.
+	if top := a.focus.Top(); top != nil && top.Modal() {
+		close, cmd := top.Update(msg)
+		if close {
+			a.focus.Pop()
+			a.relayout()
+		}
+		return a, cmd
+	}
 	return a, nil
 }
 

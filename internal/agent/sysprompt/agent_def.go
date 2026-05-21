@@ -1,6 +1,6 @@
 package sysprompt
 
-import "github.com/johnny1110/evva/internal/tools"
+import "github.com/johnny1110/evva/pkg/tools"
 
 // AgentDefinition is the Go-side seam for a built-in agent. Phase 2's
 // internal/agent/loader/ will define an AgentRegistry interface that this

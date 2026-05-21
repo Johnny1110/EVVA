@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // DeferredLookupFn is the late-binding shape NewToolSearch accepts; pass a

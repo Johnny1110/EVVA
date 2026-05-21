@@ -3,7 +3,7 @@ package llm
 import (
 	"context"
 
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // Client abstracts the LLM provider so the agent loop never imports a concrete SDK.

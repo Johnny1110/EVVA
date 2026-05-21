@@ -20,7 +20,8 @@ import (
 	"github.com/johnny1110/evva/internal/permission"
 	"github.com/johnny1110/evva/internal/question"
 	"github.com/johnny1110/evva/internal/session"
-	"github.com/johnny1110/evva/internal/tools"
+	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
+	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/internal/toolset"
 	"github.com/johnny1110/evva/internal/ui"
 	"github.com/johnny1110/evva/pkg/common"
@@ -120,6 +121,12 @@ type Agent struct {
 	// Config built by pkg/config.Load.
 	cfg *config.Config
 
+	// customTools is the list of (name, factory) pairs the WithCustomTool
+	// option collected. Registered on pkg/toolset.DefaultRegistry and
+	// appended to ActiveTools before toolset.Build runs. Idempotent across
+	// agent constructions — a duplicate registration is a no-op.
+	customTools []customToolEntry
+
 	// permissionStore + permissionBroker are shared instances. permissionStore
 	// holds project/user/session rules; permissionBroker brokers the
 	// approval back-channel between the gate and the TUI. Both are
@@ -217,8 +224,27 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	}
 	a.logger = lgr
 
+	// Register any custom tools the caller staged via WithCustomTool, and
+	// extend the profile's active list so they show up to the LLM. Duplicate
+	// registrations are silently absorbed — agents constructed back-to-back
+	// against the same custom catalog re-use the first registration.
+	activeNames := profile.ActiveTools
+	if len(a.customTools) > 0 {
+		reg := pubtoolset.DefaultRegistry()
+		extra := make([]tools.ToolName, 0, len(a.customTools))
+		for _, ct := range a.customTools {
+			if !reg.Has(ct.name) {
+				if regErr := reg.Register(ct.name, ct.factory); regErr != nil {
+					return nil, fmt.Errorf("agent: register custom tool %q: %w", ct.name, regErr)
+				}
+			}
+			extra = append(extra, ct.name)
+		}
+		activeNames = append(append([]tools.ToolName{}, profile.ActiveTools...), extra...)
+	}
+
 	// Expose tools to the llm api call, also init at first.
-	exposeTools, err := toolset.Build(profile.ActiveTools, toolState)
+	exposeTools, err := toolset.Build(activeNames, toolState)
 	if err != nil {
 		lgr.Error("agent: build active tools failed", "error", err)
 		return nil, fmt.Errorf("build active tools: %w", err)

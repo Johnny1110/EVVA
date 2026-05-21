@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // TestAllToolSchemasAreValidJSON guards against the class of bug where a

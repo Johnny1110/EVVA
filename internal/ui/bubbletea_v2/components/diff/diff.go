@@ -31,7 +31,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/johnny1110/evva/internal/tools/fs"
+	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/theme"
 )
 

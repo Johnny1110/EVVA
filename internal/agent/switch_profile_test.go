@@ -10,7 +10,7 @@ import (
 	"github.com/johnny1110/evva/pkg/constant"
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/internal/memdir"
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // seedDeepseek installs a fake credential so llmfactory.Of can build a

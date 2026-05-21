@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/johnny1110/evva/internal/tools/meta"
-	"github.com/johnny1110/evva/internal/tools/todo"
+	"github.com/johnny1110/evva/pkg/tools/todo"
 	"github.com/johnny1110/evva/internal/toolset"
 )
 

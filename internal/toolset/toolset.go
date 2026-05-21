@@ -24,13 +24,14 @@ import (
 
 	"github.com/johnny1110/evva/internal/observable"
 	"github.com/johnny1110/evva/internal/question"
-	"github.com/johnny1110/evva/internal/tools"
-	"github.com/johnny1110/evva/internal/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"
 	"github.com/johnny1110/evva/internal/tools/skill"
-	"github.com/johnny1110/evva/internal/tools/todo"
 	"github.com/johnny1110/evva/pkg/config"
+	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
+	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/fs"
+	"github.com/johnny1110/evva/pkg/tools/todo"
 )
 
 // ToolState carries the shared backing state for stateful tool families.
@@ -262,10 +263,11 @@ func (s *ToolState) SetConfig(cfg *config.Config) {
 	s.cfg = cfg
 }
 
-// workDir returns the configured workdir, or "" if no Config is installed.
-// Used by fs/* factories so they don't have to nil-check the Config
-// pointer themselves.
-func (s *ToolState) workDir() string {
+// Workdir returns the configured workdir, or "" if no Config is installed.
+// Together with Config() this satisfies the pkg/tools.State interface so
+// downstream tool factories can read config + workdir without reaching
+// for internal accessors.
+func (s *ToolState) Workdir() string {
 	if s.cfg == nil {
 		return ""
 	}
@@ -298,7 +300,7 @@ func (s *ToolState) UserPromptQueue() *UserPromptQueue {
 //
 // Use Build when you actually need to call Execute.
 func Describe(name tools.ToolName) (tools.Descriptor, error) {
-	t, err := DefaultRegistry().Build(name, &ToolState{})
+	t, err := pubtoolset.DefaultRegistry().Build(name, &ToolState{})
 	if err != nil {
 		return tools.Descriptor{}, err
 	}
@@ -306,24 +308,25 @@ func Describe(name tools.ToolName) (tools.Descriptor, error) {
 		Name:        t.Name(),
 		Description: t.Description(),
 		Schema:      t.Schema(),
-		Tags:        TagsFor(name),
-		SearchHint:  HintFor(name),
+		Tags:        pubtoolset.TagsFor(name),
+		SearchHint:  pubtoolset.HintFor(name),
 	}, nil
 }
 
-// Build resolves each name to a tool instance via the default Registry.
-// Stateful tools pull their backing state from s; stateless tools are
-// package-level singletons.
+// Build resolves each name to a tool instance via the public default
+// Registry. Stateful tools pull their backing state from s; stateless
+// tools are package-level singletons.
 //
 // Unknown names return an error — there is no silent fallback.
 //
 // External hosts that need to register additional tools should call
-// DefaultRegistry().Register at startup before agent construction.
+// pkg/toolset.DefaultRegistry().Register at startup before agent
+// construction.
 func Build(names []tools.ToolName, s *ToolState) ([]tools.Tool, error) {
 	if s == nil {
 		s = NewToolState()
 	}
-	reg := DefaultRegistry()
+	reg := pubtoolset.DefaultRegistry()
 	out := make([]tools.Tool, 0, len(names))
 	for _, n := range names {
 		t, err := reg.Build(n, s)

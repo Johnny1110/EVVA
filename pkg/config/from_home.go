@@ -4,7 +4,6 @@ import (
 	"os"
 
 	"github.com/johnny1110/evva/pkg/constant"
-	"github.com/johnny1110/evva/pkg/llm"
 )
 
 // setupGlobalParam ensures the per-user home directories exist. All
@@ -20,14 +19,14 @@ func setupGlobalParam(cfg *Config) {
 // constant's built-in default. Anthropic/DeepSeek/OpenAI need an api_key
 // to be listed; Ollama is local and key-less.
 func setupLLMProviderConfig(cfg *Config, fc FileConfig) {
-	cfg.LLMProviderConfig = map[string]llm.APIConfig{}
+	cfg.LLMProviderConfig = map[string]APIConfig{}
 
 	register := func(provider constant.LLMProvider, fileEntry FileProviderConfig, requireKey bool) {
 		url := fileEntry.APIURL
 		if url == "" {
 			url = provider.ApiUrl
 		}
-		cfg.LLMProviderConfig[provider.Name] = llm.APIConfig{
+		cfg.LLMProviderConfig[provider.Name] = APIConfig{
 			ApiURL:    url,
 			ApiSecret: fileEntry.APIKey,
 			Models:    provider.Models,

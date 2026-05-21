@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // Phase 1 analysis — ToolSchema code paths:

@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/johnny1110/evva/pkg/llm"
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // Kind tags every event. New kinds are added by extending this list and the

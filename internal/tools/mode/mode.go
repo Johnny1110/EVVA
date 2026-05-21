@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/johnny1110/evva/internal/permission"
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // Names lists every tool name this package contributes.

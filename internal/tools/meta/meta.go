@@ -8,7 +8,7 @@
 // loader and the tool adjacent.
 package meta
 
-import "github.com/johnny1110/evva/internal/tools"
+import "github.com/johnny1110/evva/pkg/tools"
 
 // Names lists every tool name this package contributes.
 func Names() []tools.ToolName {

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/johnny1110/evva/internal/tools"
-	"github.com/johnny1110/evva/internal/tools/fs"
+	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/diff"
 )
 

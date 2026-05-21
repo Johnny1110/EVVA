@@ -1,14 +1,24 @@
 package agent
 
 import (
-	config "github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/internal/agent/sysprompt"
 	"github.com/johnny1110/evva/internal/memdir"
 	"github.com/johnny1110/evva/internal/permission"
 	"github.com/johnny1110/evva/internal/question"
 	"github.com/johnny1110/evva/internal/tools/skill"
+	"github.com/johnny1110/evva/pkg/config"
+	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
+	"github.com/johnny1110/evva/pkg/tools"
 )
+
+// customToolEntry pairs a custom tool name with the factory that builds
+// instances of it. Collected via WithCustomTool, registered on
+// pkg/toolset.DefaultRegistry by agent.New before tools.Build runs.
+type customToolEntry struct {
+	name    tools.ToolName
+	factory pubtoolset.ToolFactory
+}
 
 // Option mutates an Agent during construction. Options are applied after the
 // profile is materialized but before the LLM client is initialized so any
@@ -86,6 +96,26 @@ func WithMaxIterations(n int) Option {
 func WithConfig(cfg *config.Config) Option {
 	return func(a *Agent) {
 		a.cfg = cfg
+	}
+}
+
+// WithCustomTool registers a downstream-authored tool on the
+// pkg/toolset.DefaultRegistry and adds it to the agent's active list.
+// The factory receives the agent's pkg/tools.State at build time so the
+// tool can read Config() and Workdir().
+//
+// Registration is idempotent across agents — calling WithCustomTool with
+// the same name in two New calls registers the factory once and reuses
+// it. Use this for tool factories that are private to the downstream
+// app; tools authored as part of a shared library should be registered
+// directly on pkg/toolset.DefaultRegistry at process startup instead.
+//
+// The tool's name MUST be unique across all registered tools (built-ins
+// and prior customs alike). Re-registering an existing name during agent
+// construction does NOT error — the original factory keeps serving.
+func WithCustomTool(name tools.ToolName, factory pubtoolset.ToolFactory) Option {
+	return func(a *Agent) {
+		a.customTools = append(a.customTools, customToolEntry{name: name, factory: factory})
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/johnny1110/evva/internal/session"
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/pkg/llm"
 )

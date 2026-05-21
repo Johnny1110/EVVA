@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // stubClient is the minimal llm.Client implementation that lets us prove a

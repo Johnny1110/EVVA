@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // WakeupQueue is the side-channel between WakeupTool and the agent loop.

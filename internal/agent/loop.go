@@ -10,7 +10,7 @@ import (
 
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/pkg/llm"
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // ErrIterLimit is returned by Run / Continue when the loop hits maxIters

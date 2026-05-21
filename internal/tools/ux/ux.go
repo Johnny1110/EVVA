@@ -1,7 +1,7 @@
 // Package ux hosts user-interaction tools: AskUserQuestion, PushNotification.
 package ux
 
-import "github.com/johnny1110/evva/internal/tools"
+import "github.com/johnny1110/evva/pkg/tools"
 
 // Names lists every tool name this package contributes.
 func Names() []tools.ToolName {

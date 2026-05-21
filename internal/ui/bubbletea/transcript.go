@@ -9,8 +9,8 @@ import (
 	"github.com/muesli/reflow/wrap"
 
 	"github.com/johnny1110/evva/internal/agent/event"
-	"github.com/johnny1110/evva/internal/tools"
-	"github.com/johnny1110/evva/internal/tools/fs"
+	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/fs"
 )
 
 // blockKind tags a transcript entry so String() knows how to draw the

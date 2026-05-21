@@ -14,7 +14,7 @@ import (
 
 	"github.com/johnny1110/evva/internal/agent/event"
 	"github.com/johnny1110/evva/pkg/llm"
-	"github.com/johnny1110/evva/internal/tools/todo"
+	"github.com/johnny1110/evva/pkg/tools/todo"
 	"github.com/johnny1110/evva/internal/ui"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/agents"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/input"

@@ -1,6 +1,6 @@
 package meta
 
-import "github.com/johnny1110/evva/internal/tools"
+import "github.com/johnny1110/evva/pkg/tools"
 
 // DeferredLookup is the agent-layer dependency the TOOL_SEARCH tool reads
 // to enumerate and describe the deferred tools the current profile permits.

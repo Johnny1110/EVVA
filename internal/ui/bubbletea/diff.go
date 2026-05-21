@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/johnny1110/evva/internal/tools/fs"
+	"github.com/johnny1110/evva/pkg/tools/fs"
 )
 
 // renderFileDiff returns a multi-line string showing the diff in git

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/johnny1110/evva/pkg/constant"
-	"github.com/johnny1110/evva/pkg/llm"
 )
 
 // Default values that appear unchanged across all Config instances.
@@ -61,7 +60,7 @@ type Config struct {
 	WorkDirSkillsDir string
 
 	// llm providers(from <app>-config.yml) key: provider name, value: provider APIConfig
-	LLMProviderConfig map[string]llm.APIConfig
+	LLMProviderConfig map[string]APIConfig
 
 	// DefaultProvider / DefaultModel are the (provider, model) the agent
 	// boots with. Sourced from <app>-config.yml; the /model switch updates

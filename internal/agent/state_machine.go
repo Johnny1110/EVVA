@@ -12,10 +12,10 @@ import (
 	"github.com/johnny1110/evva/pkg/constant"
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/internal/permission"
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"
-	"github.com/johnny1110/evva/internal/tools/shell"
+	"github.com/johnny1110/evva/pkg/tools/shell"
 )
 
 // Each function below maps to one transition of constant.AgentStatus. They

@@ -3,7 +3,7 @@ package llm
 import (
 	"encoding/json"
 
-	"github.com/johnny1110/evva/internal/tools"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // ToolSchema returns the JSON schema for a tool's input, or a permissive default.

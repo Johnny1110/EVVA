@@ -38,12 +38,16 @@ type Broker interface {
 // it with the markdown body it read from <workdir>/.evva/plans/current.md
 // so the approval overlay can render the plan inline. Other tools leave
 // it empty; the overlay's plan branch keys off the non-empty check.
+//
+// We deliberately do NOT carry the tool's LLM-facing Description here:
+// that text is written for the model (when to use, when not, examples)
+// and is the wrong shape for a user-facing approval prompt. The overlay
+// renders ToolName + a one-line summary of ToolInput instead.
 type ApprovalRequest struct {
 	ID          string // empty on input — Broker.Request assigns one
 	AgentID     string // who's asking (root or subagent ID)
 	ToolName    string
 	ToolInput   []byte // raw JSON; UI summarises to ~200 chars
-	Description string // human-readable tool description from the tool registry
 	Mode        Mode
 	Reason      string // from Decide() — why we're asking
 	Hint        Hint   // pre-computed classification (Bash only today)

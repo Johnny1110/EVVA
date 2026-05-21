@@ -195,7 +195,6 @@ type ApprovalNeededPayload struct {
 	RequestID   string
 	ToolName    string
 	ToolInput   json.RawMessage
-	Description string // human-readable tool description from the tool registry
 	Mode        string
 	Reason      string
 	RiskHint    string

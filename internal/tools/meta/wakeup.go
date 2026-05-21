@@ -141,15 +141,17 @@ func (t *WakeupTool) Execute(ctx context.Context, logger *slog.Logger, input jso
 		// Interrupted mid-sleep — surface to the model but do NOT enqueue
 		// the prompt. The conversation is unwinding; injecting a fresh
 		// user message on a cancelled run would just confuse the next Run.
+		now := time.Now()
 		return tools.Result{
 			IsError: true,
-			Content: fmt.Sprintf("schedule_wakeup: cancelled during sleep — %v", ctx.Err()),
+			Content: fmt.Sprintf("schedule_wakeup: cancelled during sleep — %v, currentTime: %s", ctx.Err(), now.Format("2006-01-02 15:04:05")),
 		}, nil
 	case <-timer.C:
 	}
 
 	t.queue.Enqueue(in.Prompt)
+	now := time.Now()
 	return tools.Result{
-		Content: fmt.Sprintf("woke up after %gs — reason: %s. Wakeup prompt queued; next turn will see it as a fresh user message.", seconds, in.Reason),
+		Content: fmt.Sprintf("woke up after %gs — reason: %s, currentTime: %s. Wakeup prompt queued; next turn will see it as a fresh user message.", seconds, in.Reason, now.Format("2006-01-02 15:04:05")),
 	}, nil
 }

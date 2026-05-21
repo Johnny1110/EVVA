@@ -227,13 +227,40 @@ Those are the main reason why I think plan mode is important to refine.
   - `ultra`
 - each llm implement can convert the effort to the provider's API request params. if provider only support 2 class of effort, map `low` → "fast" and `medium`/`high`/`ultra` → "best" (or equivalent).
 
-### Phase 13 - Session Storage (/resume)
+### Phase 13 - BIG Revamp EVVA to support other open source project
+
+Currently, evva is just a ReAct Agent with tui, all code stay in internal mostly.
+
+Now we need allow other projects borrow the agent (don't expose agent core) 
+
+  What we need support? 
+  - Developers can create a openclaw style long live agent with evva's agent pkg.
+  - Developers Customize agent profile
+  - Share all system tools (read, write, edit, web_search...), and allow developers customize agent profile and also allow them create their own tools and register into ToolRegistry
+  - Customize config (MAX_TOKEN, MAX_ITER, LOG_DIR, LOG_LEVEL, MODEL, EFFORT, MODE...) -> decoupling AppConfig
+  - Allow other developers create their own tui with evva agent core
+  - Allow other developers create their own llm client implements as a llm model option.
+
+  What should not support?
+  - Developers can't change emit event kind, and agent loop logic.
+
+Phase 13 is a big change of evva, this Phase can make to multi sub phase 13a, 13b, 13c, 13d ...
+
+Write them down below:
+
+#### Phase 13a
+
+#### Phase 13b
+
+...
+
+### Phase 14 - Session Storage (/resume)
 
 - support `/resume` slash command to resume a session from a previous session file.
 - store session file in `<EVVA_HOME>/sessions/{session_id}/`.
 
 
-### Phase 13 — MCP support + bundled skills (v2 tier)
+### Phase 15 — MCP support + bundled skills (v2 tier)
 
 Closes the gap with Claude Code's plugin/skill ecosystem.
 

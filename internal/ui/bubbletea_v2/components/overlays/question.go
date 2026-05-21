@@ -338,14 +338,6 @@ func (q *Question) View(width int, th *theme.Theme) string {
 		b.WriteString(q.renderOptionList(cqItem, qs, innerWidth, th))
 	}
 
-	// Other text input
-	if qs.otherMode {
-		b.WriteByte('\n')
-		b.WriteString(th.StatusKey.Render("other: "))
-		b.WriteString(th.StatusValue.Render(qs.otherText + "▌"))
-		b.WriteByte('\n')
-	}
-
 	// Error
 	if q.errMsg != "" {
 		b.WriteByte('\n')
@@ -403,8 +395,31 @@ func (q *Question) renderOptionList(qitem event.QuestionItem, qs *questionState,
 			b.WriteString(th.DimText.Render("    " + truncate(desc, width-6)))
 			b.WriteByte('\n')
 		}
+
+		// When the user has typed (or is typing) a free-text answer for the
+		// Other option, show it right beneath the label so the saved value
+		// remains visible after they exit edit mode. Previously the text
+		// only rendered while otherMode was active and went hidden after
+		// Enter, leaving users to assume they hadn't typed anything.
+		if isOther && (qs.otherMode || qs.otherText != "") {
+			b.WriteString(q.renderOtherInline(qs, width-6, th))
+			b.WriteByte('\n')
+		}
 	}
 	return b.String()
+}
+
+// renderOtherInline returns the indented "→ <text>▌" line beneath the
+// Other option. The cursor block is only appended while the user is
+// actively typing (otherMode true).
+func (q *Question) renderOtherInline(qs *questionState, width int, th *theme.Theme) string {
+	text := qs.otherText
+	suffix := ""
+	if qs.otherMode {
+		suffix = "▌"
+	}
+	display := truncate(text+suffix, width)
+	return th.StatusKey.Render("    → ") + th.StatusValue.Render(display)
 }
 
 // renderSideBySide renders a two-column layout: option list left, preview right.
@@ -445,6 +460,12 @@ func (q *Question) renderSideBySide(qitem event.QuestionItem, qs *questionState,
 			lineStyle = normal
 		}
 		leftLines = append(leftLines, lineStyle.Render(truncate(marker+label, leftW)))
+
+		// Surface the saved free-text under the Other option so the user
+		// always sees what they typed, not just while otherMode is active.
+		if isOther && (qs.otherMode || qs.otherText != "") {
+			leftLines = append(leftLines, q.renderOtherInline(qs, leftW, th))
+		}
 	}
 
 	// Build right column (preview for the highlighted option)

@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/reflow/wrap"
 
-	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 )

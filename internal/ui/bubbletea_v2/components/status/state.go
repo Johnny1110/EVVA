@@ -18,7 +18,7 @@
 package status
 
 import (
-	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/pkg/event"
 )
 
 // RunState is the agent's high-level lifecycle from the UI's

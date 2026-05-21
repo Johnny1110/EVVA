@@ -5,7 +5,7 @@
 package events
 
 import (
-	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/pkg/event"
 )
 
 // AgentEventMsg wraps an event.Event for delivery into bubbletea's

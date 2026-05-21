@@ -3,11 +3,11 @@ package agent
 import (
 	"fmt"
 
-	"github.com/johnny1110/evva/internal/agent/event"
-	"github.com/johnny1110/evva/internal/observable"
+	"github.com/johnny1110/evva/pkg/event"
+	"github.com/johnny1110/evva/pkg/observable"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/internal/toolset"
-	"github.com/johnny1110/evva/internal/ui"
+	"github.com/johnny1110/evva/pkg/ui"
 )
 
 // ResolveTool returns the runnable instance for a tool name, building it on

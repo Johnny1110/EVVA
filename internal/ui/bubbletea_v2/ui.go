@@ -14,8 +14,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/johnny1110/evva/internal/agent/event"
-	"github.com/johnny1110/evva/internal/ui"
+	"github.com/johnny1110/evva/pkg/event"
+	"github.com/johnny1110/evva/pkg/ui"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/app"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/events"
 )

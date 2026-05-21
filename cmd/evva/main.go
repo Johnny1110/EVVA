@@ -15,7 +15,7 @@ import (
 
 	config "github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/internal/agent"
-	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/internal/agent/sysprompt"
 	"github.com/johnny1110/evva/pkg/llm"
 	_ "github.com/johnny1110/evva/pkg/llm/builtins" // register anthropic/deepseek/ollama into llm.DefaultRegistry()
@@ -26,7 +26,7 @@ import (
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/skill"
 	"github.com/johnny1110/evva/pkg/tools/todo"
-	"github.com/johnny1110/evva/internal/ui"
+	"github.com/johnny1110/evva/pkg/ui"
 	bubbleteav2 "github.com/johnny1110/evva/internal/ui/bubbletea_v2"
 	"github.com/joho/godotenv"
 )

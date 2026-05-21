@@ -11,7 +11,7 @@ import (
 	"github.com/johnny1110/evva/internal/memdir"
 	"github.com/johnny1110/evva/internal/permission"
 	"github.com/johnny1110/evva/internal/question"
-	"github.com/johnny1110/evva/internal/ui"
+	"github.com/johnny1110/evva/pkg/ui"
 	"github.com/johnny1110/evva/pkg/constant"
 )
 

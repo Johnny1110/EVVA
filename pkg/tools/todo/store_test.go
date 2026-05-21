@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/johnny1110/evva/internal/observable"
+	"github.com/johnny1110/evva/pkg/observable"
 )
 
 func TestTodoStore_ReplaceEmitsOneChange(t *testing.T) {

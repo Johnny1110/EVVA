@@ -11,7 +11,7 @@ import (
 
 	config "github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/pkg/constant"
-	"github.com/johnny1110/evva/internal/ui"
+	"github.com/johnny1110/evva/pkg/ui"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/theme"
 )
 

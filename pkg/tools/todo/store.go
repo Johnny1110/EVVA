@@ -3,7 +3,7 @@ package todo
 import (
 	"sync"
 
-	"github.com/johnny1110/evva/internal/observable"
+	"github.com/johnny1110/evva/pkg/observable"
 )
 
 // TodoStore is the per-agent backing store for the todo_write tool. The

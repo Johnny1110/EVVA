@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	config "github.com/johnny1110/evva/pkg/config"
-	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/internal/agent/sysprompt"
 	"github.com/johnny1110/evva/pkg/constant"
 	"github.com/johnny1110/evva/pkg/llm"

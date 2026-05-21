@@ -1,7 +1,7 @@
 package bubbletea
 
 import (
-	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/pkg/event"
 )
 
 // eventMsg wraps an agent event for delivery into bubbletea's Update loop.

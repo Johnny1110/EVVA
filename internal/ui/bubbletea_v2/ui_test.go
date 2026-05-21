@@ -3,8 +3,8 @@ package bubbleteav2
 import (
 	"testing"
 
-	"github.com/johnny1110/evva/internal/agent/event"
-	"github.com/johnny1110/evva/internal/ui"
+	"github.com/johnny1110/evva/pkg/event"
+	"github.com/johnny1110/evva/pkg/ui"
 )
 
 // Compile-time check that *UI satisfies ui.UI. Failure here means an

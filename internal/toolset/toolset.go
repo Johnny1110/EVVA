@@ -22,7 +22,7 @@ package toolset
 import (
 	"sync"
 
-	"github.com/johnny1110/evva/internal/observable"
+	"github.com/johnny1110/evva/pkg/observable"
 	"github.com/johnny1110/evva/internal/question"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"

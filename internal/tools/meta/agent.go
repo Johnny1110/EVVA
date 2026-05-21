@@ -10,7 +10,7 @@ import (
 
 	"github.com/johnny1110/evva/pkg/constant"
 
-	"github.com/johnny1110/evva/internal/observable"
+	"github.com/johnny1110/evva/pkg/observable"
 	"github.com/johnny1110/evva/pkg/tools"
 )
 

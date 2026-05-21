@@ -20,7 +20,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/johnny1110/evva/internal/agent/event"
+	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/pkg/constant"
 	"github.com/johnny1110/evva/internal/session"
 	"github.com/johnny1110/evva/internal/toolset"

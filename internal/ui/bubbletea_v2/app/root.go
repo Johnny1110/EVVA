@@ -75,6 +75,14 @@ type App struct {
 	// of "error: ...". Cleared on next OnSubmit.
 	interrupted bool
 
+	// lastMouseEventAt is the timestamp of the most recent mouse wheel
+	// event we received. Some terminals (tmux without mouse-on, several
+	// SSH setups) emit a wheel event AND a synthesised arrow-key event
+	// for the same scroll; without dedup the arrow key reaches the
+	// input box and triggers history navigation, replacing what the
+	// user is composing. See handleKey's up/down branch.
+	lastMouseEventAt time.Time
+
 	startedAt time.Time
 }
 
@@ -202,6 +210,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (clicks, motion) are dropped. Native drag-select still
 		// works in modern terminals via Shift/Alt-bypass.
 		if mouse.IsWheelEvent(m) {
+			a.lastMouseEventAt = time.Now()
 			return a, a.view.Update(m)
 		}
 		return a, nil
@@ -466,6 +475,19 @@ func (a *App) handleRunDone(err error) (tea.Model, tea.Cmd) {
 //  5. slash panel — Tab completes, Up/Down move selection, Esc dismisses
 //  6. input textarea — everything else (history nav, paste, plain typing)
 func (a *App) handleKey(m tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Wheel-derived arrow-key dedup. Some terminals (tmux without
+	// mouse-on, certain SSH chains) emit a synthesised "up"/"down"
+	// KeyMsg alongside every MouseMsg wheel event. Routing that
+	// synthesised KeyMsg into the input box clobbers the user's
+	// composition with a history entry. Within a short window after
+	// a real wheel event, treat bare up/down as scroll instead.
+	if !a.lastMouseEventAt.IsZero() && time.Since(a.lastMouseEventAt) < 80*time.Millisecond {
+		switch m.String() {
+		case "up", "down":
+			return a, a.view.Update(m)
+		}
+	}
+
 	// Layer 1: modal overlay — exclusive consumer.
 	if top := a.focus.Top(); top != nil && top.Modal() {
 		// Ctrl+C while an overlay is open: pop the overlay AND
@@ -478,6 +500,13 @@ func (a *App) handleKey(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 				a.runCancel()
 			}
 			return a, tea.Quit
+		}
+		// Scroll keys bypass the modal so the user can review the
+		// transcript / panels above before deciding on the prompt.
+		// The modal stays open; only the viewport behind it moves.
+		switch m.String() {
+		case "pgup", "pgdown", "home", "end":
+			return a, a.view.Update(m)
 		}
 		close, cmd := top.Update(m)
 		if close {

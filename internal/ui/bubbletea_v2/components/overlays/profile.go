@@ -126,8 +126,8 @@ func (p *Profile) View(width int, th *theme.Theme) string {
 		if c.Name == current {
 			label += "  (current)"
 		}
-		if strings.TrimSpace(c.WhenToUse) != "" {
-			label += "  — " + strings.TrimSpace(c.WhenToUse)
+		if hint := strings.TrimSpace(c.WhenToUse); hint != "" {
+			label += "  — " + truncateWhenToUse(hint, 50)
 		}
 		b.WriteString(style.Render(marker + label))
 		b.WriteByte('\n')
@@ -139,4 +139,18 @@ func (p *Profile) View(width int, th *theme.Theme) string {
 	}
 	b.WriteString(th.FooterHint.Render("[↑↓] navigate · [Enter] switch · [Esc] cancel"))
 	return th.InputBorder.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// truncateWhenToUse caps a persona's "when to use" blurb so the /profile
+// picker stays single-line per row. Rune-aware so multibyte input doesn't
+// chop mid-character.
+func truncateWhenToUse(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 1 {
+		return "…"
+	}
+	return string(runes[:max-1]) + "…"
 }

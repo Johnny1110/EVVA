@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/tools/todo"
@@ -144,13 +146,17 @@ func (a *App) refreshBanner() {
 	if len(id) > 8 {
 		id = id[:8]
 	}
+	workdir, err := os.Getwd()
+	if err != nil {
+		workdir = "(unknown)"
+	}
 	a.transcript.SetBanner(transcript.BannerSpec{
 		Art:      banner.Load(a.evvaHome),
 		Greeting: defaultGreeting,
 		Info: []transcript.BannerInfo{
-			{Label: "agent", Value: id},
-			{Label: "model", Value: a.controller.Model()},
-			{Label: "effort", Value: a.controller.Effort()},
+			{Label: "version", Value: config.DisplayVersion()},
+			{Label: "workdir", Value: workdir},
+			{Label: "session", Value: id},
 			{Label: "started", Value: a.startedAt.Format("2006-01-02 15:04:05")},
 		},
 	})

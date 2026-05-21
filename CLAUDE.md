@@ -295,14 +295,14 @@ Tool family packages move public per the user's "max reuse" choice.
 - Expand `pkg/agent`: public `Profile` type with `NewProfile(...)` constructor; new options `WithSink`, `WithLLMRegistry`, `WithToolRegistry`, `WithConfig`, `WithPermissionMode`.
 - The agent loop and event emission internals stay in `internal/agent/`. Downstream apps cannot change `Kind` values or add new ones — this is the Phase 13 invariant.
 
-#### Phase 13e — Rewire reference TUI + downstream example  ✅️
+#### Phase 13e — Rewire reference TUI + downstream example ✅️
 
 - Rewrite `cmd/evva/main.go` to use only `pkg/` for the agent construction path.
 - `internal/ui/bubbletea_v2/` becomes a downstream-style consumer: imports `pkg/event`, `pkg/ui`, `pkg/agent` only (besides its own components).
 - Add `examples/minimal-host/main.go` (~50 lines) demonstrating custom home dir + custom tool + custom LLM provider + custom sink.
 - Add `docs/extending.md` covering all the extension points.
 
-### Phase 14 - Session Storage (/resume) 
+### Phase 14 - Session Storage (/resume) ✅️
 
 - support `/resume` slash command to resume a session from a previous session file.
 - store session file in `<EVVA_HOME>/sessions/{session-id}/{timestamp}.json}`.

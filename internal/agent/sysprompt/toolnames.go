@@ -33,6 +33,10 @@ const (
 	nameAskUserQ      = "ask_user_question"
 	nameEnterPlanMode = "enter_plan_mode"
 	nameExitPlanMode  = "exit_plan_mode"
+
+	// Auto-memory tools — see internal/tools/memory.
+	nameUpdateUserProfile   = "update_user_profile"
+	nameUpdateProjectMemory = "update_project_memory"
 )
 
 // Subagent identifiers — the strings the main agent quotes in its

@@ -23,7 +23,7 @@ func TestMemdir_LoadsIntoMainPrompt(t *testing.T) {
 	writeFile(t, filepath.Join(evvaHome, memdir.UserProfileFile),
 		"## Preferences\n- Terse output.")
 
-	snap := memdir.Load(workdir, evvaHome)
+	snap := memdir.Load(workdir, evvaHome, false)
 	if len(snap.Warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", snap.Warnings)
 	}
@@ -34,7 +34,7 @@ func TestMemdir_LoadsIntoMainPrompt(t *testing.T) {
 		WorkDir:       workdir,
 		EvvaHome:      evvaHome,
 		Env:           "prod",
-		ProjectMemory: snap.ProjectMemory,
+		WorkdirMemory: snap.WorkdirMemory,
 		UserProfile:   snap.UserProfile,
 	}
 	prompt := sysprompt.MainAgent.BuildSystemPrompt(ctx)
@@ -57,8 +57,8 @@ func TestMemdir_AbsentFilesSkipHeadings(t *testing.T) {
 	workdir := t.TempDir()
 	evvaHome := t.TempDir()
 
-	snap := memdir.Load(workdir, evvaHome)
-	if snap.ProjectMemory != "" || snap.UserProfile != "" {
+	snap := memdir.Load(workdir, evvaHome, false)
+	if snap.WorkdirMemory != "" || snap.UserProfile != "" {
 		t.Fatalf("expected empty snapshot; got %+v", snap)
 	}
 
@@ -83,7 +83,7 @@ func TestMemdir_ExploreSubagentIgnoresMemoryEvenIfThreaded(t *testing.T) {
 	// PromptContext by mistake, the Explore builder's hand-written prompt
 	// has no memory section at all, so nothing leaks.
 	ctx := sysprompt.PromptContext{
-		ProjectMemory: "secret-from-evva-md",
+		WorkdirMemory: "secret-from-evva-md",
 		UserProfile:   "secret-from-user-profile",
 	}
 	prompt := sysprompt.ExploreAgent.BuildSystemPrompt(ctx)

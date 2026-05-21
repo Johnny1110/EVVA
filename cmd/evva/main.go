@@ -81,9 +81,17 @@ func main() {
 	// (<EVVA_HOME>/USER_PROFILE.md) once at startup; the snapshot threads
 	// into the main agent's prompt. Missing files are silent; oversize /
 	// permission warnings are surfaced on stderr like skill warnings.
-	memSnap := memdir.Load(cfg.WorkDir, cfg.AppHome)
+	memSnap := memdir.Load(cfg.WorkDir, cfg.AppHome, cfg.GetEnableAutoMemory())
 	for _, w := range memSnap.Warnings {
 		fmt.Fprintln(os.Stderr, "evva:", w)
+	}
+	// First-session notice for auto-memory: no USER_PROFILE.md yet AND the
+	// feature is on by default. Quiet thereafter — once the file exists,
+	// the user has already seen it (or has opted in by their own writes).
+	if cfg.GetEnableAutoMemory() && memSnap.UserProfile == "" {
+		if _, err := os.Stat(memdir.UserProfilePath(cfg.AppHome)); errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(os.Stderr, "evva: auto-memory is enabled — the agent will save persistent notes to USER_PROFILE.md and projects/<key>/MEMORY.md. Disable with /config.")
+		}
 	}
 
 	// Build the agent registry first: ResolveMainProfile reads from it to

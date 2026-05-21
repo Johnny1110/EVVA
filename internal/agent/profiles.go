@@ -24,6 +24,7 @@ import (
 	"github.com/johnny1110/evva/pkg/tools/cron"
 	"github.com/johnny1110/evva/internal/tools/dev"
 	"github.com/johnny1110/evva/pkg/tools/fs"
+	"github.com/johnny1110/evva/internal/tools/memory"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"
 	"github.com/johnny1110/evva/pkg/tools/monitor"
@@ -120,6 +121,13 @@ func Main(cfg *config.Config, provider constant.LLMProvider, model constant.Mode
 	// the session into ModePlan without a tool_search round-trip. The
 	// worktree pair stays deferred (Phase 10).
 	activeTools = append(activeTools, tools.ENTER_PLAN_MODE, tools.EXIT_PLAN_MODE)
+	// Auto-memory tools — registered only when the user has the feature
+	// enabled. The sysprompt's auto-memory guidance section is gated on the
+	// same flag (see ctx.EnableAutoMemory below), so prompt and toolset
+	// stay consistent.
+	if cfg.GetEnableAutoMemory() {
+		activeTools = append(activeTools, memory.Names()...)
+	}
 	// dev env tools for collect agent feedback
 	if cfg.IsDevelopment() {
 		activeTools = append(activeTools, dev.Names()...)
@@ -136,8 +144,10 @@ func Main(cfg *config.Config, provider constant.LLMProvider, model constant.Mode
 
 	ctx := sysprompt.DetectContext(cfg.AppName, cfg.AppHome, cfg.AppEnv)
 	ctx.Skills = skills
-	ctx.ProjectMemory = mem.ProjectMemory
+	ctx.WorkdirMemory = mem.WorkdirMemory
 	ctx.UserProfile = mem.UserProfile
+	ctx.ProjectMemoryIndex = mem.ProjectMemoryIndex
+	ctx.EnableAutoMemory = cfg.GetEnableAutoMemory()
 	ctx.DeferredTools = deferredToolSpecs(deferredTools)
 	ctx.Model = string(model)
 	sp := sysprompt.MainAgent.BuildSystemPrompt(ctx)
@@ -208,8 +218,10 @@ func mainProfileFromDiskAgent(def sysprompt.AgentDefinition, cfg *config.Config,
 		ctx.Skills = skills
 	}
 	if !def.OmitMemory {
-		ctx.ProjectMemory = mem.ProjectMemory
+		ctx.WorkdirMemory = mem.WorkdirMemory
 		ctx.UserProfile = mem.UserProfile
+		ctx.ProjectMemoryIndex = mem.ProjectMemoryIndex
+		ctx.EnableAutoMemory = cfg.GetEnableAutoMemory()
 	}
 	ctx.DeferredTools = deferredToolSpecs(def.DeferredTools)
 	ctx.Model = string(model)

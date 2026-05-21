@@ -43,6 +43,17 @@ const (
 	// Used proactively at the start of any non-trivial task; subsequent calls
 	// flip statuses and add/remove entries. One in_progress entry at a time.
 	TODO_WRITE ToolName = "todo_write"
+
+	// UPDATE_USER_PROFILE — merge sections into <APP_HOME>/USER_PROFILE.md.
+	// Persistent across sessions; auto-memory feature. Section keys are fixed:
+	// "Preferences", "Working style", "Recurring topics".
+	UPDATE_USER_PROFILE ToolName = "update_user_profile"
+
+	// UPDATE_PROJECT_MEMORY — merge sections into
+	// <APP_HOME>/projects/<slug>/MEMORY.md keyed by slugified workdir path.
+	// Section keys are fixed: "Project facts", "Decisions", "Open issues",
+	// "References".
+	UPDATE_PROJECT_MEMORY ToolName = "update_project_memory"
 )
 
 // Deferred tools — name-only until loaded with TOOL_SEARCH. ================

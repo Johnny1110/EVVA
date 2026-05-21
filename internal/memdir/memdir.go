@@ -1,18 +1,20 @@
-// Package memdir loads the two on-disk memory files that seed the agent's
-// system prompt at session start:
+// Package memdir loads the on-disk memory files that seed the agent's
+// system prompt at session start, and provides the write helpers the
+// auto-memory tools call mid-session:
 //
-//   - <workdir>/EVVA.md       project memory — repo conventions, hot facts
-//   - <evvaHome>/USER_PROFILE.md   user memory — preferences, working style
+//   - <workdir>/EVVA.md                                       workdir memory — repo conventions (user-authored)
+//   - <appHome>/USER_PROFILE.md                               user memory  — preferences, working style (auto)
+//   - <appHome>/projects/<projectKey(workdir)>/MEMORY.md      project memory (auto)
 //
-// Both files are optional. Missing files yield a zero-value Snapshot field
+// All files are optional. Missing files yield zero-value Snapshot fields
 // and no warning; the prompt builder skips empty sections cleanly. Any
 // non-missing read failure (permission, oversize) is recorded in
 // Snapshot.Warnings — Load itself never returns an error so the agent can
 // always boot.
 //
 // This package depends only on stdlib. It is not imported by the sysprompt
-// package; the caller threads Snapshot.ProjectMemory / .UserProfile into
-// the prompt context, keeping the dependency arrow one-way.
+// package; the caller threads Snapshot fields into the prompt context,
+// keeping the dependency arrow one-way.
 package memdir
 
 import (
@@ -38,33 +40,46 @@ const (
 // bloated file doesn't break the session.
 const MaxFileBytes = 64 * 1024
 
-// Snapshot is one session's view of the two memory files. Either body field
-// may be empty when the file is missing, empty, or unreadable; callers
-// treat empty as "skip the section."
+// Snapshot is one session's view of the on-disk memory files. Any body
+// field may be empty when the file is missing, empty, or unreadable;
+// callers treat empty as "skip the section."
 type Snapshot struct {
-	ProjectMemory string   // raw contents of <workdir>/EVVA.md
-	UserProfile   string   // raw contents of <evvaHome>/USER_PROFILE.md
-	Warnings      []string // non-fatal: oversize-truncation, permission errors
+	WorkdirMemory      string   // raw contents of <workdir>/EVVA.md (user-authored, repo-scoped)
+	UserProfile        string   // raw contents of <appHome>/USER_PROFILE.md (auto, user-scoped)
+	ProjectMemory      string   // raw contents of <appHome>/projects/<key>/MEMORY.md (auto, project-scoped)
+	ProjectMemoryIndex string   // compact one-line-per-section summary of ProjectMemory; empty when no sections
+	Warnings           []string // non-fatal: oversize-truncation, permission errors
 }
 
-// Load reads both memory files. Empty workdir or evvaHome silently skips
-// that file. Files larger than MaxFileBytes are truncated with a warning.
-// The function never returns an error.
-func Load(workdir, evvaHome string) Snapshot {
+// Load reads the memory files. Empty workdir or appHome silently skips
+// the files anchored at that path. Files larger than MaxFileBytes are
+// truncated with a warning. The function never returns an error.
+//
+// loadProjectMemory gates the per-project MEMORY.md read — callers set it
+// to cfg.EnableAutoMemory so disabled users avoid the extra stat.
+func Load(workdir, appHome string, loadProjectMemory bool) Snapshot {
 	var snap Snapshot
 	if workdir != "" {
 		body, warn := readMemFile(filepath.Join(workdir, ProjectMemoryFile))
-		snap.ProjectMemory = body
+		snap.WorkdirMemory = body
 		if warn != "" {
 			snap.Warnings = append(snap.Warnings, warn)
 		}
 	}
-	if evvaHome != "" {
-		body, warn := readMemFile(filepath.Join(evvaHome, UserProfileFile))
+	if appHome != "" {
+		body, warn := readMemFile(filepath.Join(appHome, UserProfileFile))
 		snap.UserProfile = body
 		if warn != "" {
 			snap.Warnings = append(snap.Warnings, warn)
 		}
+	}
+	if loadProjectMemory && appHome != "" && workdir != "" {
+		body, warn := ReadProjectMemory(appHome, workdir)
+		snap.ProjectMemory = body
+		if warn != "" {
+			snap.Warnings = append(snap.Warnings, warn)
+		}
+		snap.ProjectMemoryIndex = IndexSummary(body, 80)
 	}
 	return snap
 }

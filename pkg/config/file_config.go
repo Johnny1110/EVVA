@@ -39,6 +39,12 @@ type FileConfig struct {
 	FetchMaxBytes int    `yaml:"fetch_max_bytes"`
 	TavilyAPIKey  string `yaml:"tavily_api_key"`
 
+	// EnableAutoMemory gates the auto-memory subsystem (update_user_profile,
+	// update_project_memory tools + the per-session prompt section). Default
+	// true; users opt out via /config or by setting this to false. Pointer so
+	// missing-key in YAML preserves the default rather than zeroing.
+	EnableAutoMemory *bool `yaml:"enable_auto_memory,omitempty"`
+
 	Providers map[string]FileProviderConfig `yaml:"providers"`
 }
 
@@ -53,6 +59,7 @@ type FileProviderConfig struct {
 // when no YAML exists yet. Mirrors the pre-migration env defaults so
 // existing behavior is preserved for users who haven't filled anything in.
 func defaultFileConfig() FileConfig {
+	enableAutoMem := true
 	return FileConfig{
 		MaxIterations:        30,
 		MaxTokens:            4096,
@@ -67,6 +74,8 @@ func defaultFileConfig() FileConfig {
 
 		FetchMaxBytes: 100000,
 		TavilyAPIKey:  "",
+
+		EnableAutoMemory: &enableAutoMem,
 
 		Providers: map[string]FileProviderConfig{
 			constant.ANTHROPIC.Name: {},

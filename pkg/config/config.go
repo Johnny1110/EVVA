@@ -129,6 +129,13 @@ type Config struct {
 	// UI
 	DisplayThinking bool
 
+	// Auto-memory subsystem. When true (default), update_user_profile +
+	// update_project_memory tools are registered on Main and the system
+	// prompt carries the auto-memory guidance + project-memory index.
+	// /config (or hand-edit) flips this; EVVA_AUTO_MEMORY=0 forces off at
+	// boot regardless of the YAML.
+	EnableAutoMemory bool
+
 	// Web tools
 	TavilyAPIKey  string // empty → web_search reports "not configured"
 	FetchMaxBytes int    // cap on extracted text returned by web_fetch
@@ -166,6 +173,25 @@ func (c *Config) GetAutoCompactThreshold() float64 {
 func (c *Config) SetDisplayThinking(v bool) error {
 	c.mu.Lock()
 	c.DisplayThinking = v
+	c.mu.Unlock()
+	return c.SaveFile()
+}
+
+// GetEnableAutoMemory returns the auto-memory flag under the read lock.
+// Read by agent.Main (to decide whether to attach the memory tools) and
+// by the sysprompt builder (to decide whether to inject the auto-memory
+// guidance section).
+func (c *Config) GetEnableAutoMemory() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.EnableAutoMemory
+}
+
+// SetEnableAutoMemory toggles the auto-memory subsystem and persists.
+// Takes effect for the prompt and tool registration on next agent boot.
+func (c *Config) SetEnableAutoMemory(v bool) error {
+	c.mu.Lock()
+	c.EnableAutoMemory = v
 	c.mu.Unlock()
 	return c.SaveFile()
 }
@@ -350,6 +376,7 @@ func (c *Config) SaveFile() error {
 			providers[pvd.Name] = FileProviderConfig{}
 		}
 	}
+	enableAutoMem := c.EnableAutoMemory
 	fc := FileConfig{
 		MaxIterations:        c.DefaultMaxIterations,
 		MaxTokens:            c.DefaultMaxTokens,
@@ -362,6 +389,7 @@ func (c *Config) SaveFile() error {
 		PermissionMode:       c.PermissionMode,
 		FetchMaxBytes:        c.FetchMaxBytes,
 		TavilyAPIKey:         c.TavilyAPIKey,
+		EnableAutoMemory:     &enableAutoMem,
 		Providers:            providers,
 	}
 	path := c.AppHomeConfigFile

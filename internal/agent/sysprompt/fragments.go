@@ -258,7 +258,7 @@ func devFeedbackSection() string {
 func ComposeDiskMainPrompt(body string, ctx PromptContext, def AgentDefinition) string {
 	var memProject, memUser, skillsList string
 	if !def.OmitMemory {
-		memProject = memorySection("Project memory (from EVVA.md)", ctx.ProjectMemory)
+		memProject = memorySection("Project memory (from EVVA.md)", ctx.WorkdirMemory)
 		memUser = memorySection("User profile (from USER_PROFILE.md)", ctx.UserProfile)
 	}
 	if def.AdvertiseSkills {

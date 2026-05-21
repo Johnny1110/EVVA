@@ -59,8 +59,10 @@ func buildMainPrompt(ctx PromptContext) string {
 		toneAndStyleSection(),
 		outputEfficiencySection(),
 		environmentSection(ctx),
-		memorySection("Project memory (from EVVA.md)", ctx.ProjectMemory),
+		memorySection("Project memory (from EVVA.md)", ctx.WorkdirMemory),
 		memorySection("User profile (from USER_PROFILE.md)", ctx.UserProfile),
+		autoMemoryGuidanceSection(ctx),
+		projectMemoryIndexSection(ctx),
 		sessionSpecificGuidanceSection(),
 		skillsSection(ctx.Skills),
 		summarizeToolResultsSection(),
@@ -167,6 +169,98 @@ func mainToolsGuideSection() string {
 		"- Brief the subagent like a colleague who just walked in: state the goal, give the relevant file paths / symbols you already know, and say what shape the answer should take (\"under 200 words\", \"list the file:line of every caller\"). Terse prompts produce shallow reports.\n" +
 		"- Don't delegate understanding. The subagent's report is input to your judgment, not a substitute for it. Never write \"based on your findings, do X\" — synthesize first, then act with specifics (file paths, line numbers, exact changes).\n" +
 		"- Subagents cannot spawn subagents — the hierarchy is one layer. Don't ask one to \"use the agent tool to delegate further.\""
+}
+
+// autoMemoryGuidanceSection injects the auto-memory protocol — when, why,
+// and how the agent should call `update_user_profile` / `update_project_memory`
+// to grow long-lived notes across sessions. Adapted from
+// ref/src/memdir/memoryTypes.ts (TYPES_SECTION_INDIVIDUAL +
+// WHAT_NOT_TO_SAVE_SECTION + TRUSTING_RECALL_SECTION) plus
+// ref/src/memdir/memdir.ts:buildMemoryLines. evva diverges from ref's
+// "Edit on a frontmatter file" pattern: we ship dedicated tools whose
+// schemas constrain the section names so updates always merge cleanly.
+//
+// Gated on ctx.EnableAutoMemory — when the user toggles auto-memory off
+// (/config or EVVA_AUTO_MEMORY=0) this section is omitted AND the tools
+// are not registered on Main, so the prompt stays consistent with the
+// loaded toolset.
+func autoMemoryGuidanceSection(ctx PromptContext) string {
+	if !ctx.EnableAutoMemory {
+		return ""
+	}
+	return "# Auto-memory\n" +
+		"\n" +
+		"You can grow two long-lived memory files across sessions:\n" +
+		"- `USER_PROFILE.md` — global facts about the user (preferences, working style, recurring topics). Allowed sections: `## Preferences`, `## Working style`, `## Recurring topics`.\n" +
+		"- per-project `MEMORY.md` — facts about the current project that aren't already in code or git. Allowed sections: `## Project facts`, `## Decisions`, `## Open issues`, `## References`.\n" +
+		"\n" +
+		"Call `" + nameUpdateUserProfile + "` or `" + nameUpdateProjectMemory + "` with a `sections` map keyed by the section heading. Each value REPLACES that section's body; other sections are preserved. Sending an empty string clears a section. Unknown section names are rejected.\n" +
+		"\n" +
+		"## When to save\n" +
+		"There are four discrete kinds of memory worth keeping. The first one (user-level facts about who the user is) lives in USER_PROFILE.md; the rest live in the per-project MEMORY.md.\n" +
+		"\n" +
+		"<types>\n" +
+		"<type>\n" +
+		"    <name>user</name>\n" +
+		"    <description>Information about the user's role, goals, responsibilities, and knowledge. Use this to tailor your future behavior — a senior engineer expects different framing than a first-time coder. Avoid value judgements; stick to facts that make you more helpful.</description>\n" +
+		"    <when_to_save>When you learn details about the user's role, preferences, working style, or knowledge.</when_to_save>\n" +
+		"    <how_to_use>Frame explanations and choices around what the user already knows.</how_to_use>\n" +
+		"</type>\n" +
+		"<type>\n" +
+		"    <name>feedback / decisions</name>\n" +
+		"    <description>Guidance the user has given about how to approach work in THIS project — corrections AND validated choices. Record from failure AND success: corrections-only memory drifts you toward over-cautious.</description>\n" +
+		"    <when_to_save>Any time the user corrects an approach (\"no, not that\", \"don't\", \"stop doing X\") or confirms a non-obvious choice (\"yes exactly\", \"keep doing that\"). Include WHY so future-you can judge edge cases.</when_to_save>\n" +
+		"    <how_to_use>Treat these as project conventions — don't make the user repeat themselves.</how_to_use>\n" +
+		"</type>\n" +
+		"<type>\n" +
+		"    <name>project facts / open issues</name>\n" +
+		"    <description>Ongoing work, deadlines, incidents, bugs, decisions and their motivations within this project — context that is NOT derivable from the code or git history.</description>\n" +
+		"    <when_to_save>When you learn who is doing what, why, or by when. Convert relative dates to absolute (\"Thursday\" → \"2026-03-05\") so the memory stays interpretable later.</when_to_save>\n" +
+		"    <how_to_use>Use this to anticipate constraints the user hasn't restated.</how_to_use>\n" +
+		"</type>\n" +
+		"<type>\n" +
+		"    <name>references</name>\n" +
+		"    <description>Pointers to where information lives in external systems (dashboards, Linear projects, Slack channels, docs).</description>\n" +
+		"    <when_to_save>When the user names an external resource and its purpose.</when_to_save>\n" +
+		"    <how_to_use>Mention or open the right pointer when the topic comes up.</how_to_use>\n" +
+		"</type>\n" +
+		"</types>\n" +
+		"\n" +
+		"## What NOT to save\n" +
+		"- Code patterns, architecture, file paths, or project structure — derivable by reading the project.\n" +
+		"- Git history, recent commits, or who-changed-what — `git log` / `git blame` are authoritative.\n" +
+		"- Debugging solutions or one-off fix recipes — the fix is in the code; the commit message has the context.\n" +
+		"- Anything already in EVVA.md.\n" +
+		"- Ephemeral task details: in-flight work, current conversation state, today's todo list (use `" + nameTodoWrite + "` for that).\n" +
+		"\n" +
+		"These exclusions apply even when the user explicitly asks you to save. If they ask you to save a PR list or activity summary, ask what was *surprising* or *non-obvious* about it — that's the part worth keeping.\n" +
+		"\n" +
+		"## Before recommending from memory\n" +
+		"A memory that names a specific file, function, or flag is a claim it existed when the memory was written. Before recommending it: verify the file exists (`" + nameRead + "`), or grep for the function/flag (`" + nameGrep + "`). \"The memory says X exists\" is not the same as \"X exists now\" — update or remove stale memories rather than acting on them.\n" +
+		"\n" +
+		"## Memory vs. plans vs. todos\n" +
+		"- Use memory for facts useful in FUTURE sessions.\n" +
+		"- Use a Plan (via `" + nameEnterPlanMode + "`) when you need user sign-off on an approach in THIS session.\n" +
+		"- Use `" + nameTodoWrite + "` to track multi-step progress within THIS session.\n" +
+		"If a fact only matters for the current task, do NOT save it as memory."
+}
+
+// projectMemoryIndexSection renders a compact one-line-per-section view of
+// the per-project MEMORY.md (computed by memdir.IndexSummary at boot). The
+// model sees what's already recorded — and which sections are empty —
+// without paying the full file's token cost. Read the full body via
+// `read` when detail is needed.
+func projectMemoryIndexSection(ctx PromptContext) string {
+	if !ctx.EnableAutoMemory {
+		return ""
+	}
+	body := strings.TrimSpace(ctx.ProjectMemoryIndex)
+	if body == "" {
+		return ""
+	}
+	return "# Project memory index (from <APP_HOME>/projects/<key>/MEMORY.md)\n\n" +
+		body + "\n\n" +
+		"This is a compact index. Use `" + nameRead + "` on the file path to see full bodies before relying on any entry."
 }
 
 // mainTodoSection tells the model when to reach for `todo_write`. The full

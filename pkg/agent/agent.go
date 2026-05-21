@@ -59,7 +59,7 @@ func New(cfg Config) (Agent, error) {
 	}
 
 	wd, _ := os.Getwd()
-	memSnap := memdir.Load(wd, appCfg.AppHome)
+	memSnap := memdir.Load(wd, appCfg.AppHome, appCfg.GetEnableAutoMemory())
 
 	prof := agent_impl.Main(appCfg, provider, model, nil, memSnap, nil)
 

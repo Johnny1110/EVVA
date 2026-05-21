@@ -132,7 +132,7 @@ func TestMainAgent_EnvironmentPlaceholdersForEmptyFields(t *testing.T) {
 
 func TestMainAgent_RendersProjectMemoryWhenPresent(t *testing.T) {
 	ctx := mainCtx()
-	ctx.ProjectMemory = "Conventions: use gofmt. Prefer table-driven tests."
+	ctx.WorkdirMemory = "Conventions: use gofmt. Prefer table-driven tests."
 	got := buildMainPrompt(ctx)
 
 	if !strings.Contains(got, "# Project memory (from EVVA.md)") {
@@ -172,7 +172,7 @@ func TestMainAgent_OmitsUserProfileWhenEmpty(t *testing.T) {
 
 func TestMainAgent_BothMemorySectionsWhenBothPresent(t *testing.T) {
 	ctx := mainCtx()
-	ctx.ProjectMemory = "proj"
+	ctx.WorkdirMemory = "proj"
 	ctx.UserProfile = "user"
 	got := buildMainPrompt(ctx)
 

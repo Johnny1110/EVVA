@@ -24,7 +24,7 @@ func TestExploreAgent_NoMemorySection(t *testing.T) {
 	// the contract; this test ensures the builder honors it structurally
 	// (subagent prompts do not have a memory section at all).
 	ctx := PromptContext{
-		ProjectMemory: "should-not-appear",
+		WorkdirMemory: "should-not-appear",
 		UserProfile:   "should-not-appear-either",
 	}
 	got := buildExplorePrompt(ctx)

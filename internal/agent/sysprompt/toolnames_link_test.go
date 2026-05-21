@@ -31,12 +31,13 @@ import (
 
 func TestToolNamesAppearInMainPrompt(t *testing.T) {
 	ctx := sysprompt.PromptContext{
-		AgentName: "evva",
-		OS:        "darwin",
-		Shell:     "zsh",
-		WorkDir:   "/tmp",
-		EvvaHome:  "/tmp/.evva",
-		Env:       "dev", // include dev section so `feedback` is in the prompt
+		AgentName:        "evva",
+		OS:               "darwin",
+		Shell:            "zsh",
+		WorkDir:          "/tmp",
+		EvvaHome:         "/tmp/.evva",
+		Env:              "dev",  // include dev section so `feedback` is in the prompt
+		EnableAutoMemory: true,   // include auto-memory section so its tool names render
 	}
 	prompt := sysprompt.MainAgent.BuildSystemPrompt(ctx)
 
@@ -60,6 +61,8 @@ func TestToolNamesAppearInMainPrompt(t *testing.T) {
 		tools.ASK_USER_QUESTION,
 		tools.ENTER_PLAN_MODE,
 		tools.EXIT_PLAN_MODE,
+		tools.UPDATE_USER_PROFILE,
+		tools.UPDATE_PROJECT_MEMORY,
 	}
 	for _, name := range required {
 		if !contains(prompt, string(name)) {

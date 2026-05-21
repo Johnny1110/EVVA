@@ -71,8 +71,14 @@ type PromptContext struct {
 	DeferredTools  []DeferredToolSpec // deferred-tool catalog; rendered as a <functions> block in the main prompt. Empty = skip the section.
 
 	// Memory (loaded by internal/memdir)
-	ProjectMemory string // contents of <workdir>/EVVA.md; "" = skip.
-	UserProfile   string // contents of <evvaHome>/USER_PROFILE.md; "" = skip.
+	WorkdirMemory      string // contents of <workdir>/EVVA.md (user-authored); "" = skip.
+	UserProfile        string // contents of <appHome>/USER_PROFILE.md (auto); "" = skip.
+	ProjectMemoryIndex string // compact heading-only summary of <appHome>/projects/<key>/MEMORY.md; "" = skip.
+
+	// EnableAutoMemory gates the auto-memory guidance + project-memory
+	// index sections in the main prompt. false → both sections are
+	// suppressed so the model isn't told about tools that aren't loaded.
+	EnableAutoMemory bool
 }
 
 // DetectContext returns a PromptContext with the runtime-detectable fields

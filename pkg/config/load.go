@@ -91,6 +91,20 @@ func Load(opts LoadOptions) (*Config, error) {
 		return nil, err
 	}
 
+	enableAutoMem := true
+	if fileCfg.EnableAutoMemory != nil {
+		enableAutoMem = *fileCfg.EnableAutoMemory
+	}
+	// Env override: EVVA_AUTO_MEMORY=0/false forces off regardless of YAML.
+	if v := os.Getenv("EVVA_AUTO_MEMORY"); v != "" {
+		switch v {
+		case "0", "false", "FALSE", "off", "OFF", "no", "NO":
+			enableAutoMem = false
+		case "1", "true", "TRUE", "on", "ON", "yes", "YES":
+			enableAutoMem = true
+		}
+	}
+
 	cfg := &Config{
 		AppName:    appName,
 		AppVersion: appVersion,
@@ -113,6 +127,7 @@ func Load(opts LoadOptions) (*Config, error) {
 		DefaultMaxTokens:     fileCfg.MaxTokens,
 		AutoCompactThreshold: fileCfg.AutoCompactThreshold,
 		DisplayThinking:      fileCfg.DisplayThinking,
+		EnableAutoMemory:     enableAutoMem,
 		TavilyAPIKey:         fileCfg.TavilyAPIKey,
 		FetchMaxBytes:        fileCfg.FetchMaxBytes,
 		DefaultProvider:      defProvider,

@@ -181,16 +181,21 @@ UI-heavy port. The tool surface is small; the TUI does most of the work.
 - Integrate with the plan mode, before make the final plan can ask user several questions with suggest answers/solutions (can adjust EnterPlanMode tool desc).
 - Port ref source code UX, allow user choose question's answer or fill by themself, user can edit all answer before submit all. using left right key to switch questions.
 
-### Phase 9 — User-profile background agent
+### Phase 9 — User-profile and project memory
 
-The agent that maintains `<EVVA_HOME>/USER_PROFILE.md`.
+The agent that maintains 
+
+- `<EVVA_HOME>/USER_PROFILE.md` -> global user profile (about user info)
+- `<EVVA_HOME>/projects/{project-name}/MEMORY.md` -> global project memory (about project info)
 
 Design points:
 
-- **Trigger** — `/profile-update` slash command for manual refresh.
-- **Tools** — `update_user_profile` (writes to `USER_PROFILE.md`).
+- **Trigger** — whenever agent want to do (need update evva's system prompt).
+- **Tools** — `update_user_profile` (writes to `USER_PROFILE.md`). `update_project_memory` (writes to `MEMORY.md`).
 - **Output shape** — fixed sections (`## Preferences`, `## Working style`, `## Recurring topics`) so updates merge cleanly. Free-form rewrites drift and become useless within a few sessions.
 - **Opt-out** — enabled by default; one-line notice on first session; `/config` toggles it off.
+- Port ref source code tool desgin and prompt (especially agent system prompt),
+- I'm not sure should we inject project memory into the system prompt, or just let agent know where to find it.
 
 ### Phase 10 — Worktree tools (EnterWorktree / ExitWorktree)
 

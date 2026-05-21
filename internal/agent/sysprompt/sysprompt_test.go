@@ -41,8 +41,8 @@ func TestDetectContext_LeavesUserSlotsZero(t *testing.T) {
 	if ctx.Skills != nil {
 		t.Errorf("Skills should be nil; got %v", ctx.Skills)
 	}
-	if ctx.ProjectMemory != "" {
-		t.Errorf("ProjectMemory should be empty; got %q", ctx.ProjectMemory)
+	if ctx.WorkdirMemory != "" {
+		t.Errorf("WorkdirMemory should be empty; got %q", ctx.WorkdirMemory)
 	}
 	if ctx.UserProfile != "" {
 		t.Errorf("UserProfile should be empty; got %q", ctx.UserProfile)

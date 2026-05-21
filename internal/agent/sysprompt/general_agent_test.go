@@ -21,7 +21,7 @@ func TestGeneralAgent_HasSharedPrefix(t *testing.T) {
 
 func TestGeneralAgent_NoMemorySection(t *testing.T) {
 	ctx := PromptContext{
-		ProjectMemory: "do-not-leak-project",
+		WorkdirMemory: "do-not-leak-project",
 		UserProfile:   "do-not-leak-user",
 	}
 	got := buildGeneralPrompt(ctx)

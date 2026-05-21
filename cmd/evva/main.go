@@ -26,6 +26,7 @@ import (
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/skill"
 	"github.com/johnny1110/evva/pkg/tools/todo"
+	"github.com/johnny1110/evva/internal/update"
 	"github.com/johnny1110/evva/pkg/ui"
 	bubbleteav2 "github.com/johnny1110/evva/internal/ui/bubbletea_v2"
 	"github.com/joho/godotenv"
@@ -44,6 +45,21 @@ import (
 //     one-shot flow. Read a prompt from args/stdin, run the agent once,
 //     stream events as plain-text lines, exit. Useful for scripting and CI.
 func main() {
+	// Handle -version / --version before anything else so the agent
+	// doesn't need to boot just to print the version.
+	for _, a := range os.Args[1:] {
+		if a == "-version" || a == "--version" {
+			fmt.Println("evva version", config.DisplayVersion())
+			return
+		}
+	}
+
+	// "evva update" — self-update from GitHub Releases, no Go required.
+	if len(os.Args) > 1 && os.Args[1] == "update" {
+		runUpdate()
+		return
+	}
+
 	_ = godotenv.Load()
 	cfg := config.Get()
 
@@ -515,4 +531,49 @@ func buildOptions(temp float64, maxTokens int) []llm.Option {
 func exitf(code int, format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(code)
+}
+
+// --- self-update -----------------------------------------------------------
+
+func runUpdate() {
+	ctx := context.Background()
+	current := update.CurrentVersion()
+
+	fmt.Printf("evva %s — checking for updates...\n", current)
+
+	release, err := update.Check(ctx, update.DefaultOwner, update.DefaultRepo)
+	if err != nil {
+		exitf(1, "evva: update check failed: %v", err)
+	}
+
+	if release.Version == "" {
+		exitf(1, "evva: no release found on GitHub")
+	}
+
+	latest := strings.TrimPrefix(release.Version, "v")
+	cur := strings.TrimPrefix(current, "v")
+
+	if latest == cur {
+		fmt.Printf("evva is already up-to-date (%s)\n", current)
+		return
+	}
+
+	fmt.Printf("New version available: %s → %s\n", current, release.Version)
+	fmt.Printf("Release: %s\n", release.URL)
+	fmt.Print("Update now? [y/N] ")
+
+	var answer string
+	fmt.Scanln(&answer)
+	if answer != "y" && answer != "Y" {
+		fmt.Println("Update cancelled.")
+		return
+	}
+
+	fmt.Println("Downloading update...")
+	exe, err := update.Apply(ctx, release)
+	if err != nil {
+		exitf(1, "evva: update failed: %v", err)
+	}
+
+	fmt.Printf("Updated to %s (%s)\n", release.Version, exe)
 }

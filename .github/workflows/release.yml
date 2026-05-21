@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          BIN="evva"
+          if [ "$GOOS" = "windows" ]; then BIN="evva.exe"; fi
+          go build \
+            -ldflags "-s -w -X github.com/johnny1110/evva/pkg/config.Version=${{ github.ref_name }} -X github.com/johnny1110/evva/pkg/config.CommitSHA=${{ github.sha }} -X github.com/johnny1110/evva/pkg/config.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o "$BIN" \
+            ./cmd/evva
+
+      - name: Package (tar.gz)
+        if: matrix.goos != 'windows'
+        run: tar -czf "evva-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" evva
+
+      - name: Package (zip)
+        if: matrix.goos == 'windows'
+        run: zip "evva-windows-amd64.zip" evva.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: evva-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: evva-${{ matrix.goos }}-${{ matrix.goarch }}.*
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

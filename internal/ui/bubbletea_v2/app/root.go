@@ -705,6 +705,13 @@ func (a *App) handleSubmit(m input.SubmitMsg) (tea.Model, tea.Cmd) {
 			a.state.SetHint("no controller attached")
 		}
 		return a, nil
+	case "/update":
+		a.input.Reset()
+		a.slash.Reset()
+		u := overlays.NewUpdate()
+		a.focus.Push(u)
+		a.relayout()
+		return a, u.StartCheck()
 	}
 
 	// Iter-limit takes precedence over the empty-text check: the

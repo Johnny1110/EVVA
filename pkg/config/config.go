@@ -19,11 +19,44 @@ import (
 	"github.com/johnny1110/evva/pkg/constant"
 )
 
+// Version is the canonical version string injected at build time via ldflags:
+//
+//	go build -ldflags "-X github.com/johnny1110/evva/pkg/config.Version=v1.2.3"
+//
+// When empty (dev builds, go run), DefaultAppVersion is used as the fallback.
+var Version string
+
+// CommitSHA is the git commit hash injected at build time via ldflags. Empty
+// in dev builds.
+var CommitSHA string
+
+// BuildDate is the UTC build timestamp injected at build time. Empty in dev
+// builds.
+var BuildDate string
+
 // Default values that appear unchanged across all Config instances.
 const (
 	DefaultAppName    = "evva"
 	DefaultAppVersion = "0.1.0"
 )
+
+// DisplayVersion returns the best available version string: the ldflags-injected
+// Version, or DefaultAppVersion if not set, followed by the commit and build
+// date when available. The result is meant for --version output.
+func DisplayVersion() string {
+	v := Version
+	if v == "" {
+		v = DefaultAppVersion
+	}
+	extra := ""
+	if CommitSHA != "" {
+		extra += " commit=" + CommitSHA
+	}
+	if BuildDate != "" {
+		extra += " built=" + BuildDate
+	}
+	return v + extra
+}
 
 // Config holds all parsed runtime configuration. Most fields are populated
 // once during Load and treated as read-only; the small subset that the

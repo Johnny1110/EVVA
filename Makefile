@@ -2,6 +2,16 @@ BINARY_NAME=evva
 BIN_DIR=bin
 CMD_DIR=./cmd/evva
 
+# Build-time version injection.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+
+LDFLAGS = -s -w \
+	-X github.com/johnny1110/evva/pkg/config.Version=$(VERSION) \
+	-X github.com/johnny1110/evva/pkg/config.CommitSHA=$(COMMIT) \
+	-X github.com/johnny1110/evva/pkg/config.BuildDate=$(DATE)
+
 # Install location: defaults to Go's standard binary directory
 # ($GOBIN, or $GOPATH/bin when GOBIN is unset). Both are typically
 # already on a Go developer's PATH so `evva` works from any folder
@@ -22,7 +32,7 @@ all: fmt vet test build
 
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_DIR)
+	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_DIR)
 
 # install builds and drops the binary into PREFIX. The runtime config
 # dir ($HOME/.evva/) bootstraps itself on first launch — neither

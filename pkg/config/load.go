@@ -49,7 +49,10 @@ func Load(opts LoadOptions) (*Config, error) {
 	}
 	appVersion := opts.AppVersion
 	if appVersion == "" {
-		appVersion = DefaultAppVersion
+		appVersion = Version
+		if appVersion == "" {
+			appVersion = DefaultAppVersion
+		}
 	}
 	appHome := opts.AppHome
 	if appHome == "" {

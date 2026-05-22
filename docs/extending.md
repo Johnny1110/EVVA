@@ -24,6 +24,7 @@ proof-of-concept lives at [`examples/minimal-host/`](../examples/minimal-host/ma
 | `pkg/toolset` | `Registry`, `ToolFactory`, `DefaultRegistry`, `TagsFor`, `HintFor` | Registering custom tools |
 | `pkg/tools` | `Tool` interface, `Result`, `ContentBlock`, `Descriptor`, `Call`, `State`, `ToolName` constants | Authoring custom tools |
 | `pkg/tools/{fs,shell,web,util,notebook,monitor,cron,todo}` | Bundled tool family implementations | Reusing the bundled tools directly (rare; most callers use them via the registry) |
+| `pkg/tools/kits` | `GeneralPurposeKit`, `ReadOnlyKit`, `CodingKit`, `ResearchKit` | Pre-composed tool-name lists for common agent shapes (Phase 19d) |
 | `pkg/constant` | `LLMProvider`, `Model`, `AgentStatus`, `MODEL_CONTEXT_SIZE` | Referencing built-in provider / model identifiers |
 
 Internal packages (`internal/`) remain inaccessible from outside the
@@ -144,6 +145,141 @@ internal types — you can call methods on them but cannot fully implement
 `Controller` from outside the module. This is a known follow-up;
 downstream UIs that need to render todos / subagents today should
 subscribe to `event.KindStoreUpdate` events through the sink instead.
+
+## SDK polish (Phase 19)
+
+These notes capture the post-Phase-15 polish: friday-driven additions
+and the broader "professional SDK" contract.
+
+### Charmbracelet version pinning
+
+The reference TUI in `internal/ui/bubbletea_v2/` uses bubbletea's
+`tea.Program` type on `pkg/ui.UI.Run`. If a downstream UI imports a
+DIFFERENT major-or-minor version of `github.com/charmbracelet/bubbletea`,
+the two `tea.Program` types are distinct and won't unify at the
+interface boundary. Match evva's pinned versions to avoid the trap:
+
+| Library | Tested version |
+| --- | --- |
+| `github.com/charmbracelet/bubbletea` | `v1.3.10` |
+| `github.com/charmbracelet/bubbles` | `v1.0.0` |
+| `github.com/charmbracelet/lipgloss` | `v1.1.1-0.20250404203927-76690c660834` |
+
+The full required block is in evva's `go.mod`. Downstream `go.mod`
+declarations can either pin the same explicit versions or use a
+`require` block without explicit versions and trust `go mod tidy` to
+resolve to evva's transitive pins (works most of the time, but
+explicit pins are safer).
+
+### Headless permission requirement
+
+`NewWithProfile` installs a non-interactive permission broker by
+default — it auto-DENIES every approval request. For an interactive
+host this is correct (the host wires its own broker via the agent's
+internal options); for a non-interactive consumer that has no UI to
+display approval prompts, every tool call needing approval would
+silently fail.
+
+The fix is **one option call**:
+
+```go
+ag, _ := agent.NewWithProfile(prof,
+    agent.WithConfig(cfg),
+    agent.WithSink(sink),
+    agent.WithHeadlessBypass(), // ← required for non-interactive hosts
+)
+```
+
+`WithHeadlessBypass()` bundles `WithPermissionMode("bypass")` with a
+strong docstring spelling out the security trade-off. With bypass
+active, every tool call auto-succeeds. Use only in trusted
+environments (CI runners, sandboxed containers, ephemeral VMs).
+
+If your host has an approval UI, omit `WithHeadlessBypass()` and wire
+real approval flows via `agent.RespondPermission`.
+
+### Typed PermissionMode
+
+Phase 19c exports a typed `agent.PermissionMode` enum so a typo
+becomes a compile error instead of a silent fall-through:
+
+```go
+agent.WithPermissionMode(agent.PermissionBypass) // typed — only signature
+agent.WithHeadlessBypass()                       // convenience for the bypass case
+```
+
+If your config layer reads a mode from a YAML / CLI string, convert
+at the boundary: `agent.PermissionMode(s)`.
+
+### Env-var aliasing via LoadOptions
+
+A downstream app that wants friendlier env-var spellings can declare
+them on `LoadOptions` instead of pre/post-Load shim code:
+
+```go
+cfg, _ := config.Load(config.LoadOptions{
+    AppName: "friday",
+    AppHome: "/home/me/.friday",
+
+    // Promote alias → canonical BEFORE godotenv.Load runs.
+    EnvAliases: map[string]string{
+        "LOGDIR":   "LOG_DIR",
+        "LOGLEVEL": "LOG_LEVEL",
+        "APIKEY":   "DEEPSEEK_API_KEY", // app-specific aliases
+    },
+
+    // Apply post-Load mutations for env vars without a YAML hook.
+    EnvOverrides: []func(*config.Config) error{
+        func(c *config.Config) error {
+            if v := os.Getenv("MAX_ITERS"); v != "" {
+                if n, err := strconv.Atoi(v); err == nil && n > 0 {
+                    return c.SetMaxIterations(n)
+                }
+            }
+            return nil
+        },
+    },
+})
+```
+
+Both promotions are non-overriding: existing canonical exports win.
+The first error from any override short-circuits the rest and is
+returned from `Load`.
+
+### Tool kits
+
+Instead of `append(fs.Names(), shell.Names()...)` chains, use the
+named kits from `pkg/tools/kits`:
+
+```go
+import "github.com/johnny1110/evva/pkg/tools/kits"
+
+active, deferred := kits.GeneralPurposeKit() // fs + shell + todo + util + tool_search active; web deferred
+// or: ReadOnlyKit / CodingKit / ResearchKit
+```
+
+Each kit's godoc lists every tool it includes — copy the kit you
+want and tweak with `append`.
+
+### `Event.Payload()` for ergonomic switching
+
+Phase 19a added a `Payload() any` helper that returns the pointer
+matching `e.Kind`. Lets consumers type-switch instead of grepping
+which of the 20 pointer fields goes with which Kind:
+
+```go
+switch p := e.Payload().(type) {
+case *event.TextPayload:
+    render(p.Text)
+case *event.ToolUseStartPayload:
+    renderToolCall(p.Name, p.Input)
+case *event.ErrorPayload:
+    render(p.Message) // Phase 19a: stringified field, populated at emit time
+}
+```
+
+The direct field access (`e.Text`, `e.ToolUseStart`, …) stays
+available — `Payload()` is purely an ergonomics layer.
 
 ## What you can't change
 

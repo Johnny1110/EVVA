@@ -44,8 +44,10 @@ type ProfileOptions struct {
 //
 // providerName must match a name registered on pkg/llm.DefaultRegistry
 // ("anthropic", "deepseek", "ollama", or a downstream-registered name).
-// model is the model id sent to the provider; empty is allowed but
-// downstream factories typically expect a concrete id.
+// model is the typed constant.Model id sent to the provider; for
+// downstream-registered providers whose model strings aren't in
+// pkg/constant, write `constant.Model("custom-model-name")`. Empty is
+// allowed but downstream factories typically expect a concrete id.
 //
 // The profile is classified as GENERAL_PURPOSE — evva's internal type
 // system reserves MAIN/EXPLORE/PLAN for the bundled personas. Downstream
@@ -59,7 +61,7 @@ type ProfileOptions struct {
 // the name isn't in the bundled constants, an LLMProvider stub is
 // synthesised on the fly so the rest of the agent loop has a value to
 // log + introspect.
-func NewProfile(name, systemPrompt string, activeTools []tools.ToolName, providerName, model string, opts ProfileOptions) (Profile, error) {
+func NewProfile(name, systemPrompt string, activeTools []tools.ToolName, providerName string, model constant.Model, opts ProfileOptions) (Profile, error) {
 	if providerName == "" {
 		return Profile{}, &unknownProviderError{name: providerName}
 	}
@@ -79,7 +81,7 @@ func NewProfile(name, systemPrompt string, activeTools []tools.ToolName, provide
 		ActiveTools:   activeTools,
 		DeferredTools: opts.DeferredTools,
 		LLMProvider:   provider,
-		LLMModel:      constant.Model(model),
+		LLMModel:      model,
 		LLMOptions:    llmOpts,
 		Stream:        opts.Stream,
 	}, nil

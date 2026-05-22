@@ -253,6 +253,40 @@ func (c *Config) SetAutoCompactThreshold(v float64) error {
 	return c.SaveFile()
 }
 
+// SetProviderCredentials writes the (apiURL, apiKey) pair for the
+// named LLM provider into Config.LLMProviderConfig under the mutex.
+//
+// This is the documented path for downstream apps to install
+// credentials at runtime — direct map assignment
+// (`cfg.LLMProviderConfig["deepseek"] = ...`) still works but races
+// with concurrent reads. SetProviderCredentials takes c.mu so two
+// goroutines wiring different providers at startup don't tear.
+//
+// An empty name is rejected. Unknown provider names are NOT rejected:
+// downstream apps register custom providers into pkg/llm's registry
+// without touching constant, and the agent's LLM-build step will
+// surface the typo if no factory matches. apiURL may be empty —
+// providers with a sane default (DeepSeek, Anthropic) fall back to it.
+// apiKey may be empty for local providers (Ollama, ...).
+//
+// Models on the existing APIConfig (if any) are preserved. Pass through
+// the public map slot when a custom Models list is also needed.
+func (c *Config) SetProviderCredentials(name, apiURL, apiKey string) error {
+	if name == "" {
+		return fmt.Errorf("config: provider name is required")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.LLMProviderConfig == nil {
+		c.LLMProviderConfig = map[string]APIConfig{}
+	}
+	existing := c.LLMProviderConfig[name]
+	existing.ApiURL = apiURL
+	existing.ApiSecret = apiKey
+	c.LLMProviderConfig[name] = existing
+	return nil
+}
+
 // SetMaxIterations validates >0 and persists. NOTE: this only updates
 // the YAML default; the live cap on a running agent is on Agent itself
 // — call Controller.SetMaxIterations to mutate it.

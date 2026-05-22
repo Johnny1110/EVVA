@@ -29,19 +29,42 @@ import (
 type Kind string
 
 const (
-	KindIdle         Kind = "idle"
-	KindRunStart     Kind = "run_start"
-	KindRunResume    Kind = "run_resume"
-	KindRunEnd       Kind = "run_end"
+	// KindIdle marks the agent as inactive — no Run in flight. Useful for
+	// status-bar widgets that want a "ready" indicator distinct from "running".
+	KindIdle Kind = "idle"
+	// KindRunStart fires once at the top of every Agent.Run invocation;
+	// payload carries the user prompt that kicked off the run.
+	KindRunStart Kind = "run_start"
+	// KindRunResume fires when Agent.Continue resumes after an iter-limit
+	// pause; payload carries the message index the resume picks up from.
+	KindRunResume Kind = "run_resume"
+	// KindRunEnd fires once per Run — terminal, win or lose; payload
+	// carries the final iteration count and assistant text/thinking.
+	KindRunEnd Kind = "run_end"
+	// KindRunCancelled fires when context cancellation tore the run down
+	// mid-flight (Ctrl-C, deadline, etc.). No payload.
 	KindRunCancelled Kind = "run_cancelled"
-	KindIterLimit    Kind = "iter_limit" // paused — caller may Continue
+	// KindIterLimit fires when the loop hits Agent.maxIters and pauses
+	// without finishing. The caller may invoke Agent.Continue to resume.
+	KindIterLimit Kind = "iter_limit"
 
+	// KindTurnStart / KindTurnEnd bracket one iteration of the loop. Payload
+	// carries the iteration index so subscribers can scope sub-events to a turn.
 	KindTurnStart Kind = "turn_start"
 	KindTurnEnd   Kind = "turn_end"
 
-	KindDrainingInfo      = "draining_info" // agent is draining info from subagent or bg bash
-	KindThinking     Kind = "thinking"      // assistant reasoning text (whole block; buffered providers)
-	KindText         Kind = "text"          // assistant final text (whole block; buffered providers)
+	// KindDrainingInfo signals the agent is folding deferred information
+	// from subagents or background bash into the parent context. Cosmetic
+	// — useful for a status bar "draining…" hint.
+	KindDrainingInfo = "draining_info"
+	// KindThinking carries the assistant's reasoning text as one full
+	// block (buffered providers). Streaming providers emit KindThinkingChunk
+	// deltas instead, then skip the final KindThinking to avoid duplication.
+	KindThinking Kind = "thinking"
+	// KindText carries the assistant's final text as one full block
+	// (buffered providers). Streaming providers emit KindTextChunk deltas
+	// instead, then skip the final KindText.
+	KindText Kind = "text"
 
 	// KindTextChunk and KindThinkingChunk are emitted by the streaming
 	// path. Each carries an incremental delta in TextPayload.Text; the
@@ -51,7 +74,12 @@ const (
 	KindTextChunk     Kind = "text_chunk"
 	KindThinkingChunk Kind = "thinking_chunk"
 
-	KindToolUseStart  Kind = "tool_use_start"
+	// KindToolUseStart fires at tool-dispatch time, carrying the tool name
+	// + raw JSON input. The matching KindToolUseResult follows when the
+	// tool returns.
+	KindToolUseStart Kind = "tool_use_start"
+	// KindToolUseResult fires when a tool returns. Pairs with the prior
+	// KindToolUseStart by ToolID.
 	KindToolUseResult Kind = "tool_use_result"
 
 	// KindApprovalNeeded is emitted when the permission gate decides a tool
@@ -67,9 +95,16 @@ const (
 	// goroutine sleeps in question.Broker.Request until the answer arrives.
 	KindQuestionNeeded Kind = "question_needed"
 
-	KindCompacting    Kind = "compacting"
-	KindCompactingEnd Kind = "compacting_end" // pair to KindCompacting; TUI removes the inflight block
+	// KindCompacting fires when the agent starts a session compaction
+	// (micro or full). Pairs with KindCompactingEnd.
+	KindCompacting Kind = "compacting"
+	// KindCompactingEnd pairs with KindCompacting; OK reports success or
+	// failure so the TUI can swap the spinner for the right final block.
+	KindCompactingEnd Kind = "compacting_end"
 
+	// KindError reports a Go-level failure that aborted the loop. Tool
+	// errors surfaced via Result.IsError do NOT produce this event —
+	// they flow through KindToolUseResult so the model can recover.
 	KindError Kind = "error"
 
 	// KindStoreUpdate carries every state change emitted by an
@@ -77,7 +112,9 @@ const (
 	// switches on StoreUpdatePayload.Domain to decide how to render.
 	KindStoreUpdate Kind = "store_update"
 
-	KindUsage Kind = "usage" // per-turn token usage report
+	// KindUsage reports per-turn token usage plus the running session
+	// total after the turn is folded in.
+	KindUsage Kind = "usage"
 
 	// KindModeChanged fires whenever the agent's permission mode changes
 	// — Shift+Tab cycle, EnterPlanMode / ExitPlanMode tool calls, or a
@@ -125,23 +162,36 @@ type Event struct {
 // initialization); Mode is the new mode. Both are the wire string form
 // (permission.Mode is type-aliased to string for the same reason).
 type ModeChangedPayload struct {
+	// PrevMode is the mode that was active before the change. Empty on the
+	// very first initialization.
 	PrevMode string
-	Mode     string
+	// Mode is the new mode the agent has transitioned into.
+	Mode string
 }
 
 // --- payload types ---
 
+// RunStartPayload carries the user prompt that kicked off a Run.
 type RunStartPayload struct {
+	// Prompt is the user message that opened this Run.
 	Prompt string
 }
 
+// RunResumePayload carries the message index Agent.Continue resumed from
+// after an iter-limit pause.
 type RunResumePayload struct {
+	// FromMessageIndex is the position in the session transcript where
+	// Continue picked up.
 	FromMessageIndex int
 }
 
+// RunEndPayload carries the final state of a completed Run.
 type RunEndPayload struct {
-	Iters    int
-	Content  string
+	// Iters is the number of iterations the loop consumed before ending.
+	Iters int
+	// Content is the assistant's final text for the Run.
+	Content string
+	// Thinking is the assistant's reasoning text (if any).
 	Thinking string
 }
 
@@ -149,10 +199,15 @@ type RunEndPayload struct {
 // should prompt the user (e.g. "press Enter to keep going") and call
 // Agent.Continue to resume; the loop is paused, not failed.
 type IterLimitPayload struct {
-	Reached int
+	// Iters is the iteration count the loop hit before pausing — matches
+	// RunEndPayload.Iters naming so callers can read iteration counts
+	// from either payload without remembering two field names.
+	Iters int
 }
 
+// TurnPayload carries the iteration index a TurnStart/TurnEnd event refers to.
 type TurnPayload struct {
+	// Iteration is the zero-based loop iteration index.
 	Iteration int
 }
 
@@ -160,12 +215,19 @@ type TurnPayload struct {
 // Text events. With streaming completions this becomes a stream of chunks;
 // today it carries the full block.
 type TextPayload struct {
+	// Text is the assistant text content (a full block, or one streaming
+	// delta when the event Kind is KindTextChunk / KindThinkingChunk).
 	Text string
 }
 
+// ToolUseStartPayload reports a tool dispatch.
 type ToolUseStartPayload struct {
-	Name   string
-	Input  json.RawMessage
+	// Name is the tool's wire name (matches tools.ToolName).
+	Name string
+	// Input is the raw JSON the LLM passed to the tool — UIs typically
+	// summarise one field rather than dumping the whole blob.
+	Input json.RawMessage
+	// ToolID correlates this dispatch with its eventual ToolUseResult.
 	ToolID string
 }
 
@@ -176,10 +238,18 @@ type ToolUseStartPayload struct {
 // layer; the UI type-asserts. Never sent to the LLM — Content alone is the
 // model-facing summary.
 type ToolUseResultPayload struct {
-	ToolID        string
-	Content       string
-	IsError       bool
-	Metadata      any
+	// ToolID correlates this result with the prior ToolUseStart.
+	ToolID string
+	// Content is the LLM-facing text summary the tool produced.
+	Content string
+	// IsError is true when the tool itself returned an error result.
+	// Distinct from a Go-level failure (which surfaces via KindError).
+	IsError bool
+	// Metadata is an optional tool-specific structured payload (e.g. a
+	// *fs.FileDiff for write/edit). UIs type-assert to render rich views.
+	Metadata any
+	// ContentBlocks carries multimodal output (text + images). Empty for
+	// text-only tool results.
 	ContentBlocks []tools.ContentBlock
 }
 
@@ -193,15 +263,28 @@ type ToolUseResultPayload struct {
 // PlanContent is non-empty only for ExitPlanMode — carries the markdown
 // plan body so the approval overlay can render it inline.
 type ApprovalNeededPayload struct {
-	RequestID        string
-	ToolName         string
-	ToolInput        json.RawMessage
-	InputDescription string // model-supplied `description` field from ToolInput; "" when the tool's input has no such field
-	Mode             string
-	Reason           string
-	RiskHint         string
-	Matched          string
-	PlanContent      string
+	// RequestID is the Broker correlation key; the TUI passes it back to
+	// Broker.Respond when forwarding the user's choice.
+	RequestID string
+	// ToolName is the wire name of the tool whose call is being gated.
+	ToolName string
+	// ToolInput is the raw JSON the LLM passed to the tool.
+	ToolInput json.RawMessage
+	// InputDescription is the model-supplied `description` field from
+	// ToolInput; "" when the tool's input has no such field.
+	InputDescription string
+	// Mode is the permission mode active when the gate fired.
+	Mode string
+	// Reason is the gate's explanation for asking (e.g. "matches dangerous prefix").
+	Reason string
+	// RiskHint is non-empty for Bash (the classifier's risk label);
+	// empty for other tools.
+	RiskHint string
+	// Matched is the rule fragment that triggered the prompt, if any.
+	Matched string
+	// PlanContent is non-empty only for ExitPlanMode — carries the
+	// markdown plan body so the approval overlay can render it inline.
+	PlanContent string
 }
 
 // QuestionNeededPayload is the wire shape of a pending question prompt.
@@ -209,8 +292,13 @@ type ApprovalNeededPayload struct {
 // is the question.Broker's correlation key used when calling
 // Controller.RespondQuestion.
 type QuestionNeededPayload struct {
+	// RequestID is the question.Broker correlation key; the TUI passes
+	// it back via Controller.RespondQuestion.
 	RequestID string
-	AgentID   string
+	// AgentID is the agent that invoked AskUserQuestion (relevant when
+	// subagent question routing lands).
+	AgentID string
+	// Questions are the items rendered in the overlay.
 	Questions []QuestionItem
 }
 
@@ -218,29 +306,49 @@ type QuestionNeededPayload struct {
 // does not import internal/question (which would create a cycle through
 // toolset → tools/ux → question → event).
 type QuestionItem struct {
-	Question    string
-	Header      string
+	// Question is the prompt body.
+	Question string
+	// Header is the short chip label (max 12 chars in the canonical UI).
+	Header string
+	// MultiSelect controls whether the user may pick more than one option.
 	MultiSelect bool
-	Options     []QuestionOption
+	// Options are the offered choices.
+	Options []QuestionOption
 }
 
 // QuestionOption mirrors question.Option for the same reason.
 type QuestionOption struct {
-	Label       string
+	// Label is the choice text shown to the user.
+	Label string
+	// Description is the optional explanation rendered alongside.
 	Description string
-	Preview     string
+	// Preview is the optional code/diagram block shown in side-by-side mode.
+	Preview string
 }
 
 // ErrorPayload reports a Go-level failure that aborted the loop. Tool errors
 // surfaced as Result.IsError do NOT produce this event — they flow through
 // ToolUseResult so the model can recover.
 type ErrorPayload struct {
-	Stage string // "llm" | "tool:<name>" | "loop"
-	Err   error
+	// Stage tags where in the loop the failure occurred:
+	// "llm" | "tool:<name>" | "loop".
+	Stage string
+	// Err is the underlying Go error. Use Message for the rendered
+	// string form when you only need text (covers the nil case too).
+	Err error
+	// Message is err.Error() captured at emit time, or "" when Err is nil.
+	// Convenience for consumers that don't want to nil-check + stringify
+	// (UIs, JSON serialisers).
+	Message string
 }
 
+// CompactingPayload reports the start of a session compaction. Type is
+// "micro" or "full"; UsageRatio is the input/output token ratio that
+// triggered the compaction.
 type CompactingPayload struct {
-	Type       string
+	// Type is "micro" (elide old tool results) or "full" (summarise).
+	Type string
+	// UsageRatio is the input/budget ratio that triggered the compaction.
 	UsageRatio float64
 }
 
@@ -250,10 +358,16 @@ type CompactingPayload struct {
 // BriefTokens carries the size of the full-compact brief so callers
 // that already painted a percent can update the figure on completion.
 type CompactingEndPayload struct {
-	Type        string
-	OK          bool
+	// Type matches the prior CompactingPayload.Type — "micro" or "full".
+	Type string
+	// OK reports success or failure; false means the TUI should swap
+	// the spinner for an error line rather than removing it silently.
+	OK bool
+	// BriefTokens is the size of the full-compact brief; updated UIs use
+	// this to replace the percent estimate they painted at start.
 	BriefTokens int
-	Err         string
+	// Err is the failure reason when OK is false; empty otherwise.
+	Err string
 }
 
 // StoreUpdatePayload is the bridge between observable.Change and the event
@@ -262,11 +376,17 @@ type CompactingEndPayload struct {
 // Payload is the store's domain-typed snapshot, switched on by Domain at
 // the consumer.
 type StoreUpdatePayload struct {
-	Domain  string
-	Op      string
-	ID      string
+	// Domain identifies the emitting store ("task", "subagent", …).
+	Domain string
+	// Op is the verb: "created" / "updated" / "removed" / "phase" / "done" / "crushed".
+	Op string
+	// ID is the store-local identifier (task ID, subagent ID, …).
+	ID string
+	// Payload is the store's domain-typed snapshot; consumers type-assert
+	// based on Domain.
 	Payload any
-	Time    time.Time
+	// Time is the emit timestamp.
+	Time time.Time
 }
 
 // UsagePayload reports token usage for the LLM call that just completed.
@@ -274,6 +394,64 @@ type StoreUpdatePayload struct {
 // after Turn has been folded in. The TUI typically shows both — Turn for
 // the latest cost spike, Cumulative for the session budget.
 type UsagePayload struct {
-	Turn       llm.Usage
+	// Turn is usage for the just-completed LLM call.
+	Turn llm.Usage
+	// Cumulative is the running session total after Turn is folded in.
 	Cumulative llm.Usage
+}
+
+// Payload returns the payload pointer matching e.Kind, or nil when the
+// event Kind has no associated payload (KindIdle, KindRunCancelled,
+// KindTurnStart/End in some emitters, etc.). Consumers can switch on
+// the returned type instead of remembering which of the 20+ pointer
+// fields on Event corresponds to each Kind:
+//
+//	switch p := e.Payload().(type) {
+//	case *event.TextPayload:
+//	    render(p.Text)
+//	case *event.ToolUseStartPayload:
+//	    renderToolCall(p.Name, p.Input)
+//	}
+//
+// The direct field access (e.Text, e.ToolUseStart, …) stays available
+// for callers that already do a Kind switch — Payload is purely an
+// ergonomics layer.
+func (e Event) Payload() any {
+	switch e.Kind {
+	case KindRunStart:
+		return e.RunStart
+	case KindRunResume:
+		return e.RunResume
+	case KindRunEnd:
+		return e.RunEnd
+	case KindIterLimit:
+		return e.IterLimit
+	case KindTurnStart, KindTurnEnd:
+		return e.Turn
+	case KindThinking, KindThinkingChunk:
+		return e.Thinking
+	case KindText, KindTextChunk:
+		return e.Text
+	case KindToolUseStart:
+		return e.ToolUseStart
+	case KindToolUseResult:
+		return e.ToolUseResult
+	case KindApprovalNeeded:
+		return e.ApprovalNeeded
+	case KindQuestionNeeded:
+		return e.QuestionNeeded
+	case KindError:
+		return e.Error
+	case KindStoreUpdate:
+		return e.StoreUpdate
+	case KindUsage:
+		return e.Usage
+	case KindCompacting:
+		return e.Compacting
+	case KindCompactingEnd:
+		return e.CompactingEnd
+	case KindModeChanged:
+		return e.ModeChanged
+	}
+	return nil
 }

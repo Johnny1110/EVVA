@@ -2,7 +2,6 @@ package agent
 
 import (
 	agent_impl "github.com/johnny1110/evva/internal/agent"
-	"github.com/johnny1110/evva/internal/permission"
 	"github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/pkg/event"
 	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
@@ -65,13 +64,3 @@ func WithCustomTool(name tools.ToolName, factory pubtoolset.ToolFactory) Option 
 	return agent_impl.WithCustomTool(name, factory)
 }
 
-// WithPermissionMode sets the agent's initial permission stance using
-// the string form ("default" | "accept_edits" | "plan" | "bypass" |
-// "auto"). Unknown values are silently ignored.
-func WithPermissionMode(modeName string) Option {
-	m, ok := permission.ParseMode(modeName)
-	if !ok {
-		return func(*agent_impl.Agent) {}
-	}
-	return agent_impl.WithPermissionMode(m)
-}

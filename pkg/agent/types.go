@@ -16,9 +16,17 @@ type Skill struct {
 // SessionInfo is a snapshot of the agent's conversation state (message count
 // and cumulative token usage). External callers get a point-in-time copy.
 type SessionInfo struct {
-	MessageCount    int
-	InputTokens     int
-	OutputTokens    int
+	// MessageCount is the number of messages on the session transcript —
+	// counts user prompts, assistant turns, and tool results.
+	MessageCount int
+	// InputTokens is the cumulative input-token total across every LLM
+	// call in this session.
+	InputTokens int
+	// OutputTokens is the cumulative output-token total across every
+	// LLM call in this session.
+	OutputTokens int
+	// LastInputTokens is the input-token count of the most recent LLM
+	// call. Useful for surfacing per-turn cost in a status bar.
 	LastInputTokens int
 }
 

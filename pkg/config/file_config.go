@@ -55,10 +55,14 @@ type FileProviderConfig struct {
 	APIURL string `yaml:"api_url"`
 }
 
-// defaultFileConfig returns the baked-in defaults written on first launch
-// when no YAML exists yet. Mirrors the pre-migration env defaults so
-// existing behavior is preserved for users who haven't filled anything in.
-func defaultFileConfig() FileConfig {
+// defaultFileConfig returns first-launch defaults stamped with the
+// caller's AppName as default_profile. friday-flavoured config writes
+// `default_profile: friday` instead of leaking evva's persona name into
+// a sibling app's YAML. Empty appName falls back to "evva".
+func defaultFileConfig(appName string) FileConfig {
+	if appName == "" {
+		appName = "evva"
+	}
 	enableAutoMem := true
 	return FileConfig{
 		MaxIterations:        30,
@@ -69,7 +73,7 @@ func defaultFileConfig() FileConfig {
 		DefaultProvider: constant.DEEPSEEK.Name,
 		DefaultModel:    string(constant.DEEPSEEK_V4_PRO),
 		DefaultEffort:   "medium",
-		DefaultProfile:  "evva",
+		DefaultProfile:  appName,
 		PermissionMode:  "default",
 
 		FetchMaxBytes: 100000,
@@ -86,14 +90,19 @@ func defaultFileConfig() FileConfig {
 	}
 }
 
-// LoadFileConfig reads the YAML at path. Returns (cfg, created, err):
+// LoadFileConfig reads the YAML at path. On first launch (file absent)
+// it writes a default YAML whose default_profile is the caller's
+// appName — so a friday-flavoured Load writes "default_profile: friday"
+// instead of bleeding evva's persona into a sibling app's config.
+//
+// Returns (cfg, created, err):
 //   - created=true means the file didn't exist and was just written with
 //     defaults; callers can use this to surface a one-time first-launch
 //     notice.
-//   - Missing keys in an existing file fall back to defaultFileConfig()
+//   - Missing keys in an existing file fall back to defaultFileConfig
 //     values via pre-population, so partial YAML never crashes startup.
-func LoadFileConfig(path string) (FileConfig, bool, error) {
-	cfg := defaultFileConfig()
+func LoadFileConfig(path, appName string) (FileConfig, bool, error) {
+	cfg := defaultFileConfig(appName)
 
 	data, err := os.ReadFile(path)
 	if err != nil {

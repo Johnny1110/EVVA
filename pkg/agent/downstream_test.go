@@ -10,6 +10,7 @@ import (
 
 	"github.com/johnny1110/evva/pkg/agent"
 	"github.com/johnny1110/evva/pkg/config"
+	"github.com/johnny1110/evva/pkg/constant"
 	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/tools"
@@ -110,7 +111,7 @@ func TestDownstream_EndToEnd(t *testing.T) {
 	// custom tool. ActiveTools is empty so the model isn't dispatched
 	// any built-ins for this proof; WithCustomTool will append pingTool.
 	customToolName := tools.ToolName("downstream_ping")
-	prof, err := agent.NewProfile("downstream", "you are a stub", nil, providerName, "stub-model-1", agent.ProfileOptions{})
+	prof, err := agent.NewProfile("downstream", "you are a stub", nil, providerName, constant.Model("stub-model-1"), agent.ProfileOptions{})
 	if err != nil {
 		t.Fatalf("NewProfile: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestDownstream_EndToEnd(t *testing.T) {
 		agent.WithCustomTool(customToolName, func(s tools.State) (tools.Tool, error) {
 			return pingTool{name: string(customToolName)}, nil
 		}),
-		agent.WithPermissionMode("bypass"),
+		agent.WithPermissionMode(agent.PermissionBypass),
 	)
 	if err != nil {
 		t.Fatalf("agent.NewWithProfile: %v", err)

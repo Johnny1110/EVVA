@@ -224,7 +224,11 @@ func (a *Agent) crush(stage string, err error) error {
 	}
 
 	a.emit(event.KindError, func(e *event.Event) {
-		e.Error = &event.ErrorPayload{Stage: stage, Err: err}
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		e.Error = &event.ErrorPayload{Stage: stage, Err: err, Message: msg}
 	})
 
 	a.logger.Error("run.crushed", "stage", stage, "err", err)
@@ -291,7 +295,7 @@ func (a *Agent) limitBreak() error {
 	}
 
 	a.emit(event.KindIterLimit, func(e *event.Event) {
-		e.IterLimit = &event.IterLimitPayload{Reached: int(a.maxIters.Load())}
+		e.IterLimit = &event.IterLimitPayload{Iters: int(a.maxIters.Load())}
 	})
 
 	return ErrIterLimit

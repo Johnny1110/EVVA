@@ -398,7 +398,7 @@ func (s cliSink) Emit(e event.Event) {
 		}
 	case event.KindIterLimit:
 		if e.IterLimit != nil {
-			fmt.Fprintf(s.out, "\n[iter-limit] reached %d iterations\n", e.IterLimit.Reached)
+			fmt.Fprintf(s.out, "\n[iter-limit] reached %d iterations\n", e.IterLimit.Iters)
 		}
 	case event.KindRunCancelled:
 		fmt.Fprintln(s.out, "\n[cancelled]")

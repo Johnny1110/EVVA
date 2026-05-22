@@ -1,0 +1,44 @@
+package version
+
+import (
+	"strings"
+	"testing"
+)
+
+// TestVersion_NonEmpty guards against a stray refactor wiping the
+// constant; downstream apps reading version.Version expect a
+// non-empty string they can log.
+func TestVersion_NonEmpty(t *testing.T) {
+	if Version == "" {
+		t.Fatal("version.Version is empty — release identity is required")
+	}
+}
+
+// TestString_NoStamp returns just "v<Version>" when no build stamp is
+// set (the default for plain `go build`).
+func TestString_NoStamp(t *testing.T) {
+	prev := BuildStamp
+	BuildStamp = ""
+	defer func() { BuildStamp = prev }()
+
+	got := String()
+	if got != "v"+Version {
+		t.Errorf("String() = %q; want %q", got, "v"+Version)
+	}
+}
+
+// TestString_WithStamp formats "v<Version>+<stamp>" when ldflags
+// populated BuildStamp.
+func TestString_WithStamp(t *testing.T) {
+	prev := BuildStamp
+	BuildStamp = "abc1234"
+	defer func() { BuildStamp = prev }()
+
+	got := String()
+	if !strings.HasPrefix(got, "v"+Version+"+") {
+		t.Errorf("String() = %q; expected leading %q+", got, "v"+Version)
+	}
+	if !strings.HasSuffix(got, "+abc1234") {
+		t.Errorf("String() = %q; expected suffix +abc1234", got)
+	}
+}

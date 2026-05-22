@@ -19,6 +19,29 @@ type LoadOptions struct {
 	AppHome    string // absolute path; defaults to ~/.<AppName>/.
 	WorkDir    string // process cwd; defaults to os.Getwd().
 	AppVersion string // version string for diagnostics; defaults to DefaultAppVersion.
+
+	// EnvAliases maps the caller's preferred env-var names onto evva's
+	// canonical ones BEFORE godotenv.Load runs. Useful when a downstream
+	// app advertises friendlier spellings — e.g. `{"LOGDIR": "LOG_DIR",
+	// "LOGLEVEL": "LOG_LEVEL"}` lets a friday user write either form in
+	// `~/.friday/.env` and have evva's loader pick it up.
+	//
+	// The promotion is non-overriding: an alias only seeds the canonical
+	// name when that canonical name is unset. Existing canonical exports
+	// win, so a deliberate `LOG_DIR=...` is never clobbered by a stray
+	// alias.
+	EnvAliases map[string]string
+
+	// EnvOverrides runs AFTER the YAML + canonical env-vars have built
+	// the Config. Each function gets the populated *Config and can fold
+	// in env vars that don't have a native hook inside Load (e.g.
+	// MAX_ITERS → cfg.SetMaxIterations). The first error short-circuits
+	// the rest and is returned from Load.
+	//
+	// Use this to translate downstream-flavoured env conventions
+	// (APIKEY → cfg.SetProviderCredentials, MAX_ITERS → cfg.SetMaxIterations)
+	// in one place instead of post-Load shim code at every call site.
+	EnvOverrides []func(*Config) error
 }
 
 // LoadDefault returns a Config populated with evva's historical defaults:
@@ -72,11 +95,23 @@ func Load(opts LoadOptions) (*Config, error) {
 		workdir = wd
 	}
 
+	// Promote any caller-declared env-var aliases into evva's canonical
+	// names BEFORE godotenv reads .env. Non-overriding: an existing
+	// canonical export wins.
+	applyEnvAliases(opts.EnvAliases)
+
 	// load deployment-level vars from .env (logging, app env, dir overrides)
 	godotenv.Load(appHome + "/.env")
 
+	// Re-apply aliases after godotenv runs so a .env file using the alias
+	// form (e.g. `LOGDIR=/var/log/friday`) also promotes into the
+	// canonical name. godotenv.Load is non-overriding, so this two-pass
+	// approach lets the alias work whether the user exports it in the
+	// shell or writes it in .env.
+	applyEnvAliases(opts.EnvAliases)
+
 	cfgPath := filepath.Join(appHome, "config", appName+"-config.yml")
-	fileCfg, created, err := LoadFileConfig(cfgPath)
+	fileCfg, created, err := LoadFileConfig(cfgPath, appName)
 	if err != nil {
 		return nil, err
 	}
@@ -143,5 +178,36 @@ func Load(opts LoadOptions) (*Config, error) {
 	setupWorkDirParam(cfg, workdir)
 	setupLLMProviderConfig(cfg, fileCfg)
 
+	// Apply caller-declared env overrides last so they can mutate the
+	// already-populated cfg (e.g. fold MAX_ITERS into DefaultMaxIterations
+	// without a post-Load shim). Short-circuits on first error.
+	for _, fn := range opts.EnvOverrides {
+		if fn == nil {
+			continue
+		}
+		if err := fn(cfg); err != nil {
+			return nil, fmt.Errorf("config: EnvOverrides: %w", err)
+		}
+	}
+
 	return cfg, nil
+}
+
+// applyEnvAliases promotes the values of alias env vars into the
+// canonical names listed in m. Non-overriding: an existing canonical
+// export is never clobbered. Empty values are skipped.
+func applyEnvAliases(m map[string]string) {
+	for alias, canonical := range m {
+		if alias == "" || canonical == "" {
+			continue
+		}
+		v := os.Getenv(alias)
+		if v == "" {
+			continue
+		}
+		if os.Getenv(canonical) != "" {
+			continue
+		}
+		_ = os.Setenv(canonical, v)
+	}
 }

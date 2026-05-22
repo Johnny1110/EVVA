@@ -1,5 +1,9 @@
 # evva — Project Vision and Roadmap
 
+## Important
+
+We are in dev phase now, evva is not released, we could revamp and change api anytime if it should be.
+
 ## Vision
 
 `evva` is a ReAct coding agent for the terminal, written in Go. The architecture follows Claude Code in spirit but keeps the moving parts small on purpose: one narrow `llm.Client` interface bridging multiple providers (Anthropic, DeepSeek, OpenAI, Ollama), one `tools.Tool` interface, one observable store fanning state to any UI implementation, one agent loop.
@@ -313,7 +317,7 @@ Tool family packages move public per the user's "max reuse" choice.
 - notice should store the llm signature for claude. and thinking block for deepseek.
 - correct me if anything is wrong above.
 
-### Phase 15 - Proof evva can work as a agent SDK
+### Phase 15 - Proof evva can work as a agent SDK ✅️
 
 In Phase 13 we revamp evva to let it become a golang agent SDK as well. now we need using evva to build a agent project just like evva
 to proof her ability.
@@ -328,13 +332,130 @@ Goal: proof evva is easy to use as SDK and fast build. and find something we can
 - configurable agent param through ~/.friday/.env like (LOGDIR, LOGLEVEL, APIKEY, MAX_ITERS...)
 - customized agent profile with same tool registry as general type (read, write, edit, bash...) create a simple system prompt for friday.
 
-### Phase 16 — MCP support + bundled skills (v2 tier)
+### Phase 16 - Bash `run_in_background` param implement
+
+Goal: port ref source code to implement evva's bash `run_in_background`
+
+- ToolState add BackgroundTasks which maintain a task list
+- Background tasks status should show on tui to let user see it (subagents bg task should bubble up), Remove when bg task complete or failed (before remove print "task-xxx completed." on the transcript) 
+- crete a `chan` for agent, if a background task finished, return result through this `chan` and proactive invoke agent loop (event driven) and also emit `KindBgResult` by Sink to let tui react.
+  - this `chan` will be shared with Phase-17 monitor, so the sync data should have a type: `bg_result` or `monitor_event`
+  - If agent current status in idle: trigger agent loop with prompt `<system-reminder>background task complete, result: exit code 0 \n {result} </system-reminder>`
+  - If agent current status is busy, update the BackgroundTasks state (store the bg result) wait for next iter `drainBackgroundTaskResult()`
+  - `drainBackgroundTaskResult()` drain background task final result on every agent loop begin, drain a complete or failed result into prompt `<system-reminder>` and remove it from BackgroundTasks, emit event `KindDrainBackgroundTask`
+- be careful about agent status changing (race problem).
+- update agent loop, check drain queue is empty before leave, if not empty, keep that loop again.
+
+### Phase 17 -  MonitorTool
+
+Goal: port ref source code MonitorTool.ts let evva can be a event driven agent.
+
+- Integrate with ToolState.MonitorTasks task status is `monitoring` and MonitorEventQueue.
+- use same `chan` as Phase 16 created. sync event through this chan type is `monitor_event`
+- If agent current status in idle: trigger agent loop with prompt `<system-reminder>monitor task event: {event} </system-reminder>`
+- If agent current status is busy, push the event into MonitorEventQueue waiting for next iter `drainBackgroundTaskResult()`
+- `drainMonitorEvent()` drain monitor event result on every agent loop begin, drain prompt `<system-reminder>` and remove it from BackgroundTasks, emit event `KindDrainBackgroundTask`
+- be careful about agent status changing (race problem).
+
+### Phase 18 — MCP support + bundled skills (v2 tier)
 
 Closes the gap with Claude Code's plugin/skill ecosystem.
 
 - MCP server config + discovery; dynamic tool registration as deferred tools (so `ToolSearch` picks them up).
 - Port `ListMcpResources` / `ReadMcpResource`.
 - Bundle a small set of skills inspired by `ref/src/skills/bundled/`: `/commit`, `/review`, `/security-review`, `/simplify`.
+
+### Phase 19 — SDK Support (professional-grade Agent SDK)
+
+Phase 15 proved evva works as an SDK by building friday on top of it. Building it surfaced a concrete list of friction points (see `docs/evva-sdk/sdk-feedback.md` for the per-finding breakdown). Phase 19 turns those findings — and the cross-cutting "what makes a Go SDK feel professional" items they imply — into shipped surface.
+
+Three principles guide every sub-phase:
+
+1. **Typed > stringly-typed**. Every public enum gets a typed Go type, not a `string` with magic values. Typos become compile errors.
+2. **Helpers > raw maps**. Mutating internal state through a public map slot (today: `cfg.LLMProviderConfig[...] = ...`) is replaced by a thread-safe setter that validates on write.
+3. **Examples are docs**. `example_test.go` files in every public pkg surface make the canonical usage show up on pkg.go.dev — the first place a consumer reads the API.
+
+Phase 19 collapses every legacy / parallel API into its canonical form in one release. evva is still pre-1.0 (dev mode), so a one-line caller migration is cheaper than carrying deprecation aliases through a grace period. The breaking changes from this phase are catalogued in `CHANGELOG.md` under "Breaking" / "Removed."
+
+Ship order: **19a → 19b → 19c → 19d → 19e → 19f**. Each sub-phase is independently testable and shippable.
+
+#### Phase 19a — Event surface polish ✅️
+
+Addresses friday findings #1, #2, #10.
+
+- `pkg/event/event.go`: `ErrorPayload` keeps the typed `Err error` field for callers who need the wrapped error; add a sibling `Message string` populated at emit time so consumers that just want the rendered string don't have to nil-check + call `.Error()`.
+- Rename `IterLimitPayload.Reached` → `IterLimitPayload.Iters` (matching `RunEndPayload.Iters`). Old name removed; one-line caller migration documented in `CHANGELOG.md`.
+- New `func (e Event) Payload() any` method that returns the payload pointer matching `e.Kind` — consumers can switch on `e.Payload().(type)` instead of grepping which of the 20 pointer fields goes with which Kind.
+- Add a single-line doc comment to every `Kind*` const and every `*Payload` struct field so editor hover surfaces the contract.
+
+#### Phase 19b — Config layer polish ✅️
+
+Addresses friday findings #3, #5, #9.
+
+- `pkg/config/config.go`: new `(c *Config) SetProviderCredentials(name, apiURL, apiKey string) error` that takes `c.mu` and assigns the `APIConfig`. Use this over direct `LLMProviderConfig[...]` map assignment.
+- `pkg/config/load.go`: when `LoadFileConfig` seeds a new YAML on first run, write `default_profile: <opts.AppName>` instead of the hardcoded `evva`. Friday-flavoured config no longer leaks evva's name. `LoadFileConfig` signature is now `(path, appName string)` — see CHANGELOG.
+- `pkg/config/load.go`: new `LoadOptions.EnvAliases map[string]string` (e.g. `{"LOGDIR": "LOG_DIR"}`) applied *before* godotenv runs so the user's preferred names map cleanly to evva's canonicals. New `LoadOptions.EnvOverrides []func(*Config) error` runs after Load so vars without a YAML hook (`MAX_ITERS`, etc.) can be folded in without a post-Load shim.
+- Document each new option in `docs/extending.md`.
+
+#### Phase 19c — Agent option ergonomics ✅️
+
+Addresses friday findings #4, #7, #12.
+
+- New exported `agent.PermissionMode` typed string in `pkg/agent`, with constants `agent.PermissionDefault`, `agent.PermissionAcceptEdits`, `agent.PermissionPlan`, `agent.PermissionBypass`. `WithPermissionMode` now takes the typed value — string callers convert at the boundary with `agent.PermissionMode("...")`.
+- New `agent.WithHeadlessBypass()` convenience that bundles `WithPermissionMode(PermissionBypass)` + a strong docstring spelling out *"no approval UI means tool calls auto-succeed; only use in trusted environments."* This is the discoverability fix for the friday footgun.
+- `agent.NewProfile` model argument is now `constant.Model` (typed). String callers wrap with `constant.Model("...")`.
+- Doc comments on every `SessionInfo` field (closes finding #11).
+- Broker promotion (`WithPermissionBroker` / `WithQuestionBroker` to pkg/agent) deferred — needs a `PermissionPrompter` callback design so consumers don't have to import internal broker interfaces. Tracked separately.
+
+#### Phase 19d — Tool kit composition helpers ✅️
+
+Addresses friday finding #6. Every downstream consumer that wants a "general coding agent" today re-types the same `append(fs.Names(), shell.Names()...)` chain. Replace with named kit functions.
+
+- New `pkg/tools/kits/kits.go` (sibling package to avoid a parent-child import cycle with the tool family packages):
+  - `GeneralPurposeKit() (active, deferred []ToolName)` — the canonical kit friday composes by hand today: fs + shell + todo + util + tool_search active, web deferred.
+  - `ReadOnlyKit() []ToolName` — read, grep, glob, tree, web (search + fetch), json_query. Useful for an audit / explore-only agent.
+  - `CodingKit() (active, deferred []ToolName)` — GeneralPurpose + notebook + monitor.
+  - `ResearchKit() []ToolName` — read + grep + glob + tree + web + json_query + calc + todo.
+- Each kit function carries an inline godoc comment listing its members so the consumer can pick the right kit at a glance.
+
+#### Phase 19e — Godoc-visible examples + extending docs ✅️
+
+Addresses friday findings #8, #11 (docs gaps) and elevates the SDK to "looks professional on pkg.go.dev."
+
+Go test files named `example_*_test.go` automatically render on pkg.go.dev as runnable examples. This is the single biggest discoverability win available. New files:
+
+- `pkg/agent/example_test.go` — ExampleNewProfile, ExampleNewWithProfile, ExampleWithHeadlessBypass.
+- `pkg/event/example_test.go` — ExampleSinkFunc (function-shaped sink), ExampleEvent_Payload (type-switch on Payload()), ExampleMulti (fan-out).
+- `pkg/config/example_test.go` — ExampleLoad (custom AppHome), ExampleConfig_SetProviderCredentials.
+- `pkg/tools/kits/example_test.go` — ExampleGeneralPurposeKit, ExampleReadOnlyKit.
+- `pkg/llm/example_test.go` — ExampleRegistry_Register (custom provider).
+
+Documentation pass:
+
+- `docs/extending.md`: section on **Charmbracelet pinning contract** (downstream apps must match evva's bubbletea/bubbles/lipgloss versions or `tea.Program` types diverge — the table of currently-tested versions lives here). Section on **headless permission requirement** with the `WithHeadlessBypass` recommendation. Section on **env-alias usage** for `LoadOptions.EnvAliases`.
+- `pkg/agent/types.go`: doc-comment every `SessionInfo` field. Closes finding #11.
+- Doc-comment every exported symbol in `pkg/event/`, `pkg/config/`, `pkg/agent/` that's currently bare.
+
+#### Phase 19f — Stability tier + release-engineering ✅️ (in code; tag-cut pending)
+
+The release-engineering pass. Consumers need to know which symbols are stable before they can commit to evva.
+
+- New `docs/sdk-stability.md` declaring each `pkg/` package's tier:
+  - **Stable** (post-1.0: breaking changes require a major bump): `pkg/agent`, `pkg/config`, `pkg/event`, `pkg/tools`, `pkg/llm`, `pkg/constant`, `pkg/version`.
+  - **Experimental** (may break in minor versions; documented): `pkg/ui`, `pkg/toolset`, `pkg/observable`, `pkg/tools/kits`.
+  - **Internal helper** (re-exported but not part of the stability contract): `pkg/common`, `pkg/banner`, `pkg/llm/builtins`.
+- New `pkg/version/version.go` with `const Version` + a `BuildStamp` var populated by `-ldflags` at release time. Consumers can log it or assert against it.
+- Repo-root `CHANGELOG.md`. Reverse-chronological. The next-release entry catalogues every additive change from 19a–19e plus the dev-mode cleanup (collapsed `NewProfileTyped` → `NewProfile`, removed `IterLimitPayload.Reached`, etc.).
+- Tag cut deferred — the SDK surface is ready, but the user decides when to flip from pre-1.0 to a v1.0.0 stability promise.
+
+#### Out of scope for Phase 19
+
+Saving these for future phases so the scope stays shippable:
+
+- **Skill SDK** (pkg/skill so downstream can ship custom skills). The skill loader has internal coupling that needs its own decoupling pass.
+- **Custom Kind events** (consumer-declared event kinds). The Phase 13 invariant — "downstream apps cannot add new Kinds" — stays.
+- **Pluggable agent loops**. The loop logic stays in internal/agent for v1.0.
+- **gRPC / network surface**. SDK stays in-process for v1.0.
 
 ---
 

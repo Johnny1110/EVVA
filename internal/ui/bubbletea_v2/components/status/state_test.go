@@ -71,7 +71,7 @@ func TestApplyTracksSubPhases(t *testing.T) {
 // OnSubmit.
 func TestApplyIterLimitSticky(t *testing.T) {
 	s := NewState()
-	s.Apply(event.Event{Kind: event.KindIterLimit, IterLimit: &event.IterLimitPayload{Reached: 30}})
+	s.Apply(event.Event{Kind: event.KindIterLimit, IterLimit: &event.IterLimitPayload{Iters: 30}})
 	if s.Current() != StateIterLimit {
 		t.Fatalf("expected IterLimit after KindIterLimit, got %v", s.Current())
 	}

@@ -25,6 +25,7 @@ import (
 
 	"github.com/johnny1110/evva/pkg/agent"
 	"github.com/johnny1110/evva/pkg/config"
+	"github.com/johnny1110/evva/pkg/constant"
 	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/tools"
@@ -101,7 +102,7 @@ func main() {
 	//    expose the ping tool we register via WithCustomTool below.
 	prof, err := agent.NewProfile("minimal", "you are an echo bot",
 		nil, // ActiveTools — ping is added via WithCustomTool
-		"echo", "echo-v1",
+		"echo", constant.Model("echo-v1"),
 		agent.ProfileOptions{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "NewProfile:", err)
@@ -116,7 +117,7 @@ func main() {
 		agent.WithCustomTool("ping", func(tools.State) (tools.Tool, error) {
 			return pingTool{}, nil
 		}),
-		agent.WithPermissionMode("bypass"),
+		agent.WithPermissionMode(agent.PermissionBypass),
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "NewWithProfile:", err)

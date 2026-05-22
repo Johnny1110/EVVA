@@ -564,7 +564,7 @@ func (t *Transcript) IngestEvent(e event.Event) bool {
 	case event.KindIterLimit:
 		if e.IterLimit != nil {
 			t.resetInflight()
-			t.appendKeepingSprite(newIterLimitBlock(e.IterLimit.Reached))
+			t.appendKeepingSprite(newIterLimitBlock(e.IterLimit.Iters))
 			return true
 		}
 	}

@@ -23,7 +23,7 @@ import (
 //
 //	prof, _ := agent.NewProfile("custom", "you are helpful",
 //	    []tools.ToolName{tools.READ_FILE, tools.BASH},
-//	    "anthropic", "claude-sonnet-4-6",
+//	    "anthropic", constant.CLAUDE_SONNET_4_6,
 //	    agent.ProfileOptions{})
 //
 //	ag, _ := agent.NewWithProfile(prof,

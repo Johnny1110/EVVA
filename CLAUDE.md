@@ -365,7 +365,7 @@ Closes the gap with Claude Code's plugin/skill ecosystem.
 - Port `ListMcpResources` / `ReadMcpResource`.
 - Bundle a small set of skills inspired by `ref/src/skills/bundled/`: `/commit`, `/review`, `/security-review`, `/simplify`.
 
-### Phase 19 — SDK Support (professional-grade Agent SDK)
+### Phase 19 — SDK Support (professional-grade Agent SDK) ✅️
 
 Phase 15 proved evva works as an SDK by building friday on top of it. Building it surfaced a concrete list of friction points (see `docs/evva-sdk/sdk-feedback.md` for the per-finding breakdown). Phase 19 turns those findings — and the cross-cutting "what makes a Go SDK feel professional" items they imply — into shipped surface.
 
@@ -377,7 +377,7 @@ Three principles guide every sub-phase:
 
 Phase 19 collapses every legacy / parallel API into its canonical form in one release. evva is still pre-1.0 (dev mode), so a one-line caller migration is cheaper than carrying deprecation aliases through a grace period. The breaking changes from this phase are catalogued in `CHANGELOG.md` under "Breaking" / "Removed."
 
-Ship order: **19a → 19b → 19c → 19d → 19e → 19f**. Each sub-phase is independently testable and shippable.
+Ship order: **19a → 19b → 19c → 19d → 19e → 19f → 19g**. Each sub-phase is independently testable and shippable. 19a–19f shipped as evva `v0.2.4-alpha.2`; 19g (round-2 friday follow-up) shipped as `v0.2.4-alpha.3` after a fresh friday rebuild surfaced day-2 ergonomics gaps.
 
 #### Phase 19a — Event surface polish ✅️
 
@@ -447,6 +447,23 @@ The release-engineering pass. Consumers need to know which symbols are stable be
 - New `pkg/version/version.go` with `const Version` + a `BuildStamp` var populated by `-ldflags` at release time. Consumers can log it or assert against it.
 - Repo-root `CHANGELOG.md`. Reverse-chronological. The next-release entry catalogues every additive change from 19a–19e plus the dev-mode cleanup (collapsed `NewProfileTyped` → `NewProfile`, removed `IterLimitPayload.Reached`, etc.).
 - Tag cut deferred — the SDK surface is ready, but the user decides when to flip from pre-1.0 to a v1.0.0 stability promise.
+
+#### Phase 19g — Round 2 friday follow-up ✅️
+
+Shipped as evva `v0.2.4-alpha.3`. Friday's rebuild on alpha.2 surfaced 6 fresh day-2 findings (`friday/docs/sdk-feedback.md` Round 2). Five landed here; one (R2-6, broker promotion) is carried forward to a future phase along with the same deferral noted in 19c.
+
+Theme: **`LoadOptions` becomes the single declarative surface** for host-driven runtime tuning. Instead of pre/post-Load shim functions sprinkled around `Load()` calls, every "what does this app want from its environment" detail lives inside one `LoadOptions{...}` literal.
+
+- `LoadOptions.EnvOverrides` type changed from `[]func(*Config) error` to `[]EnvOverride{Name, Fn}` (R2-1). Wrapped error names the failing override — `config: EnvOverrides[deepseek_creds]: <err>` — so a host with several overrides can identify the culprit without grepping. Empty Name rejected at Load time.
+- New `LoadOptions.ProviderCredentials map[string]ProviderCredsFromEnv` (R2-2). Reads env vars (after EnvAliases promotion) and calls `cfg.SetProviderCredentials` for each entry. Replaces the alias-env + EnvOverride-that-reads-it + setter three-step dance every downstream app used to write by hand.
+- New `LoadOptions.SeedEnvTemplate string` (R2-3). Written to `<AppHome>/.env` on first launch when the file is missing; never overwrites. Closes the chicken-and-egg gap where evva auto-created the YAML but left the user to discover `.env` themselves.
+- New `kits.GeneralPurposeActive() []ToolName` sibling (R2-4). Returns the active half of the general-purpose kit WITHOUT `tool_search`, for callers who drop the deferred companion (`tool_search` active with nothing deferred is pure overhead). `GeneralPurposeKit()` remains the canonical default.
+- New `version.Bare() string` (R2-5). Returns unprefixed semver (`0.2.4-alpha.3`) for hosts that compose their own tag formats (`evva 0.2.4-alpha.3` rather than `evva v0.2.4-alpha.3`). Respects SemVer 2.0 `+<stamp>` build-metadata.
+- `docs/extending.md` gains a "LoadOptions — the declarative host surface" section with a per-field table.
+
+Friday's bootstrap shrunk from 135 → 125 LOC adopting 19g (21% smaller since round 1 alpha.1). The `applyDeepSeekCreds` helper is gone entirely — credentials wire inline through `ProviderCredentials`.
+
+R2-6 (broker promotion / `PermissionPrompter` callback shape) stays deferred — same blocker as 19c (the callback type needs design before exposure). Tracked.
 
 #### Out of scope for Phase 19
 

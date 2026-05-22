@@ -2,10 +2,11 @@
 // EnterPlanMode / ExitPlanMode (read-only planning) and
 // EnterWorktree / ExitWorktree (filesystem-isolated worktrees).
 //
-// EnterPlanMode and ExitPlanMode are wired through a PlanModeController
-// supplied by the agent — they mutate the owning agent's permission mode
-// and read the plan-file path off its workdir. The Worktree pair remains
-// stubbed pending Phase 10.
+// Each pair is wired through a narrow controller supplied by the agent:
+// PlanModeController mutates the owning agent's permission mode and reads
+// the plan-file path off its workdir; WorktreeController switches the
+// agent's workdir into / out of a git worktree and rebuilds workdir-bound
+// active tools. See worktree.go / worktree_controller.go.
 package mode
 
 import (
@@ -385,42 +386,3 @@ func resolveController(lookup ControllerLookup) PlanModeController {
 	return lookup()
 }
 
-// --- Worktree stubs ---------------------------------------------------
-//
-// Phase 10 will replace these with real implementations. Until then the
-// descriptions and schemas stay accurate so ToolSearch / the deferred
-// catalog renders sensible info.
-
-var (
-	EnterWorktree tools.Tool = tools.NewStub(
-		tools.ENTER_WORKTREE,
-		"Create an isolated git worktree and switch the session into it. "+
-			"Use ONLY when the user explicitly says \"worktree\" or EVVA.md/memory instructs it. "+
-			"Do not use for ordinary branch work. "+
-			"Pass `path` to enter an existing worktree instead of creating one.",
-		`{
-			"type":"object",
-			"additionalProperties":false,
-			"properties":{
-				"name":{"type":"string","description":"Optional name for a new worktree. Each \"/\"-separated segment may contain only letters, digits, dots, underscores, and dashes; max 64 chars total. Mutually exclusive with path."},
-				"path":{"type":"string","description":"Path to an existing worktree of the current repository to switch into. Must appear in git worktree list. Mutually exclusive with name."}
-			}
-		}`,
-	)
-
-	ExitWorktree tools.Tool = tools.NewStub(
-		tools.EXIT_WORKTREE,
-		"Exit a worktree session created by EnterWorktree and return to the original working directory. "+
-			"No-op if no worktree session is active. "+
-			"Only operates on worktrees created by EnterWorktree in this session — never touches manually-created worktrees.",
-		`{
-			"type":"object",
-			"additionalProperties":false,
-			"required":["action"],
-			"properties":{
-				"action":{"type":"string","enum":["keep","remove"],"description":"\"keep\" leaves the worktree and branch on disk; \"remove\" deletes both."},
-				"discard_changes":{"type":"boolean","description":"Required true when action is \"remove\" and the worktree has uncommitted files or unmerged commits."}
-			}
-		}`,
-	)
-)

@@ -197,13 +197,14 @@ Design points:
 - Port ref source code tool desgin and prompt (especially agent system prompt),
 - I'm not sure should we inject project memory into the system prompt, or just let agent know where to find it.
 
-### Phase 10 — Worktree tools (EnterWorktree / ExitWorktree)
+### Phase 10 — Worktree tools (EnterWorktree / ExitWorktree) ✅️
 
 Niche. Ship after the higher-leverage phases.
 
 - Port `ref/src/tools/EnterWorktreeTool/prompt.ts` + `ExitWorktreeTool/prompt.ts`.
 - Implement `git worktree add / remove` plumbing.
 - Wire AgentTool's `isolation: "worktree"` parameter to the same code path.
+- Update agent(Main, General) system prompt 
 
 ### Phase  11 - Refine the Agent System Prompt  ✅️
 
@@ -312,8 +313,22 @@ Tool family packages move public per the user's "max reuse" choice.
 - notice should store the llm signature for claude. and thinking block for deepseek.
 - correct me if anything is wrong above.
 
+### Phase 15 - Proof evva can work as a agent SDK
 
-### Phase 15 — MCP support + bundled skills (v2 tier)
+In Phase 13 we revamp evva to let it become a golang agent SDK as well. now we need using evva to build a agent project just like evva
+to proof her ability.
+
+Requirement: build a ReAct agent with evva SDK out of evva workdir -> `/mnt/friday`
+
+Goal: proof evva is easy to use as SDK and fast build. and find something we can improve for evva SDK.
+
+- simple tui (bubbletea) allow user chat with agent friday and give agent order.
+- llm provider default is deekseek + deepseekv4-pro model
+- friday global home:` ~/.friday/` workdir home: `<repo>/.friday/` 
+- configurable agent param through ~/.friday/.env like (LOGDIR, LOGLEVEL, APIKEY, MAX_ITERS...)
+- customized agent profile with same tool registry as general type (read, write, edit, bash...) create a simple system prompt for friday.
+
+### Phase 16 — MCP support + bundled skills (v2 tier)
 
 Closes the gap with Claude Code's plugin/skill ecosystem.
 

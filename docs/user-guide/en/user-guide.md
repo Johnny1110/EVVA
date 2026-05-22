@@ -15,6 +15,7 @@
 - [6. Permission System](#6-permission-system)
   - [Permission Modes](#permission-modes)
   - [Plan Mode (`enter_plan_mode` / `exit_plan_mode`)](#plan-mode-enter_plan_mode--exit_plan_mode)
+  - [Worktrees (`enter_worktree` / `exit_worktree`)](#worktrees-enter_worktree--exit_worktree)
   - [Approval Prompts](#approval-prompts)
   - [Permission Rules](#permission-rules)
 - [7. Sub-agents and Personas](#7-sub-agents-and-personas)
@@ -397,6 +398,30 @@ Plan mode is `permission_mode: plan` with two model-callable tools that automate
 - The model is told `exit_plan_mode` IS the approval signal — it must not call `ask_user_question` to ask "is this plan okay?".
 - Subagents can't flip the parent session's plan mode — `enter_plan_mode` / `exit_plan_mode` are root-agent only.
 - Plan files persist after exit; the next `enter_plan_mode` truncates them. To keep a plan around, copy `current.md` out of `.evva/plans/` before re-entering plan mode.
+
+### Worktrees (`enter_worktree` / `exit_worktree`)
+
+A worktree is a parallel checkout of the same git repository on a separate branch, living in its own directory. Use one when you want a sandbox: a risky refactor, a destructive experiment, a parallel feature branch you can throw away.
+
+The model **only** invokes these tools when you explicitly say "worktree" — phrases like *"start a worktree"*, *"work in a worktree called demo"*, *"exit the worktree"*. Anything more ambiguous (*"branch off"*, *"refactor this"*) keeps the session on the original workdir.
+
+**The workflow:**
+
+1. **Enter** — model calls `enter_worktree` (optionally with a `name`). evva runs `git worktree add -b worktree-<slug> <repo>/.evva/worktrees/<slug>/ HEAD` and switches the session's working directory to the new worktree. Subsequent `read` / `edit` / `write` / `bash` calls run in the worktree — the original directory is untouched.
+2. **Work** — drive the session normally. Reads, edits, commits all happen inside the worktree on its own branch.
+3. **Exit** — when done, model calls `exit_worktree` with `action: "keep"` or `action: "remove"`:
+   - `"keep"` — the worktree directory and branch stay on disk. Useful if you want to come back to the work or merge it later.
+   - `"remove"` — runs `git worktree remove --force` and deletes the branch. If the worktree has uncommitted changes the tool refuses unless you explicitly say *"remove, discard the changes"* (the model re-invokes with `discard_changes: true`).
+4. The session is restored to the original directory; EVVA.md and the system prompt rebuild against the original workdir.
+
+**Subagent isolation** — the `agent` tool accepts `isolation: "worktree"`. Spawning a subagent with that flag creates a per-subagent worktree under `.evva/worktrees/agent-<id>/` and the child runs entirely inside it. On a clean exit (no file changes, no commits) evva auto-removes the worktree; otherwise it stays on disk and the subagent's result reports `worktree_path:` / `worktree_branch:` so you can inspect or merge.
+
+**Notes:**
+
+- Worktrees live at `<repo>/.evva/worktrees/<slug>/`. Add `.evva/` to `.gitignore` if you don't already.
+- Plan mode denies `enter_worktree` / `exit_worktree` (they're not in the read-only safelist). Exit plan mode first if you want to start one.
+- Subagents can't enter a worktree mid-session — only the root agent can. The AgentTool's `isolation` parameter is the way to put a subagent inside a worktree.
+- Worktrees have no `.worktreeinclude` support in v1 — gitignored files (`.env`, local config) are NOT copied into the new worktree. Set them up by hand in the worktree if needed.
 
 ### Approval Prompts
 

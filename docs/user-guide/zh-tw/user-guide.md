@@ -15,6 +15,7 @@
 - [6. 權限系統](#6-權限系統)
   - [權限模式](#權限模式)
   - [計畫模式（`enter_plan_mode` / `exit_plan_mode`)](#計畫模式enter_plan_mode--exit_plan_mode)
+  - [工作樹（`enter_worktree` / `exit_worktree`)](#工作樹enter_worktree--exit_worktree)
   - [核准提示](#核准提示)
   - [權限規則](#權限規則)
 - [7. 子代理與人格](#7-子代理與人格)
@@ -396,6 +397,30 @@ permission_mode: default     # default | accept_edits | plan | bypass
 - 系統提示已告知模型：`exit_plan_mode` 就是核准信號，絕不能用 `ask_user_question` 問「這個計畫可以嗎？」。
 - 子代理無法翻轉父 session 的計畫模式 — `enter_plan_mode` / `exit_plan_mode` 僅限根代理使用。
 - 計畫檔在退出後仍會保留；下一次 `enter_plan_mode` 會清空它。若想保留某份計畫，請在重新進入計畫模式前先把 `current.md` 複製出 `.evva/plans/`。
+
+### 工作樹（`enter_worktree` / `exit_worktree`）
+
+工作樹（worktree）是同一個 git 倉庫在另一個分支上的平行 checkout，存放於獨立目錄。在你想要一個隔離的沙箱時使用：高風險的重構、會破壞性的實驗、想隨時可以丟棄的平行 feature 分支。
+
+模型**只**會在你明確說出「worktree」時才呼叫這對工具 — 像是「開個 worktree」、「在叫 demo 的 worktree 裡做」、「離開 worktree」。比較模糊的說法（「切個分支」、「重構這段」）會讓 session 留在原本的 workdir。
+
+**工作流程：**
+
+1. **進入** — 模型呼叫 `enter_worktree`（可選擇傳入 `name`）。evva 執行 `git worktree add -b worktree-<slug> <repo>/.evva/worktrees/<slug>/ HEAD` 並將 session 的工作目錄切到新工作樹。之後的 `read` / `edit` / `write` / `bash` 都在工作樹中執行 — 原本目錄完全不會被動到。
+2. **工作** — 正常驅動 session。讀檔、編輯、提交都發生在工作樹的獨立分支上。
+3. **退出** — 完成後，模型呼叫 `exit_worktree`，搭配 `action: "keep"` 或 `action: "remove"`：
+   - `"keep"` — 工作樹目錄與分支留在磁碟上。想之後回來繼續或合併時用這個。
+   - `"remove"` — 執行 `git worktree remove --force` 並刪除分支。若工作樹中有未提交的變更，除非你明確說「移除並丟棄變更」（模型會以 `discard_changes: true` 重新呼叫），否則工具會拒絕。
+4. Session 還原至原始目錄；EVVA.md 與系統提示會以原 workdir 重建。
+
+**子代理隔離** — `agent` 工具接受 `isolation: "worktree"`。以該旗標 spawn 一個子代理時，會在 `.evva/worktrees/agent-<id>/` 下建立屬於該子代理的工作樹，子代理整個生命週期都跑在裡面。若乾淨退出（沒有檔案變動、沒有新提交），evva 會自動移除工作樹；否則保留在磁碟，子代理結果裡會回報 `worktree_path:` / `worktree_branch:`，方便你檢視或合併。
+
+**注意事項：**
+
+- 工作樹位於 `<repo>/.evva/worktrees/<slug>/`。如果還沒把 `.evva/` 加進 `.gitignore`，建議加上。
+- 計畫模式會拒絕 `enter_worktree` / `exit_worktree`（它們不在唯讀白名單裡）。需要新建工作樹時請先退出計畫模式。
+- 子代理無法在中途自行進入工作樹 — 僅根代理可以呼叫工具對。AgentTool 的 `isolation` 參數才是讓子代理跑在工作樹裡的官方做法。
+- v1 沒有 `.worktreeinclude` 支援 — 被 gitignore 的檔案（`.env`、本機設定）不會自動複製到新工作樹。需要時請在工作樹裡手動建立。
 
 ### 核准提示
 

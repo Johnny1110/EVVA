@@ -29,6 +29,16 @@ type SpawnRequest struct {
 	Level int
 
 	AsyncMode bool // default = false
+
+	// Isolation selects a filesystem-isolation strategy for the spawned
+	// subagent. Empty (the default) inherits the parent's workdir.
+	// "worktree" provisions a git worktree under
+	// `<repo>/.evva/worktrees/<slug>/` on a fresh branch and configures
+	// the child to run there — its filesystem mutations stay off the
+	// host workdir. The post-spawn cleanup auto-removes the worktree
+	// when the child made no changes; otherwise the path and branch
+	// are surfaced back to the parent so the user can inspect.
+	Isolation string
 }
 
 // SubagentSpawner is the agent-layer dependency that the AGENT tool calls

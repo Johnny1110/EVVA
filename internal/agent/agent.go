@@ -20,6 +20,7 @@ import (
 	"github.com/johnny1110/evva/internal/permission"
 	"github.com/johnny1110/evva/internal/question"
 	"github.com/johnny1110/evva/internal/session"
+	"github.com/johnny1110/evva/internal/tools/mode"
 	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/internal/toolset"
@@ -107,12 +108,22 @@ type Agent struct {
 	// ExitPlanMode consistent — see permission.Transition.
 	planModeState *permission.PlanModeState
 
-	// workdir is the agent's process working directory, captured once at
-	// construction. Used by the permission gate's plan-file carve-out and
-	// by EnterPlanMode to compute the plan-file path. Stays stable for the
-	// life of the agent — Bash `cd` commands change the shell's cwd but
-	// never the Go process's.
-	workdir string
+	// workdir is the agent's logical working directory. Captured once at
+	// construction (from cfg.WorkDir if set, otherwise os.Getwd) and
+	// mutated only by SwitchWorkdir — invoked by EnterWorktree /
+	// ExitWorktree to swap into and out of a `.evva/worktrees/<slug>/`
+	// path. Bash `cd` commands change the shell's cwd but never this
+	// field; the workdir-bound tools (Bash, fs Read/Write/Edit/Glob)
+	// read this value through ToolState at construction and the agent
+	// rebuilds them when the workdir changes.
+	workdir   string
+	workdirMu sync.RWMutex
+
+	// worktreeSession carries the active EnterWorktree-bound session
+	// state, or nil if the agent isn't in a worktree. Set by
+	// BeginWorktreeSession (called from the EnterWorktree tool) and
+	// cleared by EndWorktreeSession (called from ExitWorktree).
+	worktreeSession atomic.Pointer[mode.WorktreeSession]
 
 	// cfg is the runtime configuration this agent reads from. Injected via
 	// WithConfig at construction; defaults to config.Get() when no option is
@@ -219,6 +230,18 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	if a.cfg == nil {
 		a.cfg = config.Get()
 	}
+	// If the caller injected a Config with a non-empty WorkDir (the
+	// AgentTool isolation path does this so a subagent runs inside a
+	// pre-created worktree), that value wins over the os.Getwd captured
+	// before options ran. Symmetric: cfg.WorkDir gets backfilled when
+	// it was empty, so toolset accessors see the same path regardless
+	// of which side wrote it first.
+	if a.cfg.WorkDir != "" {
+		a.workdir = a.cfg.WorkDir
+	} else {
+		a.cfg.WorkDir = a.workdir
+	}
+
 	// Plumb cfg into the ToolState so tools that need runtime settings
 	// (web tools, fs glob, dev/feedback) read through the state pointer
 	// rather than a global accessor. Must happen before toolset.Build so
@@ -284,9 +307,10 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	// surface clear errors instead of recursing or exposing the wrong
 	// agent's allowlist.
 	if !a.IsSubagent() {
-		a.toolState.SetSubagentSpawner(a) // only main agent can have spawner.
-		a.toolState.SetDeferredLookup(a)  // only main agent can have deferred tool lookup.
-		a.toolState.SetPlanController(a)  // only main agent can flip plan mode.
+		a.toolState.SetSubagentSpawner(a)    // only main agent can have spawner.
+		a.toolState.SetDeferredLookup(a)     // only main agent can have deferred tool lookup.
+		a.toolState.SetPlanController(a)     // only main agent can flip plan mode.
+		a.toolState.SetWorktreeController(a) // only main agent can enter/exit a worktree.
 	}
 	// Question broker is process-wide and shared by root and subagents alike.
 	a.toolState.SetQuestionBroker(a.questionBroker)
@@ -715,11 +739,128 @@ func (a *Agent) PermissionBroker() permission.Broker { return a.permissionBroker
 // interface, not the full *Agent.
 func (a *Agent) Broker() permission.Broker { return a.permissionBroker }
 
-// Workdir returns the process working directory the agent captured at
-// construction. Used by the permission gate's plan-file carve-out and by
-// the EnterPlanMode tool to compute the plan-file path. Empty when
-// os.Getwd failed at startup (unusual).
-func (a *Agent) Workdir() string { return a.workdir }
+// Workdir returns the agent's current logical working directory. Used
+// by the permission gate's plan-file carve-out, the EnterPlanMode tool's
+// plan-file path, and the workdir-bound tool factories (Bash, fs). May
+// change at runtime when EnterWorktree / ExitWorktree fires — read
+// through this accessor each time you need it, don't cache.
+func (a *Agent) Workdir() string {
+	a.workdirMu.RLock()
+	defer a.workdirMu.RUnlock()
+	return a.workdir
+}
+
+// SwitchWorkdir mutates the agent's workdir and rebuilds every
+// workdir-sensitive piece of session state in lockstep:
+//
+//  1. updates a.workdir and a.cfg.WorkDir so toolset accessors see the
+//     new path immediately;
+//  2. reloads the EVVA.md + USER_PROFILE.md snapshot from the new
+//     workdir;
+//  3. rebuilds the active-tools map so fs Read/Write/Edit/Glob and Bash
+//     (which captured the OLD workdir at construction) point at the new
+//     path;
+//  4. re-renders the system prompt against the new memory snapshot and
+//     applies it to the live LLM client.
+//
+// The session transcript is preserved — a worktree switch is a workdir
+// move, not a persona change. Returns ErrRunInProgress if the agent is
+// mid-Run (a tool changing workdir while the loop reads a.active would
+// race); callers from inside tool Execute are already serialised with
+// the loop, so this only blocks reentrant API misuse.
+//
+// Subagents reject SwitchWorkdir — the AgentTool isolation path sets
+// the child's workdir at construction; mid-life changes are reserved
+// for the root agent.
+func (a *Agent) SwitchWorkdir(path string) error {
+	if a.IsSubagent() {
+		return fmt.Errorf("agent: only the root agent can switch workdir")
+	}
+	if path == "" {
+		return fmt.Errorf("agent: workdir path is required")
+	}
+
+	a.workdirMu.Lock()
+	prev := a.workdir
+	a.workdir = path
+	a.workdirMu.Unlock()
+
+	if a.cfg != nil {
+		a.cfg.WorkDir = path
+	}
+
+	// Reload the workdir-bound memory snapshot. AppHome / user-profile
+	// stay stable across the switch; only EVVA.md and project memory
+	// change.
+	enableAuto := false
+	if a.cfg != nil {
+		enableAuto = a.cfg.GetEnableAutoMemory()
+	}
+	appHome := ""
+	if a.cfg != nil {
+		appHome = a.cfg.AppHome
+	}
+	a.memSnap = memdir.Load(path, appHome, enableAuto)
+
+	// Rebuild active tools so workdir-bound factories pick up the new
+	// path. The toolState (and its registered observers) is reused — UI
+	// panels stay subscribed across the switch.
+	exposeTools, err := toolset.Build(a.profile.ActiveTools, a.toolState)
+	if err != nil {
+		// Roll back the workdir on failure so the agent stays consistent.
+		a.workdirMu.Lock()
+		a.workdir = prev
+		a.workdirMu.Unlock()
+		if a.cfg != nil {
+			a.cfg.WorkDir = prev
+		}
+		return fmt.Errorf("agent: rebuild tools for new workdir: %w", err)
+	}
+	active := make(map[string]tools.Tool, len(exposeTools))
+	for _, t := range exposeTools {
+		active[t.Name()] = t
+	}
+	a.resolveMu.Lock()
+	a.active = active
+	a.exposeTools = exposeTools
+	a.resolveMu.Unlock()
+
+	// Re-render the system prompt against the new memory snapshot. Reuse
+	// ResolveMainProfile so disk personas refresh the same way the
+	// built-in does.
+	if a.cfg != nil && a.activePersona != "" {
+		newProfile, perr := ResolveMainProfile(a.cfg, a.agentRegistry, a.activePersona, a.skillRefs, a.memSnap, baseLLMOptions(a.profile.LLMOptions))
+		if perr == nil {
+			a.profile.SystemPrompt = newProfile.SystemPrompt
+			a.profile.LLMOptions = newProfile.LLMOptions
+			a.llm.Apply(llm.WithSystem(newProfile.SystemPrompt))
+		} else {
+			a.logger.Warn("agent: rebuild sysprompt on workdir switch", "err", perr)
+		}
+	}
+
+	a.logger.Info("agent: workdir switched", "prev", prev, "new", path)
+	return nil
+}
+
+// WorktreeSession returns the active worktree session, or nil if the
+// agent isn't currently in one. Satisfies mode.WorktreeController.
+func (a *Agent) WorktreeSession() *mode.WorktreeSession {
+	return a.worktreeSession.Load()
+}
+
+// BeginWorktreeSession records that the agent has entered a worktree.
+// Called by the EnterWorktree tool after a successful SwitchWorkdir.
+func (a *Agent) BeginWorktreeSession(s mode.WorktreeSession) {
+	a.worktreeSession.Store(&s)
+}
+
+// EndWorktreeSession clears the active worktree session. Called by the
+// ExitWorktree tool after a successful SwitchWorkdir back to the
+// original workdir (whether the worktree was kept or removed).
+func (a *Agent) EndWorktreeSession() {
+	a.worktreeSession.Store(nil)
+}
 
 // PrePlanMode returns the mode that was active immediately before plan
 // mode became active. Empty until the first plan-mode entry; ExitPlanMode

@@ -152,6 +152,52 @@ type Config struct {
 	saveMu sync.Mutex
 }
 
+// Clone returns a shallow copy of c with fresh mutexes. Used by callers
+// that need to override a small subset of fields (notably WorkDir) for a
+// scoped agent — the AgentTool isolation path does this so a subagent
+// can run with cfg.WorkDir = <worktree path> while the parent keeps its
+// own. The copy reads through c.mu so concurrent mutations don't tear
+// across fields.
+//
+// "Shallow" — the LLMProviderConfig map is reused by reference. That's
+// safe today because providers are loaded once at boot and never mutated
+// after; if that invariant ever changes, this method should deep-copy
+// the map.
+func (c *Config) Clone() *Config {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	clone := &Config{
+		OS:                   c.OS,
+		LogLevel:             c.LogLevel,
+		LogFormat:            c.LogFormat,
+		LogDir:               c.LogDir,
+		AppEnv:               c.AppEnv,
+		AppName:              c.AppName,
+		AppVersion:           c.AppVersion,
+		AppHome:              c.AppHome,
+		AppHomeSkillsDir:     c.AppHomeSkillsDir,
+		AppHomeUserProfile:   c.AppHomeUserProfile,
+		AppHomeConfigFile:    c.AppHomeConfigFile,
+		AutoCompactThreshold: c.AutoCompactThreshold,
+		WorkDir:              c.WorkDir,
+		WorkDirSkillsDir:     c.WorkDirSkillsDir,
+		LLMProviderConfig:    c.LLMProviderConfig,
+		DefaultProvider:      c.DefaultProvider,
+		DefaultModel:         c.DefaultModel,
+		DefaultEffort:        c.DefaultEffort,
+		DefaultProfile:       c.DefaultProfile,
+		PermissionMode:       c.PermissionMode,
+		LoadedAt:             c.LoadedAt,
+		DefaultMaxIterations: c.DefaultMaxIterations,
+		DefaultMaxTokens:     c.DefaultMaxTokens,
+		DisplayThinking:      c.DisplayThinking,
+		EnableAutoMemory:     c.EnableAutoMemory,
+		TavilyAPIKey:         c.TavilyAPIKey,
+		FetchMaxBytes:        c.FetchMaxBytes,
+	}
+	return clone
+}
+
 // GetDisplayThinking returns the current DisplayThinking flag under the
 // read lock. Agent code reads this every turn (state_machine.go,
 // stream.go); the UI may write it via /config.

@@ -61,6 +61,8 @@ func TestToolNamesAppearInMainPrompt(t *testing.T) {
 		tools.ASK_USER_QUESTION,
 		tools.ENTER_PLAN_MODE,
 		tools.EXIT_PLAN_MODE,
+		tools.ENTER_WORKTREE,
+		tools.EXIT_WORKTREE,
 		tools.UPDATE_USER_PROFILE,
 		tools.UPDATE_PROJECT_MEMORY,
 	}

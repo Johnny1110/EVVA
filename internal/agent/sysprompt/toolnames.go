@@ -33,6 +33,8 @@ const (
 	nameAskUserQ      = "ask_user_question"
 	nameEnterPlanMode = "enter_plan_mode"
 	nameExitPlanMode  = "exit_plan_mode"
+	nameEnterWorktree = "enter_worktree"
+	nameExitWorktree  = "exit_worktree"
 
 	// Auto-memory tools — see internal/tools/memory.
 	nameUpdateUserProfile   = "update_user_profile"

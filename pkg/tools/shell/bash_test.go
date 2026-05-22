@@ -22,7 +22,7 @@ import (
 //   - ctx cancellation returns IsError plus go-level error
 
 func TestBash_RejectsEmptyCommand(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"command":"   "}`))
 	if !res.IsError || !strings.Contains(res.Content, "required") {
 		t.Errorf("expected 'required' error; got isErr=%v content=%q", res.IsError, res.Content)
@@ -30,7 +30,7 @@ func TestBash_RejectsEmptyCommand(t *testing.T) {
 }
 
 func TestBash_RejectsRunInBackground(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"command":"echo hi","run_in_background":true}`))
 	if !res.IsError || !strings.Contains(res.Content, "run_in_background") {
@@ -39,7 +39,7 @@ func TestBash_RejectsRunInBackground(t *testing.T) {
 }
 
 func TestBash_HappyPath_ReturnsStdout(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	res, err := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"command":"echo hello-world"}`))
 
@@ -55,7 +55,7 @@ func TestBash_HappyPath_ReturnsStdout(t *testing.T) {
 }
 
 func TestBash_NonZeroExitIsError(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	// `exit 7` returns code 7 with no stdout.
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"command":"exit 7"}`))
@@ -69,7 +69,7 @@ func TestBash_NonZeroExitIsError(t *testing.T) {
 }
 
 func TestBash_StderrFoldedIntoContent(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	// `>&2 echo foo` writes to stderr; BashTool merges stdout+stderr.
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"command":">&2 echo to-stderr"}`))
@@ -82,7 +82,7 @@ func TestBash_StderrFoldedIntoContent(t *testing.T) {
 }
 
 func TestBash_TimeoutTriggersError(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	// timeout=200ms; sleep 5 → must time out promptly.
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"command":"sleep 5","timeout":200}`))
@@ -97,7 +97,7 @@ func TestBash_TimeoutCappedAtMax(t *testing.T) {
 	// clamps). We can't observe the clamped duration from outside without
 	// timing-sensitive flakes, so the smoke test is "does the call still
 	// succeed for a fast command when an absurd timeout is supplied".
-	tool := &BashTool{}
+	tool := NewBash("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
 		json.RawMessage(`{"command":"echo ok","timeout":999999999999}`))
 	if res.IsError {
@@ -109,7 +109,7 @@ func TestBash_TimeoutCappedAtMax(t *testing.T) {
 }
 
 func TestBash_ContextCancelledReturnsError(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
 
@@ -124,7 +124,7 @@ func TestBash_ContextCancelledReturnsError(t *testing.T) {
 }
 
 func TestBash_DecodeError(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{not json`))
 	if !res.IsError || !strings.Contains(res.Content, "decode") {
 		t.Errorf("expected decode error; got isErr=%v content=%q", res.IsError, res.Content)
@@ -140,7 +140,7 @@ func TestBash_DecodeError(t *testing.T) {
 // We assert the call returns inside a small bound (250ms timeout +
 // 2s WaitDelay grace + 1s slack) and surfaces the "timed out" error.
 func TestBash_TimeoutKillsSubprocessTree(t *testing.T) {
-	tool := &BashTool{}
+	tool := NewBash("")
 	deadline := time.After(5 * time.Second)
 	done := make(chan struct {
 		res    tools.Result
@@ -173,11 +173,33 @@ func TestBash_TimeoutKillsSubprocessTree(t *testing.T) {
 	}
 }
 
+func TestBash_HonorsWorkdir(t *testing.T) {
+	// NewBash(dir) must cause every exec to run with cmd.Dir = dir so
+	// each agent (including subagents spawned with isolation: "worktree")
+	// sees its own working directory.
+	dir := t.TempDir()
+	tool := NewBash(dir)
+	res, err := tool.Execute(context.Background(), tools.NopLogger(),
+		json.RawMessage(`{"command":"pwd"}`))
+	if err != nil {
+		t.Fatalf("unexpected go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected IsError; content=%q", res.Content)
+	}
+	// On macOS, t.TempDir() returns a path under /var/folders/... but
+	// /var is a symlink to /private/var, so `pwd` may report the
+	// resolved /private/... form. Accept either.
+	if !strings.Contains(res.Content, dir) && !strings.Contains(res.Content, strings.TrimPrefix(dir, "/var")) {
+		t.Errorf("pwd should report the configured workdir %q; got %q", dir, res.Content)
+	}
+}
+
 func TestBash_DefaultTimeoutAppliedWhenZero(t *testing.T) {
 	// timeout=0 should fall through to default (2 min). We don't wait
 	// 2 min — just verify a quick command still works when timeout is
 	// passed as 0 (defensive against the "<= 0" branch silently breaking).
-	tool := &BashTool{}
+	tool := NewBash("")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

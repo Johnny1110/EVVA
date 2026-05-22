@@ -13,6 +13,7 @@ import (
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/internal/tools/meta"
+	"github.com/johnny1110/evva/internal/tools/mode"
 )
 
 // Spawn implements meta.SubagentSpawner. The AGENT tool's lookup resolves
@@ -51,11 +52,33 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 	// zero when the field is omitted) defaults to 1 inside ModelForLevel.
 	subProfile.LLMModel = a.profile.LLMProvider.ModelForLevel(req.Level)
 
+	// Honor isolation: "worktree". Provision a worktree under the
+	// parent's repo root and give the child a cfg clone pointing at it
+	// so the child's fs + bash tools capture the worktree path at
+	// construction. No os.Chdir — the parent stays in its own workdir.
+	// The session metadata stays in this goroutine so we can clean up
+	// after child.Run.
+	childCfg := a.cfg
+	var isolationSession *mode.WorktreeSession
+	if req.Isolation == "worktree" {
+		sess, werr := mode.CreateForSubagent(ctx, a.Workdir(), req.Name)
+		if werr != nil {
+			return "", fmt.Errorf("spawn: provision isolation worktree: %w", werr)
+		}
+		// Clone the cfg so the child's WorkDir override doesn't tear the
+		// parent's view. Config carries mutexes; pkg/config.Config.Clone
+		// produces a fresh struct with the same field values.
+		cfgClone := a.cfg.Clone()
+		cfgClone.WorkDir = sess.Path
+		childCfg = cfgClone
+		isolationSession = &sess
+	}
+
 	childSink := event.BubbleUp{Parent: a.Sink(), ParentID: a.ID}
 	child, err := New(a, subProfile,
 		WithName(req.Name),
 		WithSink(childSink),
-		WithConfig(a.cfg),                         // subagents inherit the parent's config
+		WithConfig(childCfg),                      // worktree-isolation path carries cfg.WorkDir = worktree path
 		WithMaxIterations(int(a.maxIters.Load())), // share iters with child
 		WithAsync(req.AsyncMode),
 		WithAgentRegistry(a.agentRegistry), // subagents inherit the parent's registry
@@ -65,6 +88,11 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 		WithPermissionBroker(a.permissionBroker),
 	)
 	if err != nil {
+		// Roll back the worktree on construction failure so a half-spawn
+		// doesn't strand .evva/worktrees/.
+		if isolationSession != nil {
+			mode.CleanupSubagentWorktree(ctx, *isolationSession, true)
+		}
 		return "", fmt.Errorf("spawn: new agent: %w", err)
 	}
 
@@ -78,6 +106,7 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 		// ctx so a top-level cancel reaches the child.
 		go func() {
 			resp, runErr := child.Run(ctx, req.Prompt)
+			resp = finalizeIsolation(ctx, isolationSession, resp, a)
 			if runErr != nil {
 				// Mark the panel entry so DrainCompleted can deliver
 				// the failure back to the parent's next turn. iter-limit
@@ -104,6 +133,7 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 	// AGENT tool_result). The group entry is short-lived — we update the
 	// phase, then Remove so DrainCompleted never sees a sync entry.
 	resp, runErr := child.Run(ctx, req.Prompt)
+	resp = finalizeIsolation(ctx, isolationSession, resp, a)
 
 	if runErr != nil {
 		if errors.Is(runErr, ErrIterLimit) {
@@ -122,6 +152,26 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 	group.Report(child.ID, resp)
 	group.Remove(child.ID)
 	return resp, nil
+}
+
+// finalizeIsolation runs the post-subagent worktree cleanup. If the
+// child made no changes the worktree is auto-removed; otherwise it's
+// left on disk and its path + branch are appended to the result so the
+// parent can surface them to the user.
+//
+// Safe to call with sess == nil (the no-isolation path) — returns the
+// input resp unchanged.
+func finalizeIsolation(ctx context.Context, sess *mode.WorktreeSession, resp string, a *Agent) string {
+	if sess == nil {
+		return resp
+	}
+	removed, summary := mode.CleanupSubagentWorktree(ctx, *sess, false)
+	if removed {
+		a.logger.Info("subagent: isolation worktree auto-removed", "path", sess.Path, "branch", sess.Branch)
+		return resp
+	}
+	a.logger.Info("subagent: isolation worktree preserved", "path", sess.Path, "branch", sess.Branch, "reason", summary)
+	return fmt.Sprintf("%s\n\nworktree_path: %s\nworktree_branch: %s\n(kept on disk because: %s)", resp, sess.Path, sess.Branch, summary)
 }
 
 // subagentProfile builds a Profile for a subagent of the given kind,

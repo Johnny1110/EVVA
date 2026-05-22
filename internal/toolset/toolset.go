@@ -43,13 +43,14 @@ import (
 // agent (via agent.ToolState()) and read state through the typed accessors
 // rather than peeking into tool internals.
 type ToolState struct {
-	todoStore       *todo.TodoStore
-	subagentSpawner meta.SubagentSpawner
-	deferredLookup  meta.DeferredLookup
-	planController  mode.PlanModeController
-	readTracker     *fs.ReadTracker
-	subAgentGroup   *meta.SpawnGroup
-	wakeupQueue     *meta.WakeupQueue
+	todoStore          *todo.TodoStore
+	subagentSpawner    meta.SubagentSpawner
+	deferredLookup     meta.DeferredLookup
+	planController     mode.PlanModeController
+	worktreeController mode.WorktreeController
+	readTracker        *fs.ReadTracker
+	subAgentGroup      *meta.SpawnGroup
+	wakeupQueue        *meta.WakeupQueue
 	// userPromptQueue carries prompts the user typed while a Run was
 	// already in flight. The agent loop drains it between iterations
 	// so the conversation stays well-formed (no orphaned tool_calls).
@@ -184,6 +185,22 @@ func (s *ToolState) PlanController() mode.PlanModeController {
 // the tools surface a clear error if invoked there).
 func (s *ToolState) SetPlanController(c mode.PlanModeController) {
 	s.planController = c
+}
+
+// WorktreeController returns the currently-installed worktree controller,
+// or nil if none. The EnterWorktree / ExitWorktree tools read through
+// this lookup at Execute time so the *Agent can install itself after
+// agent.New returns without an init ordering hazard.
+func (s *ToolState) WorktreeController() mode.WorktreeController {
+	return s.worktreeController
+}
+
+// SetWorktreeController installs the controller EnterWorktree /
+// ExitWorktree will read through. Called once after construction; only
+// the root agent satisfies the interface (subagents leave the slot nil
+// and the tools surface a clear error if invoked there).
+func (s *ToolState) SetWorktreeController(c mode.WorktreeController) {
+	s.worktreeController = c
 }
 
 // ReadTracker returns the session read-tracker shared by all fs tools,

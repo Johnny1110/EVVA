@@ -30,13 +30,21 @@ const (
 	maxBashTimeout     = 10 * time.Minute
 )
 
-// Bash is the singleton BashTool. Stateless — every invocation spawns a
-// fresh shell process so one instance suffices across all agents.
-var Bash tools.Tool = &BashTool{}
+// BashTool runs `/bin/sh -c <command>` with cmd.Dir set to the workdir
+// captured at construction. One BashTool instance per agent — the
+// toolset factory in internal/toolset/builtins.go calls NewBash(s.Workdir())
+// so each agent (including subagents spawned with isolation: "worktree")
+// gets a tool that runs in its own directory. The bash process is fresh
+// per call — shell env state does NOT persist between invocations.
+type BashTool struct {
+	workdir string
+}
 
-type BashTool struct{}
-
-func NewBash() *BashTool { return &BashTool{} }
+// NewBash constructs a BashTool bound to workdir. An empty workdir means
+// "use the process's current directory" (cmd.Dir = "" — exec defaults).
+// Use this for tests / narrow callers; production tooling always passes
+// the agent's workdir.
+func NewBash(workdir string) *BashTool { return &BashTool{workdir: workdir} }
 
 func (t *BashTool) Name() string { return string(tools.BASH) }
 
@@ -115,6 +123,7 @@ func (t *BashTool) Execute(ctx context.Context, logger *slog.Logger, input json.
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, "/bin/sh", "-c", in.Command)
+	cmd.Dir = t.workdir
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

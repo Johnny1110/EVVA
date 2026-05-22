@@ -50,8 +50,14 @@ func init() {
 		return fs.NewGlob(s.Workdir()), nil
 	})
 
-	// --- shell (stateless) ---
-	r.MustRegister(tools.BASH, func(tools.State) (tools.Tool, error) { return shell.Bash, nil })
+	// --- shell ---
+	// Bash captures workdir at construction so each agent (including a
+	// subagent spawned with isolation: "worktree") runs commands in its
+	// own directory. Grep and Tree remain stateless singletons because
+	// they accept an absolute path as a parameter.
+	r.MustRegister(tools.BASH, func(s tools.State) (tools.Tool, error) {
+		return shell.NewBash(s.Workdir()), nil
+	})
 	r.MustRegister(tools.GREP, func(tools.State) (tools.Tool, error) { return shell.Grep, nil })
 	r.MustRegister(tools.TREE, func(tools.State) (tools.Tool, error) { return shell.Tree, nil })
 
@@ -92,8 +98,14 @@ func init() {
 		ts := s.(*ToolState)
 		return mode.NewExitPlanMode(ts.PlanController), nil
 	})
-	r.MustRegister(tools.ENTER_WORKTREE, func(tools.State) (tools.Tool, error) { return mode.EnterWorktree, nil })
-	r.MustRegister(tools.EXIT_WORKTREE, func(tools.State) (tools.Tool, error) { return mode.ExitWorktree, nil })
+	r.MustRegister(tools.ENTER_WORKTREE, func(s tools.State) (tools.Tool, error) {
+		ts := s.(*ToolState)
+		return mode.NewEnterWorktree(ts.WorktreeController), nil
+	})
+	r.MustRegister(tools.EXIT_WORKTREE, func(s tools.State) (tools.Tool, error) {
+		ts := s.(*ToolState)
+		return mode.NewExitWorktree(ts.WorktreeController), nil
+	})
 	r.MustRegister(tools.NOTEBOOK_EDIT, func(tools.State) (tools.Tool, error) { return notebook.Edit, nil })
 
 	// --- cron (stateless stubs) ---

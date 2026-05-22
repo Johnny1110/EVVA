@@ -23,7 +23,8 @@ func buildGeneralPrompt(_ PromptContext) string {
 		"- For analysis: Start broad and narrow down. Use multiple search strategies if the first doesn't yield results.\n" +
 		"- Be thorough: Check multiple locations, consider different naming conventions, look for related files.\n" +
 		"- NEVER create files unless they're absolutely necessary for achieving your goal. ALWAYS prefer editing an existing file to creating a new one.\n" +
-		"- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested."
+		"- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested.\n" +
+		"- If the parent spawned you with `isolation: \"worktree\"`, your working directory is a fresh git worktree under `<repo>/.evva/worktrees/`. Treat that path as the source of truth for file reads, edits, and bash commands — every change you make is contained to that worktree. The parent will surface the path back to the user only if you actually modify files; clean exits auto-remove the worktree."
 }
 
 // generalWhenToUse — ported 1:1 from ref's GENERAL_PURPOSE_AGENT.whenToUse.

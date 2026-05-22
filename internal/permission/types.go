@@ -23,6 +23,12 @@ import (
 // else stays read-only.
 const PlanDirSegment = ".evva/plans"
 
+// WorktreeDirSegment is the workdir-relative directory the EnterWorktree tool
+// (and AgentTool isolation) materializes git worktrees under. Kept here next
+// to PlanDirSegment so the .evva/* family of evva-owned directories stays
+// single-sourced.
+const WorktreeDirSegment = ".evva/worktrees"
+
 // IsPlanFilePath reports whether absPath sits inside <workdir>/.evva/plans/.
 // Both args are resolved with filepath.Abs + filepath.Clean before comparison
 // so callers can pass user-supplied paths without pre-normalising. An empty

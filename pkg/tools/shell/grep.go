@@ -92,7 +92,10 @@ func (t *GrepTool) Execute(ctx context.Context, logger *slog.Logger, input json.
 		return tools.Result{IsError: true, Content: fmt.Sprintf("grep: %v", err)}, nil
 	}
 
-	res, _ := Bash.Execute(ctx, logger, json.RawMessage(
+	// Grep stays workdir-agnostic — the search root is already absolute
+	// in buildGrepCmd, so the bash process's cwd doesn't affect output.
+	// Construct a fresh tool per call so this stays stateless.
+	res, _ := NewBash("").Execute(ctx, logger, json.RawMessage(
 		`{"command":`+strconv.Quote(cmd)+`,"description":"grep for pattern"}`,
 	))
 

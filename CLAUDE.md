@@ -50,31 +50,6 @@ One schema, one loader, two visibility surfaces. This is also the seam Phase 6 (
 
 Phases are ordered by dependency — earlier phases unblock later ones. Each phase is one focused chunk of work: Go ports of the reference TypeScript, plus the connective tissue (memory, permissions, hooks) that ties the harness together.
 
-### Phase 1 - Bash `run_in_background` param implement
-
-Goal: port ref source code to implement evva's bash `run_in_background`
-
-- ToolState add BackgroundTasks which maintain a task list
-- Background tasks status should show on tui to let user see it (subagents bg task should bubble up), Remove when bg task complete or failed (before remove print "task-xxx completed." on the transcript) 
-- crete a `chan` for agent, if a background task finished, return result through this `chan` and proactive invoke agent loop (event driven) and also emit `KindBgResult` by Sink to let tui react.
-  - this `chan` will be shared with Phase-17 monitor, so the sync data should have a type: `bg_result` or `monitor_event`
-  - If agent current status in idle: trigger agent loop with prompt `<system-reminder>background task complete, result: exit code 0 \n {result} </system-reminder>`
-  - If agent current status is busy, update the BackgroundTasks state (store the bg result) wait for next iter `drainBackgroundTaskResult()`
-  - `drainBackgroundTaskResult()` drain background task final result on every agent loop begin, drain a complete or failed result into prompt `<system-reminder>` and remove it from BackgroundTasks, emit event `KindDrainBackgroundTask`
-- be careful about agent status changing (race problem).
-- update agent loop, check drain queue is empty before leave, if not empty, keep that loop again.
-
-### Phase 2 -  MonitorTool
-
-Goal: port ref source code MonitorTool.ts let evva can be a event driven agent.
-
-- Integrate with ToolState.MonitorTasks task status is `monitoring` and MonitorEventQueue.
-- use same `chan` as Phase 16 created. sync event through this chan type is `monitor_event`
-- If agent current status in idle: trigger agent loop with prompt `<system-reminder>monitor task event: {event} </system-reminder>`
-- If agent current status is busy, push the event into MonitorEventQueue waiting for next iter `drainBackgroundTaskResult()`
-- `drainMonitorEvent()` drain monitor event result on every agent loop begin, drain prompt `<system-reminder>` and remove it from BackgroundTasks, emit event `KindDrainBackgroundTask`
-- be careful about agent status changing (race problem).
-
 ### Phase 3 — MCP support + bundled skills (v2 tier)
 
 Closes the gap with Claude Code's plugin/skill ecosystem.

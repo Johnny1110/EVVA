@@ -13,6 +13,37 @@ Stability tiers are defined in [`docs/sdk-stability.md`](docs/sdk-stability.md).
   the `monitor` tool. Monitors can currently only be stopped by killing
   the underlying shell process (e.g., `pkill`).
 
+## [v0.2.8-alpha.2] — Plan mode: named plan files + read-only bash
+
+### Added
+
+- `enter_plan_mode` gains optional `plan_name` parameter — plan files
+  now live at `<repo>/.evva/plans/<plan-name>.md` instead of a fixed
+  `current.md`. The default (`"current"`) preserves backward
+  compatibility so existing sessions see no difference.
+- Plan mode now allows read-only bash commands (`ls`, `cat`, `grep`,
+  `git status`, `find`, etc.) via the shell classifier. The model can
+  inspect the codebase with shell tools without exiting plan mode.
+  Mutating and dangerous commands remain denied.
+
+### Changed
+
+- `mode.PlanFilePath` signature changed to `PlanFilePath(workdir, planName string)`.
+  Empty `planName` defaults to `"current"` — all existing callers that
+  relied on the single-argument form must be updated to pass the plan
+  name (usually from `PlanModeState.PlanName()`).
+- `PlanModeController` interface gains `PlanName() string` and
+  `SetPlanName(name string)`. Implementations (`*agent.Agent`,
+  test fakes) delegate to `PlanModeState`.
+- `PlanModeState` (internal/permission) stores the active plan name.
+
+### Internal
+
+- `permission.Decide()` pipeline: plan-mode block gains a bash
+  read-only carve-out before the hard-deny fallback (step 4c).
+- `internal/agent/state_machine.go` reads the plan name from
+  `planModeState.PlanName()` when constructing the attachment path.
+
 ## [v0.2.8-alpha.1] — SDK v2.1: public UI read-models
 
 First slice of the SDK v2 "harden to v1.0" roadmap
@@ -364,7 +395,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `CLAUDE.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.1...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.2...HEAD
+[v0.2.8-alpha.2]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.2
 [v0.2.8-alpha.1]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.1
 [v0.2.6-alpha.2]: https://github.com/johnny1110/evva/releases/tag/v0.2.6-alpha.2
 [v0.2.6-alpha.1]: https://github.com/johnny1110/evva/releases/tag/v0.2.6-alpha.1

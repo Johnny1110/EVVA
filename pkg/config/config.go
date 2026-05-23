@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/johnny1110/evva/pkg/constant"
+	"github.com/johnny1110/evva/pkg/version"
 )
 
 // Version is the canonical version string injected at build time via ldflags:
@@ -37,7 +38,7 @@ var BuildDate string
 // Default values that appear unchanged across all Config instances.
 const (
 	DefaultAppName    = "evva"
-	DefaultAppVersion = "0.1.0"
+	DefaultAppVersion = version.Version
 )
 
 // DisplayVersion returns the best available version string: the ldflags-injected

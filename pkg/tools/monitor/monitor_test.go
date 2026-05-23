@@ -9,44 +9,69 @@ import (
 	"time"
 
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 )
 
-type fakeMonitorHost struct {
-	store *MonitorTaskStore
-	queue *MonitorEventQueue
+// fakeDaemonHost wires a DaemonHost backed by an in-memory DaemonState.
+// The notify closure increments a counter and pushes onto done so tests
+// can wait for events to flow.
+type fakeDaemonHost struct {
+	state *daemon.DaemonState
 	ctx   context.Context
 	mu    sync.Mutex
 	lines []string
 	done  chan struct{}
 }
 
-func newFakeHost(ctx context.Context) *fakeMonitorHost {
-	return &fakeMonitorHost{
-		store: NewMonitorTaskStore(),
-		queue: NewMonitorEventQueue(),
-		ctx:   ctx,
-		done:  make(chan struct{}, 1),
+func newFakeHost(ctx context.Context) *fakeDaemonHost {
+	h := &fakeDaemonHost{
+		ctx:  ctx,
+		done: make(chan struct{}, 16),
 	}
-}
-
-func (h *fakeMonitorHost) MonitorTaskStore() *MonitorTaskStore { return h.store }
-func (h *fakeMonitorHost) MonitorEventQueue() *MonitorEventQueue {
-	return h.queue
-}
-func (h *fakeMonitorHost) RootCtx() context.Context { return h.ctx }
-func (h *fakeMonitorHost) AgentID() string          { return "test-agent" }
-func (h *fakeMonitorHost) NotifyMonitorEvent(ev MonitorEvent) {
-	h.queue.Enqueue(ev)
-	h.mu.Lock()
-	if ev.Closing {
+	h.state = daemon.NewState(func() {
 		select {
 		case h.done <- struct{}{}:
 		default:
 		}
-	} else {
-		h.lines = append(h.lines, ev.Line)
+	})
+	return h
+}
+
+func (h *fakeDaemonHost) DaemonState() *daemon.DaemonState { return h.state }
+func (h *fakeDaemonHost) RootCtx() context.Context         { return h.ctx }
+func (h *fakeDaemonHost) AgentID() string                  { return "test-agent" }
+
+// pollEvents drains the daemon's signal queue and accumulates event lines
+// until the deadline elapses or a closing event arrives. Returns the
+// captured lines (in arrival order) and the final daemon status.
+func pollEvents(t *testing.T, h *fakeDaemonHost, id string, timeout time.Duration) (lines []string, finalStatus daemon.DaemonStatus) {
+	t.Helper()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	closed := false
+	var lastStatus daemon.DaemonStatus
+	for {
+		select {
+		case <-h.done:
+		case <-deadline.C:
+			t.Fatalf("monitor %s did not close within %s (lines=%d, lastStatus=%q)", id, timeout, len(lines), lastStatus)
+		}
+		for _, sig := range h.state.DrainSignals() {
+			if sig.IsEvent() {
+				if sig.Event.Closing {
+					closed = true
+					continue
+				}
+				lines = append(lines, sig.Event.Line)
+			}
+			if sig.IsLifecycle() {
+				lastStatus = sig.Lifecycle.Status
+			}
+		}
+		if closed && daemon.IsTerminal(lastStatus) {
+			return lines, lastStatus
+		}
 	}
-	h.mu.Unlock()
 }
 
 func TestMonitor_StreamsStdoutLines(t *testing.T) {
@@ -65,33 +90,22 @@ func TestMonitor_StreamsStdoutLines(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content)
 	}
+	id := extractMonitorID(t, res.Content)
 
-	select {
-	case <-host.done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("monitor did not close within 3s")
-	}
+	lines, status := pollEvents(t, host, id, 3*time.Second)
 
-	host.mu.Lock()
-	got := append([]string(nil), host.lines...)
-	host.mu.Unlock()
 	want := []string{"a", "b", "c"}
-	if len(got) != len(want) {
-		t.Fatalf("lines: got %v want %v", got, want)
+	if len(lines) != len(want) {
+		t.Fatalf("lines: got %v want %v", lines, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("line[%d]: got %q want %q", i, got[i], want[i])
+		if lines[i] != want[i] {
+			t.Errorf("line[%d]: got %q want %q", i, lines[i], want[i])
 		}
 	}
-
-	// Status should be Stopped after clean exit.
-	snaps := host.store.Snapshot()
-	if len(snaps) != 1 {
-		t.Fatalf("store snapshot count: got %d want 1", len(snaps))
-	}
-	if snaps[0].Status != Stopped {
-		t.Errorf("status: got %q want stopped", snaps[0].Status)
+	// Clean exit → Completed in daemon vocabulary.
+	if status != daemon.StatusCompleted {
+		t.Errorf("status: got %q want %q", status, daemon.StatusCompleted)
 	}
 }
 
@@ -115,31 +129,53 @@ func TestMonitor_RejectsEmptyCommand(t *testing.T) {
 	}
 }
 
-func TestMonitorEventQueue_Drain(t *testing.T) {
-	q := NewMonitorEventQueue()
-	if q.HasPending() {
-		t.Error("fresh queue should not be pending")
+func TestMonitorDaemon_KillTransitionsToKilled(t *testing.T) {
+	host := newFakeHost(context.Background())
+	tool := NewMonitor(host)
+
+	res, err := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{
+		"command":"sleep 30",
+		"description":"long sleep",
+		"persistent":true,
+		"timeout_ms":0
+	}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	q.Enqueue(MonitorEvent{MonitorID: "m1", Line: "one"})
-	q.Enqueue(MonitorEvent{MonitorID: "m1", Line: "two"})
-	if !q.HasPending() {
-		t.Error("queue should report pending after Enqueue")
+	id := extractMonitorID(t, res.Content)
+
+	// Let the goroutine actually spawn.
+	time.Sleep(100 * time.Millisecond)
+
+	if _, err := host.state.Stop(context.Background(), id); err != nil {
+		t.Fatalf("Stop: %v", err)
 	}
-	drained := q.Drain()
-	if len(drained) != 2 {
-		t.Fatalf("Drain count: got %d want 2", len(drained))
-	}
-	if drained[0].Line != "one" || drained[1].Line != "two" {
-		t.Errorf("drained order wrong: %+v", drained)
-	}
-	if q.HasPending() {
-		t.Error("Drain should clear pending")
+
+	_, status := pollEvents(t, host, id, 5*time.Second)
+	if status != daemon.StatusKilled {
+		t.Errorf("status: got %q want %q", status, daemon.StatusKilled)
 	}
 }
 
+// extractMonitorID pulls the "m…" id out of the monitor ack message.
+// Format: "Monitor m… started. ...".
+func extractMonitorID(t *testing.T, ack string) string {
+	t.Helper()
+	parts := strings.Fields(ack)
+	if len(parts) < 2 {
+		t.Fatalf("ack too short: %q", ack)
+	}
+	id := parts[1]
+	if !strings.HasPrefix(id, "m") {
+		t.Fatalf("expected monitor id prefix 'm', got %q", id)
+	}
+	return id
+}
+
 func TestGenerateID_MonitorPrefix(t *testing.T) {
-	id := GenerateID()
+	id := daemon.GenerateID(daemon.KindMonitor)
 	if len(id) != 9 || id[0] != 'm' {
 		t.Errorf("monitor ID shape wrong: %q", id)
 	}
 }
+

@@ -22,7 +22,7 @@ func (s *stubSpawner) SubagentTypes() []string {
 }
 
 func TestAgentTool_Schema_FallsBackWhenLookupNil(t *testing.T) {
-	tool := NewAgent(nil, NewSpawnGroup())
+	tool := NewAgent(nil)
 	var schema map[string]any
 	if err := json.Unmarshal(tool.Schema(), &schema); err != nil {
 		t.Fatalf("schema unmarshal: %v", err)
@@ -41,7 +41,7 @@ func TestAgentTool_Schema_FallsBackWhenLookupNil(t *testing.T) {
 
 func TestAgentTool_Schema_PullsDynamicEnumFromSpawner(t *testing.T) {
 	stub := &stubSpawner{types: []string{"explore", "general-purpose", "nono", "reviewer"}}
-	tool := NewAgent(func() SubagentSpawner { return stub }, NewSpawnGroup())
+	tool := NewAgent(func() SubagentSpawner { return stub })
 	var schema map[string]any
 	if err := json.Unmarshal(tool.Schema(), &schema); err != nil {
 		t.Fatalf("schema unmarshal: %v", err)
@@ -63,7 +63,7 @@ func TestAgentTool_Schema_PullsDynamicEnumFromSpawner(t *testing.T) {
 
 func TestAgentTool_Schema_EmptyDynamicListFallsBack(t *testing.T) {
 	stub := &stubSpawner{types: nil}
-	tool := NewAgent(func() SubagentSpawner { return stub }, NewSpawnGroup())
+	tool := NewAgent(func() SubagentSpawner { return stub })
 	var schema map[string]any
 	if err := json.Unmarshal(tool.Schema(), &schema); err != nil {
 		t.Fatalf("schema unmarshal: %v", err)

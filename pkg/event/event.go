@@ -441,8 +441,12 @@ type BgResultPayload struct {
 
 // MonitorEventPayload reports one streamed line from a running Monitor.
 // Closing=true marks the final event when the underlying process exits
-// or task_stop is called; the TUI strip flips the monitor chip to
+// or daemon_stop is called; the TUI strip flips the monitor chip to
 // Stopped on the closing event.
+//
+// Deprecated: monitor lifecycle now flows through KindStoreUpdate on the
+// daemon Observable. Kept for transcript renderer back-compat until that
+// surface is rewritten.
 type MonitorEventPayload struct {
 	// MonitorID is the wire-stable id (e.g. "m4x9z1kp") the model
 	// received from the original Monitor call.
@@ -451,7 +455,7 @@ type MonitorEventPayload struct {
 	// stripped). Empty when Closing is true.
 	Line string
 	// Closing reports whether this is the last event for the monitor
-	// (process exited or task_stop fired).
+	// (process exited or daemon_stop fired).
 	Closing bool
 	// AgentID is the spawning agent.
 	AgentID string

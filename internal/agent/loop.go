@@ -91,13 +91,6 @@ func (a *Agent) runLoop(ctx context.Context) (string, error) {
 		// 2 levels of compacting: micro, full.
 		a.compact(ctx, a.session)
 
-		// Drain any completed async subagents. This is the only delivery
-		// channel for async work — results that arrived during the
-		// previous LLM call (or while the loop was paused between user
-		// prompts) surface here as a synthetic user message before the
-		// next Complete call sees the conversation.
-		a.drainAsyncSubagents()
-
 		// Drain queued wakeup prompts. SCHEDULE_WAKEUP slept inside its
 		// Execute and enqueued its prompt on completion; we land it as
 		// a fresh user message here so the next LLM call sees it as if
@@ -112,16 +105,11 @@ func (a *Agent) runLoop(ctx context.Context) (string, error) {
 		// assistant tool_calls are already answered).
 		a.drainUserPrompts()
 
-		// Drain terminal background-task results into the session as
-		// <system-reminder> blocks. Phase 16 — the SignalPump may have
-		// already emitted KindBgResult to the TUI; this drain is the
-		// model-side delivery vehicle.
-		a.drainBackgroundTaskResults()
-
-		// Drain queued monitor events (streamed stdout lines from the
-		// MonitorTool). Same shape as drainBackgroundTaskResults; the
-		// per-event KindMonitorEvent already fired for the TUI.
-		a.drainMonitorEvents()
+		// Drain queued daemon signals (lifecycle transitions + stream
+		// events from every kind of background unit — bash bg, monitor,
+		// async subagent). The per-snapshot TUI updates already fired
+		// via Observable; this drain is the model-side delivery vehicle.
+		a.drainDaemonSignals()
 
 		a.logger.Debug("turn.start", "iter", iter, "messages", len(a.session.Messages))
 		resp, err := a.thinking(ctx, iter)
@@ -223,9 +211,14 @@ func (a *Agent) runLoop(ctx context.Context) (string, error) {
 func (a *Agent) done(iter int, resp llm.Response) string {
 	a.logger.Debug("run.done", "iter", iter, "content_bytes", len(resp.Content))
 	if a.IsSubagent() {
-		// subagent done -> ready to report.
+		// subagent done -> ready to report. The actual Report call happens
+		// in spawn.go after child.Run returns — this method just records the
+		// status transition so the parent's agentDaemon Snapshot reflects
+		// READY_REPORT during the brief window between done() and Report().
 		a.status = constant.READY_REPORT
-		a.getParentSpawnGroup().Report(a.ID, resp.Content)
+		if ad := a.getOwnDaemon(); ad != nil {
+			ad.Phase(constant.READY_REPORT)
+		}
 		a.logger.Debug("run.done.subagent", "status", a.status)
 	} else {
 		// main agent done -> idle.

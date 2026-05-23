@@ -7,11 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 
-	"github.com/johnny1110/evva/pkg/constant"
-
-	"github.com/johnny1110/evva/pkg/observable"
 	"github.com/johnny1110/evva/pkg/tools"
 )
 
@@ -22,219 +18,19 @@ import (
 // after the tool already exists.
 type SpawnerLookup func() SubagentSpawner
 
-// SpawnGroupDomain is the observable.Change.Domain value carried by every
-// SpawnGroup change. Subscribers switch on this string and type-assert
-// Change.Payload to SubagentSnapshot.
-const SpawnGroupDomain = "subagent"
-
-// SubagentSnapshot is the typed payload carried in observable.Change.Payload
-// for every "subagent" domain change. Each notification ships a full snapshot
-// so consumers can render the row without keeping their own state.
-//
-// Async marks subagents whose results must be picked up via
-// SpawnGroup.DrainCompleted (the main agent loop does this between turns).
-// Sync subagents deliver their result through the tool return channel and
-// are Remove'd as soon as the spawner finishes, so they never sit in
-// DrainCompleted's queue.
-type SubagentSnapshot struct {
-	Name    string
-	ID      string
-	Type    string // "explore", "general-purpose", ...
-	Status  string
-	Async   bool
-	JobDesc string // prompt summary
-	Summary string // result summary (set on Report)
-	Err     string // error message (set on Crush)
-}
-
-type spawnedAgent struct {
-	snap SubagentSnapshot
-	done bool // true once phase ∈ {done, crushed}
-}
-
-// SpawnGroup is the per-agent panel of in-flight subagents. It is an
-// observable.Store: every mutation fans through the framework so the TUI
-// (and any other subscriber) can re-render without per-store wiring.
-//
-// Lifecycle: Add → optional Status updates → Report | Crush → Remove (sync) /
-// DrainCompleted (async). Sync subagents are short-lived in the panel —
-// the spawner calls Remove right after the child returns. Async subagents
-// stay in the panel until the parent loop drains them between turns.
-type SpawnGroup struct {
-	observable.Observable
-
-	mu     sync.Mutex
-	agents map[string]*spawnedAgent
-	order  []string // insertion order for stable Drain
-}
-
-func NewSpawnGroup() *SpawnGroup {
-	return &SpawnGroup{agents: map[string]*spawnedAgent{}}
-}
-
-// Domain identifies this store on the change stream.
-func (g *SpawnGroup) Domain() string { return SpawnGroupDomain }
-
-// Add records a new subagent in the init phase. async marks subagents
-// whose result will be delivered through DrainCompleted instead of the
-// usual tool-return path.
-func (g *SpawnGroup) Add(name, id, agentType, jobDesc string, async bool) {
-	snap := SubagentSnapshot{
-		Name:    name,
-		ID:      id,
-		Type:    agentType,
-		Status:  constant.INIT.String(),
-		Async:   async,
-		JobDesc: jobDesc,
-	}
-	g.mu.Lock()
-	g.agents[id] = &spawnedAgent{snap: snap}
-	g.order = append(g.order, id)
-	g.mu.Unlock()
-
-	g.Notify(observable.Change{Domain: SpawnGroupDomain, Op: "added", ID: id, Payload: snap})
-}
-
-// Status updates the lifecycle phase of an in-flight subagent and notifies
-// observers. No-op when the id is unknown.
-func (g *SpawnGroup) Status(id string, status constant.AgentStatus) {
-	g.mu.Lock()
-	a, ok := g.agents[id]
-	if !ok {
-		g.mu.Unlock()
-		return
-	}
-	a.snap.Status = status.String()
-	snap := a.snap
-	g.mu.Unlock()
-
-	g.Notify(observable.Change{Domain: SpawnGroupDomain, Op: "status", ID: id, Payload: snap})
-}
-
-// Report marks a subagent as completed and records its result summary.
-// Async subagents in this state are picked up by DrainCompleted; sync
-// subagents are immediately Remove'd by the spawner.
-func (g *SpawnGroup) Report(id, summary string) {
-	g.mu.Lock()
-	a, ok := g.agents[id]
-	if !ok {
-		g.mu.Unlock()
-		return
-	}
-	a.snap.Status = constant.READY_REPORT.String()
-	a.snap.Summary = summary
-	a.done = true
-	snap := a.snap
-	g.mu.Unlock()
-
-	g.Notify(observable.Change{Domain: SpawnGroupDomain, Op: "report", ID: id, Payload: snap})
-}
-
-// Crush marks a subagent as failed.
-func (g *SpawnGroup) Crush(id string, summary string, err error) {
-	msg := "subagent crushed"
-	if err != nil {
-		msg = err.Error()
-	}
-	g.mu.Lock()
-	a, ok := g.agents[id]
-	if !ok {
-		g.mu.Unlock()
-		return
-	}
-	a.snap.Status = constant.CRUSHED.String()
-	a.snap.Err = msg
-	a.snap.Summary = summary
-	a.done = true
-	snap := a.snap
-	g.mu.Unlock()
-
-	g.Notify(observable.Change{Domain: SpawnGroupDomain, Op: "crushed", ID: id, Payload: snap})
-}
-
-// Remove deletes an entry from the group and notifies observers. Used by
-// the spawner for sync subagents (their result is delivered through the
-// tool return channel, not through DrainCompleted).
-func (g *SpawnGroup) Remove(id string) {
-	g.mu.Lock()
-	a, ok := g.agents[id]
-	if !ok {
-		g.mu.Unlock()
-		return
-	}
-	snap := a.snap
-	delete(g.agents, id)
-	for i, oid := range g.order {
-		if oid == id {
-			g.order = append(g.order[:i], g.order[i+1:]...)
-			break
-		}
-	}
-	g.mu.Unlock()
-
-	g.Notify(observable.Change{Domain: SpawnGroupDomain, Op: "removed", ID: id, Payload: snap})
-}
-
-// Snapshot returns a stable copy of every tracked subagent in insertion
-// order. Read-only; the panel's drain queue is untouched. UIs poll this
-// to render without racing against in-flight goroutines.
-func (g *SpawnGroup) Snapshot() []SubagentSnapshot {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	out := make([]SubagentSnapshot, 0, len(g.order))
-	for _, id := range g.order {
-		if a, ok := g.agents[id]; ok {
-			out = append(out, a.snap)
-		}
-	}
-	return out
-}
-
-// DrainCompleted atomically extracts and removes every async subagent that
-// has reached a terminal phase (done or crushed). Returned snapshots are
-// in insertion order. Each removal emits an Op:"removed" change so the
-// TUI clears its row.
-//
-// Sync subagents are never returned here — the spawner removes them
-// directly via Remove as soon as their tool-return path completes.
-func (g *SpawnGroup) DrainCompleted() []SubagentSnapshot {
-	g.mu.Lock()
-	out := make([]SubagentSnapshot, 0)
-	keep := make([]string, 0, len(g.order))
-	for _, id := range g.order {
-		a, ok := g.agents[id]
-		if !ok {
-			continue
-		}
-		// collect async agent which is done(crushed or ready_report)
-		if a.done && a.snap.Async {
-			out = append(out, a.snap)
-			delete(g.agents, id)
-			continue
-		}
-		keep = append(keep, id)
-	}
-	g.order = keep
-	g.mu.Unlock()
-
-	for _, snap := range out {
-		g.Notify(observable.Change{Domain: SpawnGroupDomain, Op: "removed", ID: snap.ID, Payload: snap})
-	}
-	return out
-}
-
 // AgentTool is the LLM-facing handle for spawning subagents. The actual
 // work is delegated to a SubagentSpawner installed by the agent layer.
+// The subagent's lifecycle (init, phase updates, terminal report) is
+// surfaced through the parent's DaemonState — see internal/agent/agent_daemon.go.
 type AgentTool struct {
 	lookup SpawnerLookup
-	group  *SpawnGroup
 }
 
 // NewAgent constructs an AgentTool that reads its spawner via lookup at
 // Execute time. lookup may be nil (yields a clear runtime error if the
 // model invokes the tool); it may also return nil (same outcome).
-func NewAgent(lookup SpawnerLookup, spawnGroup *SpawnGroup) *AgentTool {
-	return &AgentTool{lookup: lookup, group: spawnGroup}
+func NewAgent(lookup SpawnerLookup) *AgentTool {
+	return &AgentTool{lookup: lookup}
 }
 
 func (t *AgentTool) Name() string { return string(tools.AGENT) }

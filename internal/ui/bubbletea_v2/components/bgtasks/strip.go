@@ -1,12 +1,13 @@
 // Package bgtasks renders the horizontal background-task chip strip.
 // Mirrors components/agents/strip.go shape — one chip per task,
 // rotating spinner glyph while running, static glyph on terminal
-// states. Returns "" when no tasks are tracked so the layout
-// collapses the slot.
+// states. Returns "" when no daemons of kind local_bash are tracked so
+// the layout collapses the slot.
 //
-// Source of truth is *toolset.ToolState.BgTaskStore (Phase 16). The
-// strip subscribes implicitly via the agent's KindStoreUpdate bridge —
-// the bubbletea host re-renders when any store update arrives.
+// Source of truth is *toolset.ToolState.DaemonState (the unified daemon
+// catalog). The strip subscribes implicitly via the agent's
+// KindStoreUpdate bridge — the bubbletea host re-renders when any
+// daemon change arrives.
 package bgtasks
 
 import (
@@ -16,20 +17,20 @@ import (
 
 	"github.com/johnny1110/evva/internal/toolset"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/theme"
-	"github.com/johnny1110/evva/pkg/tools/shell"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 )
 
-// bgChipMaxLabel caps the visible label length inside a chip so
-// several tasks can fit on one row.
+// bgChipMaxLabel caps the visible label length inside a chip so several
+// daemons can fit on one row.
 const bgChipMaxLabel = 16
 
-// Render returns the chip strip as a (possibly multi-line) string.
-// frame is the spinner frame index used to animate running tasks.
+// Render returns the chip strip as a (possibly multi-line) string. frame
+// is the spinner frame index used to animate running daemons.
 func Render(ts *toolset.ToolState, width int, th *theme.Theme, frame int) string {
-	if ts == nil || !ts.HasBgTaskStore() {
+	if ts == nil || !ts.HasDaemonState() {
 		return ""
 	}
-	rows := ts.BgTaskStore().Snapshot()
+	rows := ts.DaemonState().SnapshotByKind(daemon.KindLocalBash)
 	if len(rows) == 0 {
 		return ""
 	}
@@ -66,12 +67,14 @@ func Render(ts *toolset.ToolState, width int, th *theme.Theme, frame int) string
 	return strings.Join(lines, "\n")
 }
 
-func renderChip(r shell.BgTaskSnapshot, th *theme.Theme, frame int) string {
+func renderChip(r daemon.DaemonSnapshot, th *theme.Theme, frame int) string {
 	status := string(r.Status)
 	glyph := renderStatusGlyph(status, th, frame)
 	label := r.Description
 	if label == "" {
-		label = r.Command
+		if meta, ok := r.Metadata.(daemon.LocalBashMeta); ok {
+			label = meta.Command
+		}
 	}
 	if len(label) > bgChipMaxLabel {
 		label = label[:bgChipMaxLabel-1] + "…"
@@ -85,7 +88,7 @@ func renderChip(r shell.BgTaskSnapshot, th *theme.Theme, frame int) string {
 }
 
 func renderStatusGlyph(status string, th *theme.Theme, frame int) string {
-	if status == string(shell.BgRunning) {
+	if status == string(daemon.StatusRunning) {
 		if style, ok := th.SpinnerStyle("executing"); ok {
 			return style.Render(theme.SpinnerFrame(frame))
 		}
@@ -97,13 +100,13 @@ func renderStatusGlyph(status string, th *theme.Theme, frame int) string {
 func chipColor(status string, th *theme.Theme) lipgloss.Color {
 	var c lipgloss.TerminalColor
 	switch status {
-	case string(shell.BgRunning):
+	case string(daemon.StatusRunning):
 		c = th.ToolCall.GetForeground()
-	case string(shell.BgCompleted):
+	case string(daemon.StatusCompleted):
 		c = th.TasksDone.GetForeground()
-	case string(shell.BgFailed):
+	case string(daemon.StatusFailed):
 		c = th.ErrorBanner.GetForeground()
-	case string(shell.BgKilled):
+	case string(daemon.StatusKilled):
 		c = th.DimText.GetForeground()
 	default:
 		c = th.ContextFill.GetForeground()

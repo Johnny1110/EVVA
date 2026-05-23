@@ -12,6 +12,7 @@ import (
 	"github.com/johnny1110/evva/pkg/constant"
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"
 )
@@ -23,19 +24,19 @@ import (
 //  1. Rejects calls from a subagent (the "main only" invariant).
 //  2. Picks a Profile via subagentProfile, inheriting the ParentID's
 //     provider, options, and any baseline preferences.
-//  3. Overrides the model based on req.Level via
-//     LLMProvider.ModelForLevel — 1 is the normal tier, 2 is the big tier.
+//  3. Overrides the model based on req.Level.
 //  4. Constructs a child agent with event.BubbleUp routing its events back
-//     to the ParentID's Sink, tagged with the ParentID's AgentID.
-//  5. Registers the child in the ParentID's SpawnGroup panel — every
-//     mutation is observable through the unified ToolState change stream.
+//     to the parent's Sink, tagged with the parent's AgentID.
+//  5. Registers the child as an agentDaemon in the parent's DaemonState.
+//     Every observable change (Add / phase / terminal Lifecycle) fans
+//     through the unified daemon stream.
 //  6. Runs the child:
-//     - Sync mode: blocks until child.Run completes, removes from panel
+//     - Sync mode: blocks until child.Run completes, evicts the daemon
 //     on return, and propagates the child's text through the tool result.
-//     - Async mode: spawns a goroutine that runs the child and marks the
-//     panel entry Report / Crushed on exit. Returns immediately with an
-//     ack message; the ParentID loop will pick up the eventual result via
-//     AgentGroup.DrainCompleted between turns.
+//     - Async mode: spawns a goroutine that runs the child and emits the
+//     terminal Lifecycle on exit. Returns immediately with an ack; the
+//     parent's loop drains the lifecycle on its next iter and folds it
+//     into the conversation as a <system-reminder>.
 func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error) {
 	if a.IsSubagent() {
 		return "", meta.ErrSubagentForbidden
@@ -56,8 +57,6 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 	// parent's repo root and give the child a cfg clone pointing at it
 	// so the child's fs + bash tools capture the worktree path at
 	// construction. No os.Chdir — the parent stays in its own workdir.
-	// The session metadata stays in this goroutine so we can clean up
-	// after child.Run.
 	childCfg := a.cfg
 	var isolationSession *mode.WorktreeSession
 	if req.Isolation == "worktree" {
@@ -65,9 +64,6 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 		if werr != nil {
 			return "", fmt.Errorf("spawn: provision isolation worktree: %w", werr)
 		}
-		// Clone the cfg so the child's WorkDir override doesn't tear the
-		// parent's view. Config carries mutexes; pkg/config.Config.Clone
-		// produces a fresh struct with the same field values.
 		cfgClone := a.cfg.Clone()
 		cfgClone.WorkDir = sess.Path
 		childCfg = cfgClone
@@ -88,69 +84,63 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 		WithPermissionBroker(a.permissionBroker),
 	)
 	if err != nil {
-		// Roll back the worktree on construction failure so a half-spawn
-		// doesn't strand .evva/worktrees/.
 		if isolationSession != nil {
 			mode.CleanupSubagentWorktree(ctx, *isolationSession, true)
 		}
 		return "", fmt.Errorf("spawn: new agent: %w", err)
 	}
 
-	group := a.ToolState().AgentGroup()
-	group.Add(child.Name, child.ID, subProfile.Type.String(), req.Desc, req.AsyncMode)
+	state := a.ToolState().DaemonState()
+	ad, childCtx := newAgentDaemon(
+		ctx, state, child,
+		req.Name, subProfile.Type.String(), req.Desc, req.Prompt,
+		req.AsyncMode, a.ID,
+	)
+	state.Register(ad)
 
 	if child.IsAsync() {
-		// Detach: run the child in a goroutine, mark the group entry on
-		// exit. The ParentID's main loop picks the result up via
-		// DrainCompleted between turns. We deliberately pass the ParentID's
-		// ctx so a top-level cancel reaches the child.
+		// Detach: run the child in a goroutine, emit the terminal
+		// Lifecycle on exit. The parent's main loop picks the result up
+		// via drainDaemonSignals between turns. We pass childCtx so
+		// daemon_stop on this id cleanly cancels the child.
 		go func() {
-			resp, runErr := child.Run(ctx, req.Prompt)
+			resp, runErr := child.Run(childCtx, req.Prompt)
 			resp = finalizeIsolation(ctx, isolationSession, resp, a)
 			if runErr != nil {
-				// Mark the panel entry so DrainCompleted can deliver
-				// the failure back to the parent's next turn. iter-limit
-				// is a distinct phase from a real crash — surface both.
 				if errors.Is(runErr, ErrIterLimit) {
-					group.Crush(child.ID, "[subagent paused at iteration limit]", runErr)
+					ad.Crush("[subagent paused at iteration limit]", runErr, daemon.StatusFailed)
 				} else {
-					group.Crush(child.ID, "[subagent crushed]", runErr)
+					ad.Crush("[subagent crushed]", runErr, daemon.StatusFailed)
 				}
 				a.logger.Error("subagent crashed", "name", child.Name, "err", runErr)
 				return
 			}
 			a.logger.Debug("subagent done", "name", child.Name, "resp", truncateSummary(resp, 100))
-			// Report the result so the parent's loop drains it on its
-			// next iteration. Do NOT Remove here — async results live
-			// in the panel until DrainCompleted picks them up.
-			group.Report(child.ID, resp)
+			ad.Report(resp)
 		}()
 		return fmt.Sprintf("subagent %s(%s) spawned in background; its done will be delivered on a later turn (do not assume any result here).", child.Name, child.ID), nil
 	}
 
 	// Sync path: block on the child. Result is delivered via this return
 	// value (which the tool dispatcher hands back to the model as the
-	// AGENT tool_result). The group entry is short-lived — we update the
-	// phase, then Remove so DrainCompleted never sees a sync entry.
-	resp, runErr := child.Run(ctx, req.Prompt)
+	// AGENT tool_result). agentDaemon.Report / Crush for sync subagents
+	// is a state-only update (no Lifecycle Emit), so the catalog
+	// transition is visible to daemon_list during the run, and Evict
+	// here cleans it up before the next iter.
+	resp, runErr := child.Run(childCtx, req.Prompt)
 	resp = finalizeIsolation(ctx, isolationSession, resp, a)
 
+	defer state.Evict(ad.ID())
 	if runErr != nil {
 		if errors.Is(runErr, ErrIterLimit) {
-			// iters max
-			group.Crush(child.ID, "[subagent paused at iteration limit]", runErr)
-			group.Remove(child.ID)
+			ad.Crush("[subagent paused at iteration limit]", runErr, daemon.StatusFailed)
 			return resp + "\n [subagent paused at iteration limit]", nil
 		}
-		// sys crush
-		group.Crush(child.ID, "[subagent crushed]", runErr)
-		group.Remove(child.ID)
+		ad.Crush("[subagent crushed]", runErr, daemon.StatusFailed)
 		return "[subagent crushed due to system error]", runErr
 	}
 	a.logger.Debug("subagent done", "name", child.Name, "resp", truncateSummary(resp, 100))
-	// success report
-	group.Report(child.ID, resp)
-	group.Remove(child.ID)
+	ad.Report(resp)
 	return resp, nil
 }
 

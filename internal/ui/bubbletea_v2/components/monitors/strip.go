@@ -3,7 +3,9 @@
 // can glance at "background tasks" vs "streaming monitors" without
 // scanning a mixed list.
 //
-// Source of truth is *toolset.ToolState.MonitorTaskStore.
+// Source of truth is *toolset.ToolState.DaemonState filtered by
+// KindMonitor. The strip subscribes implicitly via the agent's
+// KindStoreUpdate bridge.
 package monitors
 
 import (
@@ -14,16 +16,18 @@ import (
 
 	"github.com/johnny1110/evva/internal/toolset"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/theme"
-	"github.com/johnny1110/evva/pkg/tools/monitor"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 )
 
 const monChipMaxLabel = 16
 
+// Render returns the chip strip as a (possibly multi-line) string. frame
+// is the spinner frame index used to animate running monitors.
 func Render(ts *toolset.ToolState, width int, th *theme.Theme, frame int) string {
-	if ts == nil || !ts.HasMonitorTaskStore() {
+	if ts == nil || !ts.HasDaemonState() {
 		return ""
 	}
-	rows := ts.MonitorTaskStore().Snapshot()
+	rows := ts.DaemonState().SnapshotByKind(daemon.KindMonitor)
 	if len(rows) == 0 {
 		return ""
 	}
@@ -60,12 +64,13 @@ func Render(ts *toolset.ToolState, width int, th *theme.Theme, frame int) string
 	return strings.Join(lines, "\n")
 }
 
-func renderChip(r monitor.MonitorTaskSnapshot, th *theme.Theme, frame int) string {
+func renderChip(r daemon.DaemonSnapshot, th *theme.Theme, frame int) string {
 	status := string(r.Status)
 	glyph := renderStatusGlyph(status, th, frame)
+	meta, _ := r.Metadata.(daemon.MonitorMeta)
 	label := r.Description
 	if label == "" {
-		label = r.Command
+		label = meta.Command
 	}
 	if len(label) > monChipMaxLabel {
 		label = label[:monChipMaxLabel-1] + "…"
@@ -74,12 +79,12 @@ func renderChip(r monitor.MonitorTaskSnapshot, th *theme.Theme, frame int) strin
 	chev := lipgloss.NewStyle().Foreground(c).Bold(true)
 	idStyle := lipgloss.NewStyle().Foreground(c)
 	labelStyle := lipgloss.NewStyle().Foreground(c)
-	counter := th.DimText.Render(fmt.Sprintf("·%d", r.EventCount))
+	counter := th.DimText.Render(fmt.Sprintf("·%d", meta.EventCount))
 	return chev.Render("‹") + glyph + " " + idStyle.Render(r.ID) + " " + labelStyle.Render(label) + counter + chev.Render("›")
 }
 
 func renderStatusGlyph(status string, th *theme.Theme, frame int) string {
-	if status == string(monitor.Monitoring) {
+	if status == string(daemon.StatusRunning) {
 		if style, ok := th.SpinnerStyle("draining"); ok {
 			return style.Render(theme.SpinnerFrame(frame))
 		}
@@ -91,11 +96,11 @@ func renderStatusGlyph(status string, th *theme.Theme, frame int) string {
 func chipColor(status string, th *theme.Theme) lipgloss.Color {
 	var c lipgloss.TerminalColor
 	switch status {
-	case string(monitor.Monitoring):
+	case string(daemon.StatusRunning):
 		c = th.Draining.GetForeground()
-	case string(monitor.Stopped):
+	case string(daemon.StatusCompleted), string(daemon.StatusKilled):
 		c = th.TasksDone.GetForeground()
-	case string(monitor.Failed):
+	case string(daemon.StatusFailed):
 		c = th.ErrorBanner.GetForeground()
 	default:
 		c = th.ContextFill.GetForeground()

@@ -99,8 +99,8 @@ func (a *Agent) Skills() []ui.Skill {
 
 // bindToolStateEvents wires the ToolState's unified change stream into the
 // agent's event sink. Every observable.Store registered on the ToolState
-// (today: task.Store, meta.SpawnGroup; tomorrow: whatever a developer
-// adds) flows through here as a single KindStoreUpdate event.
+// (today: todo.TodoStore, daemon.DaemonState; tomorrow: whatever a
+// developer adds) flows through here as a single KindStoreUpdate event.
 //
 // Adding a new panel requires no changes to this function — the new store
 // auto-registers via its lazy accessor on ToolState and the subscription

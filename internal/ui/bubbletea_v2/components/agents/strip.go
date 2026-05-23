@@ -4,13 +4,14 @@
 //
 //	‹⠋ explorer› ‹▶ writer› ‹✔ reviewer›
 //
-// Chips animate their leading glyph for active statuses (thinking,
-// executing, draining, …); terminal statuses (ready_report,
-// crushed) show their static glyph. Async subagents get a small
-// superscript "ᵃ" so the user can see fire-and-forget vs. blocking.
+// Chips animate their leading glyph for active phases (thinking,
+// executing, draining, …); terminal phases (ready_report, crushed)
+// show their static glyph. Async subagents get a small superscript "ᵃ"
+// so the user can see fire-and-forget vs. blocking.
 //
-// Returns "" when no subagents are tracked so the layout collapses
-// the slot entirely.
+// Source of truth is *toolset.ToolState.DaemonState filtered by
+// KindLocalAgent. The strip subscribes implicitly via the agent's
+// KindStoreUpdate bridge.
 package agents
 
 import (
@@ -18,29 +19,27 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/toolset"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/theme"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 )
 
-// agentChipMaxName caps the visible name length inside a chip so
-// several agents can fit on one row. Names beyond this truncate to
-// `chars-1` + "…".
+// agentChipMaxName caps the visible name length inside a chip so several
+// agents can fit on one row.
 const agentChipMaxName = 12
 
-// Render returns the chip strip as a styled (possibly multi-line)
-// string. width is the available column count; chips that don't
-// fit wrap to a fresh row rather than truncating — losing
-// visibility of a running agent is worse than spending an extra
-// row.
+// Render returns the chip strip as a styled (possibly multi-line) string.
+// width is the available column count; chips that don't fit wrap to a
+// fresh row rather than truncating — losing visibility of a running
+// agent is worse than spending an extra row.
 //
-// frame is the spinner index from the App's State; animated chips
-// pick their glyph from theme.SpinnerFrame(frame).
+// frame is the spinner index from the App's State; animated chips pick
+// their glyph from theme.SpinnerFrame(frame).
 func Render(ts *toolset.ToolState, width int, th *theme.Theme, frame int) string {
-	if ts == nil || !ts.HasAgentGroupPanel() {
+	if ts == nil || !ts.HasDaemonState() {
 		return ""
 	}
-	rows := ts.AgentGroup().Snapshot()
+	rows := ts.DaemonState().SnapshotByKind(daemon.KindLocalAgent)
 	if len(rows) == 0 {
 		return ""
 	}
@@ -55,7 +54,6 @@ func Render(ts *toolset.ToolState, width int, th *theme.Theme, frame int) string
 	for _, r := range rows {
 		chip := renderChip(r, th, frame)
 		chipWidth := lipgloss.Width(chip)
-		// 1 col spacer between chips on the same row.
 		needWidth := chipWidth
 		if currentWidth > 0 {
 			needWidth++
@@ -78,15 +76,16 @@ func Render(ts *toolset.ToolState, width int, th *theme.Theme, frame int) string
 	return strings.Join(lines, "\n")
 }
 
-// renderChip formats one subagent as ‹glyph name›. Chevrons + name
-// + glyph all share the agent's status color so the chip reads as
-// one unit. Async subagents get a dim "ᵃ" superscript before the
-// closing chevron.
-func renderChip(r meta.SubagentSnapshot, th *theme.Theme, frame int) string {
-	status := strings.ToLower(r.Status)
-	glyph := renderStatusGlyph(status, th, frame)
+// renderChip formats one subagent as ‹glyph name›. Glyph and color follow
+// the fine-grained Phase (LocalAgentMeta.Phase) while it's running, and
+// the coarse Status (DaemonStatus) once terminal. Async subagents get a
+// dim "ᵃ" superscript before the closing chevron.
+func renderChip(r daemon.DaemonSnapshot, th *theme.Theme, frame int) string {
+	meta, _ := r.Metadata.(daemon.LocalAgentMeta)
+	statusKey := chipStatusKey(r.Status, meta.Phase)
+	glyph := renderStatusGlyph(statusKey, th, frame)
 
-	name := r.Name
+	name := r.Description
 	if name == "" {
 		name = r.ID
 	}
@@ -94,19 +93,41 @@ func renderChip(r meta.SubagentSnapshot, th *theme.Theme, frame int) string {
 		name = name[:agentChipMaxName-1] + "…"
 	}
 
-	c := chipColor(status, th)
+	c := chipColor(statusKey, th)
 	chev := lipgloss.NewStyle().Foreground(c).Bold(true)
 	nameStyle := lipgloss.NewStyle().Foreground(c)
 	async := ""
-	if r.Async {
+	if meta.Async {
 		async = th.DimText.Render("ᵃ")
 	}
 	return chev.Render("‹") + glyph + " " + nameStyle.Render(name) + async + chev.Render("›")
 }
 
-// renderStatusGlyph picks the right symbol for a status string: the
-// rotating spinner frame in the spinner color when the status is
-// active, the static palette glyph otherwise.
+// chipStatusKey picks the string the theme palette is keyed off. While
+// the daemon is running, the fine-grained Phase wins (so the chip flips
+// through thinking → executing → draining → ...). Once terminal, the
+// daemon's coarse Status takes over.
+func chipStatusKey(status daemon.DaemonStatus, phase string) string {
+	if daemon.IsTerminal(status) {
+		switch status {
+		case daemon.StatusCompleted:
+			return "ready_report"
+		case daemon.StatusFailed:
+			return "crushed"
+		case daemon.StatusKilled:
+			return "interrupted"
+		}
+		return string(status)
+	}
+	if phase != "" {
+		return strings.ToLower(phase)
+	}
+	return string(status)
+}
+
+// renderStatusGlyph picks the right symbol for a status key: the rotating
+// spinner frame in the spinner color when the status is active, the static
+// palette glyph otherwise.
 func renderStatusGlyph(status string, th *theme.Theme, frame int) string {
 	if style, ok := th.SpinnerStyle(status); ok {
 		return style.Render(theme.SpinnerFrame(frame))
@@ -116,31 +137,27 @@ func renderStatusGlyph(status string, th *theme.Theme, frame int) string {
 }
 
 // chipColor maps a subagent's lifecycle status to its chip color.
-// Mirrors the status pill vocabulary so agent state reads
-// consistently across the bottom of the UI.
-//
-// We extract the color via lipgloss.Color() from theme styles that
-// already encode the right hue — keeps the palette private to the
-// theme package.
+// Mirrors the status pill vocabulary so agent state reads consistently
+// across the bottom of the UI.
 func chipColor(status string, th *theme.Theme) lipgloss.Color {
 	var c lipgloss.TerminalColor
 	switch status {
 	case "thinking", "texting":
-		c = th.Thinking.GetForeground() // cool grey-blue cluster
+		c = th.Thinking.GetForeground()
 	case "executing":
-		c = th.ToolCall.GetForeground() // brown
+		c = th.ToolCall.GetForeground()
 	case "draining", "saving":
-		c = th.Draining.GetForeground() // purple
+		c = th.Draining.GetForeground()
 	case "compacting", "max_iters":
-		c = th.Compacting.GetForeground() // yellow
+		c = th.Compacting.GetForeground()
 	case "ready_report", "idle":
-		c = th.TasksDone.GetForeground() // green
+		c = th.TasksDone.GetForeground()
 	case "crushed", "interrupted":
-		c = th.ErrorBanner.GetForeground() // red
+		c = th.ErrorBanner.GetForeground()
 	case "init":
-		c = th.DimText.GetForeground() // muted
+		c = th.DimText.GetForeground()
 	default:
-		c = th.ContextFill.GetForeground() // cyan
+		c = th.ContextFill.GetForeground()
 	}
 	if col, ok := c.(lipgloss.Color); ok {
 		return col

@@ -14,7 +14,7 @@ import (
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/internal/permission"
 	"github.com/johnny1110/evva/pkg/tools"
-	"github.com/johnny1110/evva/internal/tools/meta"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/internal/tools/mode"
 	"github.com/johnny1110/evva/pkg/tools/shell"
 )
@@ -26,7 +26,6 @@ import (
 //   INIT         AgentStatus = "init"
 //   THINKING     AgentStatus = "thinking"      — thinking()
 //   EXECUTING    AgentStatus = "executing"     — execTool()
-//   DRAINING     AgentStatus = "draining"      — drainAsyncSubagents()
 //   COMPACTING   AgentStatus = "compacting"    — compact() (compact.go)
 //   TEXTING      AgentStatus = "texting"       — text()
 //   IDLE         AgentStatus = "idle"          — turnOver(), done() (loop.go)
@@ -36,17 +35,18 @@ import (
 //   READY_REPORT AgentStatus = "ready_report"  — done() (loop.go)
 //
 // Each method sets a.status, emits the appropriate event for the main agent
-// (or pushes the equivalent update through the parent's SpawnGroup for a
-// subagent), and either returns the state-machine's outcome or hands off to
-// the next step in the loop.
+// (or pushes the equivalent update through the parent's agentDaemon entry
+// in the parent's DaemonState for a subagent), and either returns the
+// state-machine's outcome or hands off to the next step in the loop.
 
 // interrupted converts a raw ctx error into the llm.ErrInterrupted contract
 // the rest of the codebase agrees on, and emits the cancellation event.
 func (a *Agent) interrupted(err error) error {
 	a.status = constant.INTERRUPTED
 	if a.IsSubagent() {
-		// subagent using spawnGroup to sync info.
-		a.getParentSpawnGroup().Crush(a.ID, "[subagent loop interrupted]", err)
+		if ad := a.getOwnDaemon(); ad != nil {
+			ad.Crush("[subagent loop interrupted]", err, daemon.StatusKilled)
+		}
 		return err
 	}
 
@@ -57,51 +57,6 @@ func (a *Agent) interrupted(err error) error {
 		return llm.ErrInterrupted
 	}
 	return err
-}
-
-// drainAsyncSubagents pulls every async subagent that has reached a
-// terminal phase (done or crushed) out of the panel and folds its result
-// into the conversation as a synthetic user message. This runs at the top
-// of each loop iteration so:
-//
-//   - Async results that arrived during the previous LLM call land in the
-//     next request automatically.
-//   - Async results that arrive after the loop exits sit in the panel
-//     until the user types again; the next Run picks them up here.
-//
-// Sync subagents are never drained (the spawner removes them as soon as
-// their tool return delivers the result), so this only injects what the
-// model could not have already seen.
-func (a *Agent) drainAsyncSubagents() {
-	if a.IsSubagent() || !a.toolState.HasAgentGroupPanel() {
-		// subagents don't have subagents.
-		return
-	}
-
-	// completed = async agent done reports.
-	completed := a.toolState.AgentGroup().DrainCompleted()
-	if len(completed) == 0 {
-		return
-	}
-
-	a.status = constant.DRAINING
-	a.emit(event.KindDrainingInfo, nil)
-
-	var b strings.Builder
-	b.WriteString("[Async subagent results]\n")
-	for _, s := range completed {
-		switch s.Status {
-		case constant.CRUSHED.String():
-			fmt.Fprintf(&b, "- subagent %s (%s) failed: %s\n", s.Name, s.JobDesc, s.Err)
-		case constant.MAX_ITERS.String():
-			fmt.Fprintf(&b, "- subagent %s (%s) reached max iters: %s\n", s.Name, s.Type, s.Err)
-		default:
-			fmt.Fprintf(&b, "- subagent %s (%s) done:\n%s\n", s.Name, s.Type, s.Summary)
-		}
-	}
-
-	a.session.Append(llm.Message{Role: llm.RoleUser, Content: b.String()})
-	a.logger.Debug("subagents.drained", "count", len(completed))
 }
 
 // drainWakeupPrompts pulls every prompt the SCHEDULE_WAKEUP tool has
@@ -201,7 +156,9 @@ func (a *Agent) thinking(ctx context.Context, iter int) (llm.Response, error) {
 	a.status = constant.THINKING
 
 	if a.IsSubagent() {
-		a.getParentSpawnGroup().Status(a.ID, constant.THINKING)
+		if ad := a.getOwnDaemon(); ad != nil {
+			ad.Phase(constant.THINKING)
+		}
 	} else {
 		a.emit(event.KindTurnStart, func(e *event.Event) {
 			e.Turn = &event.TurnPayload{Iteration: iter}
@@ -213,13 +170,16 @@ func (a *Agent) thinking(ctx context.Context, iter int) (llm.Response, error) {
 
 // crush is the terminal transition for Go-level failures the loop can't
 // recover from — LLM transport errors, tool panics, etc. Subagent crashes
-// surface to the parent via SpawnGroup; root-agent crashes emit
-// KindError so the TUI can show a banner.
+// surface to the parent via the parent's agentDaemon entry in
+// DaemonState; root-agent crashes emit KindError so the TUI can show a
+// banner.
 func (a *Agent) crush(stage string, err error) error {
 	a.status = constant.CRUSHED
 
 	if a.IsSubagent() {
-		a.getParentSpawnGroup().Crush(a.ID, "[subagent crushed]", err)
+		if ad := a.getOwnDaemon(); ad != nil {
+			ad.Crush("[subagent crushed]", err, daemon.StatusFailed)
+		}
 		return err
 	}
 
@@ -239,7 +199,7 @@ func (a *Agent) crush(stage string, err error) error {
 // UI. Always emits KindUsage; emits whole-block KindThinking and KindText
 // only in non-streaming mode (in streaming mode the chunk events already
 // painted those blocks progressively — see internal/agent/stream.go).
-// Subagents skip all emissions; the parent SpawnGroup carries their state.
+// Subagents skip all emissions; the parent's agentDaemon entry carries their state.
 func (a *Agent) text(usage llm.Usage, thinking string, content string) {
 	a.session.RecordTurn(usage)
 	a.status = constant.TEXTING
@@ -290,7 +250,9 @@ func (a *Agent) turnOver(iter int) {
 func (a *Agent) limitBreak() error {
 	a.status = constant.MAX_ITERS
 	if a.IsSubagent() {
-		a.getParentSpawnGroup().Crush(a.ID, "[subagent paused at iteration limit]", ErrIterLimit)
+		if ad := a.getOwnDaemon(); ad != nil {
+			ad.Crush("[subagent paused at iteration limit]", ErrIterLimit, daemon.StatusFailed)
+		}
 		return ErrIterLimit
 	}
 
@@ -310,7 +272,9 @@ func (a *Agent) execTool(ctx context.Context, call *tools.Call, tool tools.Tool,
 	a.logger.Debug("tool.dispatch", "name", call.Name, "tool_id", call.ID)
 
 	if a.IsSubagent() {
-		a.getParentSpawnGroup().Status(a.ID, constant.EXECUTING)
+		if ad := a.getOwnDaemon(); ad != nil {
+			ad.Phase(constant.EXECUTING)
+		}
 	} else {
 		a.emit(event.KindToolUseStart, func(e *event.Event) {
 			e.ToolUseStart = &event.ToolUseStartPayload{
@@ -517,17 +481,6 @@ func extractBashCommand(raw []byte) string {
 		b.WriteByte(c)
 	}
 	return ""
-}
-
-// getParentSpawnGroup is the subagent-only handle on the root agent's
-// SpawnGroup panel — the channel through which a subagent's status,
-// final report, and crashes propagate up to the parent without going
-// through the event sink.
-func (a *Agent) getParentSpawnGroup() *meta.SpawnGroup {
-	if a.Parent == nil {
-		return nil
-	}
-	return a.Parent.ToolState().AgentGroup()
 }
 
 // extractInputDescription pulls a top-level `description` string out of a

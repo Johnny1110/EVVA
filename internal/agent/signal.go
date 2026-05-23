@@ -1,35 +1,32 @@
 package agent
 
 import (
-	"fmt"
 	"strings"
-	"time"
 
-	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/pkg/llm"
-	"github.com/johnny1110/evva/pkg/tools/monitor"
-	"github.com/johnny1110/evva/pkg/tools/shell"
 )
 
-// SignalKind tags an AgentSignal. The two values share one chan so the
-// pump goroutine acquires the run flag once per signal regardless of
-// source — bg bash and Monitor have parallel idle-wake semantics.
+// SignalKind tags an AgentSignal. After the daemon refactor only one kind
+// remains — every background unit (bash bg, monitor, async subagent)
+// flows through SignalDaemon. The constant is kept as a SignalKind value
+// (rather than dropping the enum) so future signal kinds — e.g. a UI
+// nudge, a remote control event — can plug in without touching the loop.
 type SignalKind string
 
 const (
-	SignalBgResult     SignalKind = "bg_result"
-	SignalMonitorEvent SignalKind = "monitor_event"
+	// SignalDaemon wakes the loop after any daemon emits a signal
+	// (lifecycle transition or stream event). The daemon state is the
+	// authoritative source — this signal carries no payload; the drain
+	// at iter start re-reads from DaemonState.DrainSignals.
+	SignalDaemon SignalKind = "daemon"
 )
 
-// AgentSignal is the unit the agent's signal channel carries. Exactly
-// one of the typed pointer fields is non-nil per signal, matched to
-// Kind. The producer (Bash bg goroutine, Monitor goroutine) populates
-// the store BEFORE sending the signal — that ordering is what lets the
-// drain path read consistent state when CAS loses.
+// AgentSignal is the unit the agent's signal channel carries. Today
+// SignalDaemon is the only kind — it's wake-only, no payload. New kinds
+// would add typed pointer fields here and a matching case in
+// emitSignalEvent.
 type AgentSignal struct {
-	Kind         SignalKind
-	BgResult     *shell.BgTaskSnapshot
-	MonitorEvent *monitor.MonitorEvent
+	Kind SignalKind
 }
 
 // signalChanCap is the buffered capacity of a.signalCh. Sized so a
@@ -82,19 +79,17 @@ func (a *Agent) signalPump() {
 
 // handleSignal does two things per signal:
 //
-//  1. Always emit the wire event for the TUI (KindBgResult /
-//     KindMonitorEvent) so the strip + transcript can react regardless
-//     of whether the loop is idle or busy.
+//  1. Optionally emit a wire event for the TUI (today SignalDaemon is
+//     wake-only because the Observable store path already covers TUI
+//     fan-out for daemons; future signal kinds can hook emit here).
 //
 //  2. If the loop is idle, try to acquire it via CAS on a.running and
-//     start a fresh runLoop seeded with a system-reminder prompt. The
-//     store / queue mutation already happened on the producer side, so
-//     the new runLoop's drain at iter start picks it up.
+//     start a fresh runLoop. The store mutation already happened on the
+//     producer side, so the new runLoop's drain at iter start picks it up.
 //
-// Subagents never wake on signals — only the root agent. Subagent
-// bg results bubble up through event.BubbleUp to the parent's TUI
-// strip; their conversation context is rebuilt only by the parent's
-// next dispatch.
+// Subagents never wake on signals — only the root agent. Subagent results
+// bubble up through event.BubbleUp to the parent's TUI strip; their
+// conversation context is rebuilt only by the parent's next dispatch.
 func (a *Agent) handleSignal(sig AgentSignal) {
 	a.emitSignalEvent(sig)
 
@@ -113,39 +108,14 @@ func (a *Agent) handleSignal(sig AgentSignal) {
 	go a.runFromSignal()
 }
 
-// emitSignalEvent fires KindBgResult or KindMonitorEvent for one signal
-// regardless of idle/busy state. The payload is the wire-friendly
-// snapshot, so a subagent's bubbled event reaches the parent TUI with
-// the right AgentID + content.
+// emitSignalEvent fires a typed wire event for each signal kind, if the
+// kind has one. SignalDaemon is wake-only because the Observable store
+// path (DaemonState → ToolState fanout → KindStoreUpdate) already covers
+// TUI fan-out.
 func (a *Agent) emitSignalEvent(sig AgentSignal) {
 	switch sig.Kind {
-	case SignalBgResult:
-		if sig.BgResult == nil {
-			return
-		}
-		snap := sig.BgResult
-		a.emit(event.KindBgResult, func(e *event.Event) {
-			e.BgResult = &event.BgResultPayload{
-				TaskID:   snap.ID,
-				Status:   string(snap.Status),
-				ExitCode: snap.ExitCode,
-				Output:   snap.Output,
-				AgentID:  snap.AgentID,
-			}
-		})
-	case SignalMonitorEvent:
-		if sig.MonitorEvent == nil {
-			return
-		}
-		ev := sig.MonitorEvent
-		a.emit(event.KindMonitorEvent, func(e *event.Event) {
-			e.MonitorEvent = &event.MonitorEventPayload{
-				MonitorID: ev.MonitorID,
-				Line:      ev.Line,
-				Closing:   ev.Closing,
-				AgentID:   a.ID,
-			}
-		})
+	case SignalDaemon:
+		// Wake-only — no wire event.
 	}
 }
 
@@ -159,32 +129,6 @@ func (a *Agent) runFromSignal() {
 	if _, err := a.runLoop(a.rootCtx); err != nil {
 		a.logger.Warn("run.signal_wake.err", "err", err)
 	}
-}
-
-// composeBgReminder builds the <system-reminder> body for one drained
-// background-task snapshot. Used by drainBackgroundTaskResults to
-// concatenate every drained terminal task into a single RoleUser
-// message.
-func composeBgReminder(snap shell.BgTaskSnapshot) string {
-	verb := string(snap.Status)
-	output := strings.TrimRight(snap.Output, "\n")
-	if output == "" {
-		output = "(no output)"
-	}
-	return fmt.Sprintf("<system-reminder>background task %s %s, exit code %d\n%s\n</system-reminder>",
-		snap.ID, verb, snap.ExitCode, output)
-}
-
-// composeMonitorReminder builds the body for one drained monitor
-// event. Closing events get a distinct phrasing so the model knows the
-// monitor is finished and shouldn't expect more updates.
-func composeMonitorReminder(ev monitor.MonitorEvent) string {
-	if ev.Closing {
-		return fmt.Sprintf("<system-reminder>monitor %s closed at %s</system-reminder>",
-			ev.MonitorID, ev.At.Format(time.RFC3339))
-	}
-	return fmt.Sprintf("<system-reminder>monitor %s event: %s</system-reminder>",
-		ev.MonitorID, ev.Line)
 }
 
 // signalReminderMessage assembles one RoleUser message body from the

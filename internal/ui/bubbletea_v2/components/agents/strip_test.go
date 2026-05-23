@@ -1,16 +1,17 @@
 package agents
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"github.com/johnny1110/evva/pkg/constant"
-	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/toolset"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/theme"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 )
 
 func init() {
@@ -37,34 +38,57 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
-// newTSWithAgents materialises the panel and seeds each snapshot
-// via SpawnGroup.Add + Status (the store's actual ingest path).
-// Status strings must match constant.AgentStatus values so the
-// store accepts them.
-func newTSWithAgents(t *testing.T, snaps []meta.SubagentSnapshot) *toolset.ToolState {
+// agentFixture stands in for a real agentDaemon in strip render tests.
+// All accessors return immutable values so the strip can render without
+// touching the daemon's run loop.
+type agentFixture struct {
+	snap daemon.DaemonSnapshot
+}
+
+func (f *agentFixture) Snapshot() daemon.DaemonSnapshot { return f.snap }
+func (f *agentFixture) Kill(_ context.Context) error    { return nil }
+func (f *agentFixture) Output() string                  { return "" }
+
+// newTSWithAgents materialises the DaemonState and seeds it with
+// local_agent snapshots so Render can pull them via SnapshotByKind.
+func newTSWithAgents(t *testing.T, snaps []daemon.DaemonSnapshot) *toolset.ToolState {
 	t.Helper()
 	ts := toolset.NewToolState()
-	g := ts.AgentGroup()
+	state := ts.DaemonState()
 	for _, s := range snaps {
-		g.Add(s.Name, s.ID, s.Type, s.JobDesc, s.Async)
-		if s.Status != "" {
-			g.Status(s.ID, constant.AgentStatus(s.Status))
-		}
+		state.Register(&agentFixture{snap: s})
 	}
 	return ts
 }
 
+// agentSnap builds a local_agent DaemonSnapshot fixture with the given
+// description, async marker, daemon status, and Phase.
+func agentSnap(id, name, phase string, status daemon.DaemonStatus, async bool) daemon.DaemonSnapshot {
+	return daemon.DaemonSnapshot{
+		ID:          id,
+		Kind:        daemon.KindLocalAgent,
+		Status:      status,
+		Description: name,
+		StartedAt:   time.Now(),
+		Metadata: daemon.LocalAgentMeta{
+			AgentType: "general-purpose",
+			Async:     async,
+			Phase:     phase,
+		},
+	}
+}
+
 func TestRenderEmpty(t *testing.T) {
 	ts := toolset.NewToolState()
-	// HasAgentGroupPanel is false until AgentGroup() is materialised.
+	// HasDaemonState is false until DaemonState() is materialised.
 	if got := Render(ts, 80, theme.Default(), 0); got != "" {
-		t.Errorf("nil group should render empty, got %q", got)
+		t.Errorf("empty state should render empty, got %q", got)
 	}
 }
 
 func TestRenderSingleChip(t *testing.T) {
-	ts := newTSWithAgents(t, []meta.SubagentSnapshot{
-		{ID: "ag-1", Name: "explorer", Type: "explore", Status: "thinking"},
+	ts := newTSWithAgents(t, []daemon.DaemonSnapshot{
+		agentSnap("ag-1", "explorer", "thinking", daemon.StatusRunning, false),
 	})
 	out := Render(ts, 80, theme.Default(), 0)
 	plain := stripANSI(out)
@@ -77,8 +101,8 @@ func TestRenderSingleChip(t *testing.T) {
 }
 
 func TestRenderAsyncMarker(t *testing.T) {
-	ts := newTSWithAgents(t, []meta.SubagentSnapshot{
-		{ID: "ag-1", Name: "bg-job", Status: "executing", Async: true},
+	ts := newTSWithAgents(t, []daemon.DaemonSnapshot{
+		agentSnap("ag-1", "bg-job", "executing", daemon.StatusRunning, true),
 	})
 	out := stripANSI(Render(ts, 80, theme.Default(), 0))
 	if !strings.Contains(out, "ᵃ") {
@@ -88,8 +112,8 @@ func TestRenderAsyncMarker(t *testing.T) {
 
 func TestRenderTruncatesLongName(t *testing.T) {
 	long := strings.Repeat("a", 50)
-	ts := newTSWithAgents(t, []meta.SubagentSnapshot{
-		{ID: "ag-1", Name: long, Status: "thinking"},
+	ts := newTSWithAgents(t, []daemon.DaemonSnapshot{
+		agentSnap("ag-1", long, "thinking", daemon.StatusRunning, false),
 	})
 	out := stripANSI(Render(ts, 80, theme.Default(), 0))
 	if strings.Contains(out, long) {
@@ -101,14 +125,19 @@ func TestRenderTruncatesLongName(t *testing.T) {
 }
 
 func TestRenderWrapsToMultipleLines(t *testing.T) {
-	// 6 agents at ~16 cols each (chip + spacer) easily overflow 60.
-	snaps := []meta.SubagentSnapshot{
-		{ID: "a", Name: "one", Status: "thinking"},
-		{ID: "b", Name: "two", Status: "executing"},
-		{ID: "c", Name: "three", Status: "draining"},
-		{ID: "d", Name: "four", Status: "ready_report"},
-		{ID: "e", Name: "five", Status: "crushed"},
-		{ID: "f", Name: "six", Status: "init"},
+	// Six chips at ~16 cols easily overflow 30.
+	now := time.Now()
+	snaps := []daemon.DaemonSnapshot{
+		agentSnap("a", "one", "thinking", daemon.StatusRunning, false),
+		agentSnap("b", "two", "executing", daemon.StatusRunning, false),
+		agentSnap("c", "three", "draining", daemon.StatusRunning, false),
+		agentSnap("d", "four", "ready_report", daemon.StatusCompleted, false),
+		agentSnap("e", "five", "crushed", daemon.StatusFailed, false),
+		agentSnap("f", "six", "init", daemon.StatusRunning, false),
+	}
+	// Strip groups by StartedAt; spread them so order is stable.
+	for i := range snaps {
+		snaps[i].StartedAt = now.Add(time.Duration(i) * time.Millisecond)
 	}
 	ts := newTSWithAgents(t, snaps)
 	out := Render(ts, 30, theme.Default(), 0)
@@ -118,8 +147,8 @@ func TestRenderWrapsToMultipleLines(t *testing.T) {
 }
 
 func TestRenderSpinnerFrameAdvances(t *testing.T) {
-	ts := newTSWithAgents(t, []meta.SubagentSnapshot{
-		{ID: "ag-1", Name: "spin", Status: "thinking"}, // active → animates
+	ts := newTSWithAgents(t, []daemon.DaemonSnapshot{
+		agentSnap("ag-1", "spin", "thinking", daemon.StatusRunning, false), // active → animates
 	})
 	frame0 := Render(ts, 80, theme.Default(), 0)
 	frame3 := Render(ts, 80, theme.Default(), 3)

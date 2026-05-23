@@ -31,9 +31,8 @@ import (
 	"github.com/johnny1110/evva/pkg/skill"
 	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
-	"github.com/johnny1110/evva/pkg/tools/monitor"
-	"github.com/johnny1110/evva/pkg/tools/shell"
 	"github.com/johnny1110/evva/pkg/tools/todo"
 )
 
@@ -52,7 +51,6 @@ type ToolState struct {
 	planController     mode.PlanModeController
 	worktreeController mode.WorktreeController
 	readTracker        *fs.ReadTracker
-	subAgentGroup      *meta.SpawnGroup
 	wakeupQueue        *meta.WakeupQueue
 	// userPromptQueue carries prompts the user typed while a Run was
 	// already in flight. The agent loop drains it between iterations
@@ -79,22 +77,16 @@ type ToolState struct {
 	// fs/glob, dev/feedback) read it through Config() at Execute time.
 	cfg *config.Config
 
-	// bgTaskStore holds detached Bash tasks spawned with run_in_background.
-	// Lazy-allocated on first BgTaskStore() access; registers itself with
-	// the unified change stream so the TUI's bg strip + the agent's
-	// KindStoreUpdate bridge see lifecycle transitions.
-	bgTaskStore *shell.BgTaskStore
-	// monitorTaskStore + monitorEventQueue carry MonitorTool state.
-	// monitorTaskStore tracks per-monitor metadata + status; the queue is
-	// the shared FIFO every running monitor's goroutine writes streamed
-	// stdout lines into.
-	monitorTaskStore  *monitor.MonitorTaskStore
-	monitorEventQueue *monitor.MonitorEventQueue
+	// daemonState is the unified catalog of every background unit — bash
+	// run_in_background, async subagent, monitor stream. Replaces the
+	// previous trio of BgTaskStore + MonitorTaskStore + SpawnGroup.
+	// Lazy-allocated on first DaemonState() access.
+	daemonState *daemon.DaemonState
 
 	// signalSender carries the callbacks the agent installs in New so
 	// tool families can deliver event-driven results without importing
 	// internal/agent (no cycle). Filled by SetSignalSender; consumed by
-	// the BgTaskHost / MonitorHost methods below.
+	// the DaemonHost methods below.
 	signalSender SignalSender
 	// Future: cronService, ...
 
@@ -144,12 +136,6 @@ func (s *ToolState) fanout(c observable.Change) {
 		fn(c) // 將 Change 散給所有觀察 ToolState 的訂閱者
 	}
 }
-
-// HasAgentGroupPanel reports whether a SpawnGroup has already been
-// allocated. The agent loop uses this to skip drain calls in runs that
-// never spawned a subagent (avoids forcing the lazy allocation just to
-// peek at an empty panel).
-func (s *ToolState) HasAgentGroupPanel() bool { return s.subAgentGroup != nil }
 
 // TodoStore returns the todo subsystem's backing store, allocating one on
 // first use. The todo_write tool constructed against the same ToolState
@@ -233,14 +219,6 @@ func (s *ToolState) ReadTracker() *fs.ReadTracker {
 	return s.readTracker
 }
 
-func (s *ToolState) AgentGroup() *meta.SpawnGroup {
-	if s.subAgentGroup == nil {
-		s.subAgentGroup = meta.NewSpawnGroup()
-		s.RegisterStore(s.subAgentGroup)
-	}
-	return s.subAgentGroup
-}
-
 // HasWakeupQueue reports whether a WakeupQueue has already been allocated.
 // The agent loop uses this to skip the drain call in runs that never built
 // the SCHEDULE_WAKEUP tool (avoids the lazy allocation just to peek at an
@@ -317,12 +295,16 @@ func (s *ToolState) Workdir() string {
 // deliver event-driven results without importing internal/agent (which
 // would create an import cycle, since internal/agent imports
 // internal/toolset). Each callback is set by SetSignalSender; the
-// BgTaskHost / MonitorHost methods below invoke them.
+// DaemonHost methods below invoke them.
 type SignalSender struct {
-	NotifyBg      func(snap shell.BgTaskSnapshot)
-	NotifyMonitor func(ev monitor.MonitorEvent)
-	RootCtx       func() context.Context
-	AgentID       func() string
+	// NotifyDaemon wakes the agent loop after any daemon Emits a signal
+	// (lifecycle transition or stream event). No-arg by design: the
+	// signal queue in DaemonState is the durable backstop, so the wake-up
+	// only needs to fire the CAS+runLoop entry. Installed by agent.New;
+	// nil-safe in tests.
+	NotifyDaemon func()
+	RootCtx      func() context.Context
+	AgentID      func() string
 }
 
 // SetSignalSender installs the signal-delivery callbacks. Called once
@@ -332,24 +314,6 @@ type SignalSender struct {
 func (s *ToolState) SetSignalSender(sender SignalSender) {
 	s.signalSender = sender
 }
-
-// --- BgTaskHost implementation -------------------------------------------
-
-// BgTaskStore returns the agent's background-task catalog, allocating
-// on first use. Registers the store with the unified change stream so
-// TUI strips + the KindStoreUpdate bridge see lifecycle transitions.
-func (s *ToolState) BgTaskStore() *shell.BgTaskStore {
-	if s.bgTaskStore == nil {
-		s.bgTaskStore = shell.NewBgTaskStore()
-		s.RegisterStore(s.bgTaskStore)
-	}
-	return s.bgTaskStore
-}
-
-// HasBgTaskStore reports whether a store has been allocated. The agent
-// loop uses this to skip the drain in runs that never spawned a bg
-// task (avoids forcing the lazy allocation).
-func (s *ToolState) HasBgTaskStore() bool { return s.bgTaskStore != nil }
 
 // RootCtx returns the agent-lifetime context the bg / monitor goroutines
 // bind to. nil-safe when the agent hasn't installed a sender yet (tests).
@@ -369,57 +333,27 @@ func (s *ToolState) AgentID() string {
 	return s.signalSender.AgentID()
 }
 
-// NotifyBgResult delivers one terminal bg-task snapshot to the agent's
-// signal pump. No-op when the host never installed a sender.
-func (s *ToolState) NotifyBgResult(snap shell.BgTaskSnapshot) {
-	if s.signalSender.NotifyBg == nil {
-		return
+// --- DaemonHost implementation -------------------------------------------
+
+// DaemonState returns the agent's daemon catalog, allocating on first use.
+// Registers with the unified change stream so TUI strips + the agent's
+// KindStoreUpdate bridge see lifecycle transitions. The notify closure
+// passed to NewState is the SignalSender.NotifyDaemon hook; tests that
+// build a ToolState without a sender get a nil notify (wake-up no-ops,
+// drain still works).
+func (s *ToolState) DaemonState() *daemon.DaemonState {
+	if s.daemonState == nil {
+		s.daemonState = daemon.NewState(s.signalSender.NotifyDaemon)
+		s.RegisterStore(s.daemonState)
 	}
-	s.signalSender.NotifyBg(snap)
+	return s.daemonState
 }
 
-// --- MonitorHost implementation ------------------------------------------
-
-// MonitorTaskStore returns the agent's monitor catalog, allocating on
-// first use.
-func (s *ToolState) MonitorTaskStore() *monitor.MonitorTaskStore {
-	if s.monitorTaskStore == nil {
-		s.monitorTaskStore = monitor.NewMonitorTaskStore()
-		s.RegisterStore(s.monitorTaskStore)
-	}
-	return s.monitorTaskStore
-}
-
-// HasMonitorTaskStore reports whether a monitor store has been
-// allocated. Mirrors HasBgTaskStore.
-func (s *ToolState) HasMonitorTaskStore() bool { return s.monitorTaskStore != nil }
-
-// MonitorEventQueue returns the per-agent queue every running monitor
-// writes streamed events into. Lazy-allocated on first use; the agent
-// loop's drain helper reads through it at iter start.
-func (s *ToolState) MonitorEventQueue() *monitor.MonitorEventQueue {
-	if s.monitorEventQueue == nil {
-		s.monitorEventQueue = monitor.NewMonitorEventQueue()
-	}
-	return s.monitorEventQueue
-}
-
-// HasMonitorEventQueue reports whether the event queue has been
-// allocated. The loop uses this to short-circuit the drain when no
-// monitor has ever been spawned.
-func (s *ToolState) HasMonitorEventQueue() bool { return s.monitorEventQueue != nil }
-
-// NotifyMonitorEvent delivers one streamed monitor event to the
-// agent's signal pump AND enqueues it on the durable queue. The queue
-// is the backstop the drain reads at iter start; the signal pump
-// triggers idle-wake.
-func (s *ToolState) NotifyMonitorEvent(ev monitor.MonitorEvent) {
-	s.MonitorEventQueue().Enqueue(ev)
-	if s.signalSender.NotifyMonitor == nil {
-		return
-	}
-	s.signalSender.NotifyMonitor(ev)
-}
+// HasDaemonState reports whether a daemon catalog has been allocated. The
+// agent loop uses this to short-circuit the drain when no daemon has ever
+// been registered (avoids forcing the lazy allocation just to peek at an
+// empty queue).
+func (s *ToolState) HasDaemonState() bool { return s.daemonState != nil }
 
 // HasUserPromptQueue reports whether a UserPromptQueue has already been
 // allocated. The agent loop uses this to skip the drain in runs that

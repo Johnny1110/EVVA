@@ -59,23 +59,35 @@ const (
 // Deferred tools — name-only until loaded with TOOL_SEARCH. ================
 // Grouped by purpose to match docs/claude-tool/claude-code-tool-summary.md.
 
-// Process management. Background-task tools land in Phase 16:
-//   - Bash run_in_background spawns a detached process that delivers its
-//     result back to the agent loop asynchronously.
-//   - MONITOR streams stdout lines from a long-running command as events.
-//   - TASK_LIST / TASK_OUTPUT / TASK_STOP let the model introspect/control
-//     background tasks between fire-and-notification.
+// Process management. Daemons are the unified abstraction over background
+// units — bash run_in_background tasks, async subagents, monitor streams,
+// and future kinds (remote_agent, in_process_teammate, local_workflow,
+// dream). See docs/design/daemon-design.md.
+//
+//   - Bash run_in_background:true spawns a bash daemon (id prefix "b").
+//   - MONITOR spawns a monitor daemon (id prefix "m") streaming stdout
+//     lines as agent-loop events.
+//   - Async Agent calls register an agent daemon (id prefix "a").
+//   - DAEMON_LIST / DAEMON_OUTPUT / DAEMON_STOP introspect and control
+//     any daemon uniformly.
+//
+// The previous TASK_LIST / TASK_OUTPUT / TASK_STOP names have been removed
+// — the task_* namespace is reserved for the future todo-v2 implementation
+// (see docs/design/task-design.md).
 const (
 	MONITOR ToolName = "monitor"
 
-	// TASK_LIST — enumerate every background task with status + metadata.
-	TASK_LIST ToolName = "task_list"
-	// TASK_OUTPUT — fetch the captured stdout/stderr of a running or
-	// completed background task. Optional tail limits to last N lines.
-	TASK_OUTPUT ToolName = "task_output"
-	// TASK_STOP — kill a running background task. Idempotent for tasks
-	// that have already finished.
-	TASK_STOP ToolName = "task_stop"
+	// DAEMON_LIST — enumerate every registered daemon with status + metadata.
+	// Optional kind filter and include_terminal flag.
+	DAEMON_LIST ToolName = "daemon_list"
+	// DAEMON_OUTPUT — fetch the captured output of one daemon. Format is
+	// kind-specific: bash stdout/stderr tail, monitor event ring, agent
+	// prompt/summary. Optional tail limits to the last N lines.
+	DAEMON_OUTPUT ToolName = "daemon_output"
+	// DAEMON_STOP — terminate a running daemon by id. Works uniformly
+	// across bash background tasks, monitors, and async subagents.
+	// Idempotent for daemons that have already reached a terminal status.
+	DAEMON_STOP ToolName = "daemon_stop"
 
 	ENTER_PLAN_MODE ToolName = "enter_plan_mode"
 	EXIT_PLAN_MODE  ToolName = "exit_plan_mode"

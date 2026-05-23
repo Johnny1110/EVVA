@@ -10,6 +10,7 @@ import (
 	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/pkg/tools/cron"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/monitor"
 	"github.com/johnny1110/evva/pkg/tools/notebook"
@@ -56,10 +57,10 @@ func init() {
 	// own directory. Grep and Tree remain stateless singletons because
 	// they accept an absolute path as a parameter.
 	//
-	// run_in_background needs the BgTaskHost (BgTaskStore + signal
-	// sender) — type-assert here so the production path is wired by
+	// run_in_background needs the DaemonHost (DaemonState + RootCtx +
+	// AgentID) — type-assert here so the production path is wired by
 	// default. Tests that build with NewBash directly still get the
-	// historical sync-only behaviour.
+	// sync-only behaviour.
 	r.MustRegister(tools.BASH, func(s tools.State) (tools.Tool, error) {
 		ts := s.(*ToolState)
 		return shell.NewBashWithHost(ts.Workdir(), ts), nil
@@ -67,17 +68,18 @@ func init() {
 	r.MustRegister(tools.GREP, func(tools.State) (tools.Tool, error) { return shell.Grep, nil })
 	r.MustRegister(tools.TREE, func(tools.State) (tools.Tool, error) { return shell.Tree, nil })
 
-	// task_* read/control surface for background bash tasks. All three
-	// reach through ToolState (BgTaskHost) — they fail clean when no
-	// bg task has ever been spawned.
-	r.MustRegister(tools.TASK_LIST, func(s tools.State) (tools.Tool, error) {
-		return shell.NewTaskList(s.(*ToolState)), nil
+	// daemon_* read/control surface for every background unit (bash bg,
+	// monitor, async subagent). All three resolve through ToolState's
+	// DaemonState() — lazy-allocated on first registration. See
+	// docs/design/daemon-design.md.
+	r.MustRegister(tools.DAEMON_LIST, func(s tools.State) (tools.Tool, error) {
+		return daemon.NewList(s.(*ToolState).DaemonState()), nil
 	})
-	r.MustRegister(tools.TASK_OUTPUT, func(s tools.State) (tools.Tool, error) {
-		return shell.NewTaskOutput(s.(*ToolState)), nil
+	r.MustRegister(tools.DAEMON_OUTPUT, func(s tools.State) (tools.Tool, error) {
+		return daemon.NewOutput(s.(*ToolState).DaemonState()), nil
 	})
-	r.MustRegister(tools.TASK_STOP, func(s tools.State) (tools.Tool, error) {
-		return shell.NewTaskStop(s.(*ToolState)), nil
+	r.MustRegister(tools.DAEMON_STOP, func(s tools.State) (tools.Tool, error) {
+		return daemon.NewStop(s.(*ToolState).DaemonState()), nil
 	})
 
 	// --- meta ---
@@ -86,7 +88,7 @@ func init() {
 	// read through those accessors at Execute time.
 	r.MustRegister(tools.AGENT, func(s tools.State) (tools.Tool, error) {
 		ts := s.(*ToolState)
-		return meta.NewAgent(ts.SubagentSpawner, ts.AgentGroup()), nil
+		return meta.NewAgent(ts.SubagentSpawner), nil
 	})
 	r.MustRegister(tools.TOOL_SEARCH, func(s tools.State) (tools.Tool, error) {
 		ts := s.(*ToolState)

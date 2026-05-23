@@ -24,8 +24,6 @@ import (
 	"github.com/johnny1110/evva/internal/tools/mode"
 	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
 	"github.com/johnny1110/evva/pkg/tools"
-	monitorpkg "github.com/johnny1110/evva/pkg/tools/monitor"
-	shellpkg "github.com/johnny1110/evva/pkg/tools/shell"
 	"github.com/johnny1110/evva/internal/toolset"
 	"github.com/johnny1110/evva/pkg/ui"
 	"github.com/johnny1110/evva/pkg/common"
@@ -350,10 +348,9 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	// reaching into internal/agent directly. The ToolState exposes this
 	// as a narrow callback set; the agent owns the chan.
 	a.toolState.SetSignalSender(toolset.SignalSender{
-		NotifyBg:      func(snap shellpkg.BgTaskSnapshot) { a.SendSignal(AgentSignal{Kind: SignalBgResult, BgResult: &snap}) },
-		NotifyMonitor: func(ev monitorpkg.MonitorEvent) { a.SendSignal(AgentSignal{Kind: SignalMonitorEvent, MonitorEvent: &ev}) },
-		RootCtx:       func() context.Context { return a.rootCtx },
-		AgentID:       func() string { return a.ID },
+		NotifyDaemon: func() { a.SendSignal(AgentSignal{Kind: SignalDaemon}) },
+		RootCtx:      func() context.Context { return a.rootCtx },
+		AgentID:      func() string { return a.ID },
 	})
 
 	// Spawn the signal pump goroutine. Lives for the agent's rootCtx

@@ -22,7 +22,7 @@ import (
 	"github.com/johnny1110/evva/internal/permission"
 	"github.com/johnny1110/evva/internal/question"
 	"github.com/johnny1110/evva/pkg/tools/fs"
-	"github.com/johnny1110/evva/internal/tools/meta"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/todo"
 	"github.com/johnny1110/evva/internal/update"
 	"github.com/johnny1110/evva/pkg/ui"
@@ -412,9 +412,9 @@ func (s cliSink) printStoreUpdate(p *event.StoreUpdatePayload) {
 				fmt.Fprintf(s.out, "  %d. [%s] %s\n", i+1, t.Status, t.Content)
 			}
 		}
-	case meta.SpawnGroupDomain:
-		if sn, ok := p.Payload.(meta.SubagentSnapshot); ok {
-			fmt.Fprintf(s.out, "[subagent:%s] %s (%s) phase=%s\n", p.Op, sn.ID, sn.Type, sn.Status)
+	case daemon.Domain:
+		if sn, ok := p.Payload.(daemon.DaemonSnapshot); ok {
+			fmt.Fprintf(s.out, "[daemon:%s] %s [%s/%s] %s\n", p.Op, sn.ID, sn.Kind, sn.Status, sn.Description)
 		}
 	default:
 		fmt.Fprintf(s.out, "[%s:%s] %s\n", p.Domain, p.Op, p.ID)

@@ -40,11 +40,11 @@ const (
 	nameUpdateUserProfile   = "update_user_profile"
 	nameUpdateProjectMemory = "update_project_memory"
 
-	// Background-task companions — see pkg/tools/shell/task_tools.go.
-	nameTaskList   = "task_list"
-	nameTaskOutput = "task_output"
-	nameTaskStop   = "task_stop"
-	nameMonitor    = "monitor"
+	// Daemon-control surface — see pkg/tools/daemon.
+	nameDaemonList   = "daemon_list"
+	nameDaemonOutput = "daemon_output"
+	nameDaemonStop   = "daemon_stop"
+	nameMonitor      = "monitor"
 )
 
 // Subagent identifiers — the strings the main agent quotes in its

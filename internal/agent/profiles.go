@@ -22,6 +22,7 @@ import (
 	"github.com/johnny1110/evva/internal/memdir"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/pkg/tools/cron"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/internal/tools/dev"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/memory"
@@ -141,7 +142,7 @@ func Main(cfg *config.Config, provider constant.LLMProvider, model constant.Mode
 	}
 	deferredTools := slices.Concat(
 		monitor.Names(),
-		shell.TaskNames(), // task_list / task_output / task_stop
+		daemon.Names(), // daemon_list / daemon_output / daemon_stop (replaces shell.TaskNames)
 		modeDeferredNames(),
 		notebook.Names(),
 		ux.Names(),

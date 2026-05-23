@@ -65,6 +65,10 @@ func TestToolNamesAppearInMainPrompt(t *testing.T) {
 		tools.EXIT_WORKTREE,
 		tools.UPDATE_USER_PROFILE,
 		tools.UPDATE_PROJECT_MEMORY,
+		tools.DAEMON_LIST,
+		tools.DAEMON_OUTPUT,
+		tools.DAEMON_STOP,
+		tools.MONITOR,
 	}
 	for _, name := range required {
 		if !contains(prompt, string(name)) {

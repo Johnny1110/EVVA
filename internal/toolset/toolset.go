@@ -23,17 +23,17 @@ import (
 	"context"
 	"sync"
 
-	"github.com/johnny1110/evva/pkg/observable"
 	"github.com/johnny1110/evva/internal/question"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"
 	"github.com/johnny1110/evva/pkg/config"
+	"github.com/johnny1110/evva/pkg/observable"
 	"github.com/johnny1110/evva/pkg/skill"
-	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/todo"
+	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
 )
 
 // ToolState carries the shared backing state for stateful tool families.
@@ -337,13 +337,23 @@ func (s *ToolState) AgentID() string {
 
 // DaemonState returns the agent's daemon catalog, allocating on first use.
 // Registers with the unified change stream so TUI strips + the agent's
-// KindStoreUpdate bridge see lifecycle transitions. The notify closure
-// passed to NewState is the SignalSender.NotifyDaemon hook; tests that
-// build a ToolState without a sender get a nil notify (wake-up no-ops,
-// drain still works).
+// KindStoreUpdate bridge see lifecycle transitions.
+//
+// The notify closure indirects through s.signalSender at call time rather
+// than snapshotting NotifyDaemon at construction. Daemon tools are built
+// during toolset.Build (which lazy-allocates the catalog here) before
+// agent.New gets to SetSignalSender — a direct snapshot would lock in a
+// nil notify and silently swallow every wake-up. Reading dynamically
+// matches the pattern used by RootCtx / AgentID below and tolerates any
+// init order. Tests that build a ToolState without a sender still get a
+// nil notify (wake-up no-ops, drain still works).
 func (s *ToolState) DaemonState() *daemon.DaemonState {
 	if s.daemonState == nil {
-		s.daemonState = daemon.NewState(s.signalSender.NotifyDaemon)
+		s.daemonState = daemon.NewState(func() {
+			if s.signalSender.NotifyDaemon != nil {
+				s.signalSender.NotifyDaemon()
+			}
+		})
 		s.RegisterStore(s.daemonState)
 	}
 	return s.daemonState

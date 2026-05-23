@@ -15,28 +15,28 @@ import (
 	"fmt"
 	"slices"
 
-	config "github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/internal/agent/sysprompt"
-	"github.com/johnny1110/evva/pkg/constant"
-	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/internal/memdir"
-	"github.com/johnny1110/evva/pkg/tools"
-	"github.com/johnny1110/evva/pkg/tools/cron"
-	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/internal/tools/dev"
-	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/internal/tools/memory"
 	"github.com/johnny1110/evva/internal/tools/meta"
 	"github.com/johnny1110/evva/internal/tools/mode"
+	"github.com/johnny1110/evva/internal/tools/ux"
+	"github.com/johnny1110/evva/internal/toolset"
+	config "github.com/johnny1110/evva/pkg/config"
+	"github.com/johnny1110/evva/pkg/constant"
+	"github.com/johnny1110/evva/pkg/llm"
+	"github.com/johnny1110/evva/pkg/skill"
+	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/cron"
+	"github.com/johnny1110/evva/pkg/tools/daemon"
+	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/monitor"
 	"github.com/johnny1110/evva/pkg/tools/notebook"
-	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools/shell"
 	"github.com/johnny1110/evva/pkg/tools/todo"
 	"github.com/johnny1110/evva/pkg/tools/util"
-	"github.com/johnny1110/evva/internal/tools/ux"
 	"github.com/johnny1110/evva/pkg/tools/web"
-	"github.com/johnny1110/evva/internal/toolset"
 )
 
 // AgentType enumerates the kinds of agent we know how to bootstrap.
@@ -124,15 +124,10 @@ func Main(cfg *config.Config, provider constant.LLMProvider, model constant.Mode
 	if skills == nil {
 		skills = refsFromRegistry(loadDiskSkillRegistry(cfg))
 	}
-	activeTools := slices.Concat(fs.Names(), shell.Names(), meta.Names(), skill.Names(), todo.Names(), daemon.Names())
+	activeTools := slices.Concat(fs.Names(), shell.Names(), meta.Names(), skill.Names(), todo.Names())
 	// enter/exit_plan_mode are always-active on Main so the model can flip
 	// the session into ModePlan without a tool_search round-trip. The
 	// worktree pair stays deferred (Phase 10).
-	// daemon_list / daemon_stop / daemon_output are active too — the agent
-	// spawns daemons via active tools (bash run_in_background, agent
-	// async_mode), so the control surface stays one-call-away on every
-	// signal-wake (no tool_search round-trip to react to a terminal
-	// lifecycle).
 	activeTools = append(activeTools, tools.ENTER_PLAN_MODE, tools.EXIT_PLAN_MODE)
 	// Auto-memory tools — registered only when the user has the feature
 	// enabled. The sysprompt's auto-memory guidance section is gated on the
@@ -146,6 +141,7 @@ func Main(cfg *config.Config, provider constant.LLMProvider, model constant.Mode
 		activeTools = append(activeTools, dev.Names()...)
 	}
 	deferredTools := slices.Concat(
+		daemon.Names(),
 		monitor.Names(),
 		modeDeferredNames(),
 		notebook.Names(),

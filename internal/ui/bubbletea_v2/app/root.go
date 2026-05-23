@@ -13,15 +13,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/johnny1110/evva/pkg/config"
-	"github.com/johnny1110/evva/pkg/event"
-	"github.com/johnny1110/evva/pkg/llm"
-	"github.com/johnny1110/evva/pkg/tools/todo"
-	"github.com/johnny1110/evva/pkg/ui"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/agents"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/bgtasks"
-	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/monitors"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/input"
+	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/monitors"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/overlays"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/slash"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/components/status"
@@ -31,6 +26,11 @@ import (
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/mouse"
 	"github.com/johnny1110/evva/internal/ui/bubbletea_v2/theme"
 	"github.com/johnny1110/evva/pkg/banner"
+	"github.com/johnny1110/evva/pkg/config"
+	"github.com/johnny1110/evva/pkg/event"
+	"github.com/johnny1110/evva/pkg/llm"
+	"github.com/johnny1110/evva/pkg/tools/todo"
+	"github.com/johnny1110/evva/pkg/ui"
 )
 
 // defaultGreeting is the welcome line rendered inside the banner box
@@ -379,10 +379,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *App) handleAgentEvent(e event.Event) (tea.Model, tea.Cmd) {
 	prevState := a.state.Current()
 	a.state.Apply(e)
+	newState := a.state.Current()
+
+	// DEBUG: trace every event → state transition so we can pinpoint
+	// which event flips state away from Idle after signal-wake's
+	// KindRunEnd. Remove once the signal-wake stuck-state bug is fixed.
+	if a.controller != nil {
+		a.controller.Logger().Debug("tui.state.apply",
+			"kind", string(e.Kind),
+			"agent_id", e.AgentID,
+			"parent_id", e.ParentID,
+			"prev", prevState.String(),
+			"new", newState.String(),
+			"changed", prevState != newState,
+		)
+	}
 
 	// Show the thinking sprite when the agent enters the thinking
 	// sub-phase; hide it when it leaves. No-op on no transition.
-	if a.state.Current().IsActive() {
+	if newState.IsActive() {
 		a.transcript.ShowThinkingSprite()
 		a.view.MarkDirty()
 	} else if prevState.IsActive() {

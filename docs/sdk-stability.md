@@ -27,6 +27,9 @@ new options) land in minor versions.
 | `pkg/skill` | `Registry`, `SkillMeta`, `LoadRegistry`, `NewRegistry`, `Registry.Add`, `SkillTool`. Skill SDK landed in the Phase 19 "Out of scope" sweep. |
 | `pkg/constant` | `LLMProvider`, `Model` constants, `MODEL_CONTEXT_SIZE`. |
 | `pkg/version` | `Version` constant, `BuildStamp`, `String()`. |
+| `pkg/ui` | `UI`, `Controller`, `Skill`, `ProfileChoice`, the read-model accessors, and the `PermissionDecision` / `QuestionResponse` payloads. v2.1 removed the internal-type leaks (`Session()` / `ToolState()` → public read-models); v2.5 rebuilt the bundled TUI on this contract, proving it self-sufficient. |
+| `pkg/permission` | `Store`, `Rule`, `Mode`, `Decision`, `ApprovalRequest`, `Broker`, `Load`, `NewBroker`, `SetOnRequest`, `ParseMode`, the `Behavior*` / `Source*` constants. Promoted out of `internal/` in SDK v2.2. |
+| `pkg/toolset` | `Registry`, `ToolFactory`, `DefaultRegistry`, `Describe`, `Build`. The custom-tool registration seam every downstream tool author touches. |
 
 A `Kind` constant or payload struct field appearing in `pkg/event` is
 load-bearing for every consumer's render layer; we won't rename either
@@ -41,8 +44,8 @@ specific minor version and watch the changelog before upgrading.
 
 | Package | Why it's experimental |
 | --- | --- |
-| `pkg/ui` | The Controller surface still returns a couple of internal types in places (`Session()`, `ToolState()`); v1.0 may rework that. |
-| `pkg/toolset` | `Registry.Build` signature may grow options. `TagsFor` / `HintFor` are internal-helper-shaped today. |
+| `pkg/ui/bubbletea` | The bundled reference TUI. Satisfies the Stable `pkg/ui` contract, but its component/layout internals churn freely — depend on `pkg/ui` if you want a stable surface, embed `pkg/ui/bubbletea` if you want evva's batteries-included terminal UI and can tolerate visual/layout changes in minor versions. |
+| `pkg/tools/lsp` | Language Server Protocol integration (the deferred `lsp_request` tool). The tool name is stable; the package's exported manager/protocol surface may evolve as more LSP features land. |
 | `pkg/observable` | The Store / Change framework is the right shape for evva but might tighten its semantics around concurrent emitters. |
 | `pkg/tools/kits` | Phase 19d ships four kits (GeneralPurpose / ReadOnly / Coding / Research); the exact membership of each kit may grow as new tool families land. The named-kit pattern itself is stable. |
 
@@ -57,6 +60,7 @@ them as if they were `internal/`.
 | `pkg/common` | Misc helpers (UUID, truncate). Use only if you absolutely need; consider duplicating into your own utility package. |
 | `pkg/banner` | The "evva online" startup banner; cosmetic only. |
 | `pkg/llm/builtins` | Blank-import-only side-effect for provider registration. Safe to import, but `pkg/llm/builtins` itself has no exported symbols you should call. |
+| `pkg/update` | evva's GitHub-release self-update (`evva update`). Product glue, not an SDK primitive — promoted out of `internal/` in v2.5 only so the bundled TUI's update overlay could live under `pkg/`. A downstream app ships its own update mechanism. |
 
 ## Versioning & deprecations
 
@@ -65,20 +69,21 @@ them as if they were `internal/`.
 - Deprecations appear as `// Deprecated: <reason>; <replacement>; will
   be removed in <phase>` on the symbol's godoc. `go doc` and editors
   surface the warning so consumers see it without reading source.
-- No deprecation queue currently — pre-1.0 evva is still in dev mode,
-  so the Phase 19 cleanup collapsed every parallel API into its
-  canonical form in a single release. See `CHANGELOG.md` under the
-  "Breaking" / "Removed" headings for the surface changes.
+- No deprecation queue at the `v1.0.0` cut — the SDK v2 arc collapsed
+  every parallel API into its canonical form (converged constructor,
+  public permission / persona / read-model surfaces, pkg-only host)
+  before tagging. See `CHANGELOG.md` under the "Breaking" / "Removed"
+  headings for the surface changes folded into `v1.0.0`.
 
 ## How to depend on evva
 
-1. **Pick a major version** that matches your stability appetite. Pre-1.0
-   evva carries `0.x.y` versions with breaking changes possible in
-   minor bumps; once Phase 19f cuts `v1.0.0`, the stable-tier promise
-   above kicks in.
+1. **Pick a major version** that matches your stability appetite. With
+   `v1.0.0` cut, the Stable-tier promise above is in force — breaking
+   changes to Stable packages require a `v2.0.0`. Experimental packages
+   may still change in minor versions (watch the changelog).
 2. **Pin in `go.mod`** to a specific tag rather than `latest`:
    ```
-   require github.com/johnny1110/evva v0.2.4-alpha.1
+   require github.com/johnny1110/evva v1.0.0
    ```
 3. **Read CHANGELOG.md** before upgrading minor versions. Anything in
    the Experimental tier may have changed.

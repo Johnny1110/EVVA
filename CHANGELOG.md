@@ -7,6 +7,69 @@ Stability tiers are defined in [`docs/sdk-stability.md`](docs/sdk-stability.md).
 
 ## [Unreleased]
 
+## [v1.0.0] — SDK v2 complete + LSP: the pkg-only milestone
+
+Cuts `v1.0.0`. The SDK v2 arc (v2.1–v2.5) closes every embedding gap that
+forced a host into `internal/`, the flagship `cmd/evva` now builds on
+`pkg/*` alone, and the Language Server Protocol tool integration lands in
+the same release. The Stable-tier promise in
+[`docs/sdk-stability.md`](docs/sdk-stability.md) is now in force.
+
+### Added
+
+- **One-call constructor** — `agent.New(Config, ...Option)` absorbs the
+  whole bootstrap from a declarative `Config`: persona resolution (with an
+  `evva` fallback), `EVVA.md` / `USER_PROFILE.md` memory + skill auto-load,
+  permission store + mode, and the approval/question brokers. New `Config`
+  fields: `Persona`, `Personas`, `PermissionStore`, `LLMOptions` (plus the
+  existing `Provider` / `Model` / `MaxIters` / `PermissionMode` as optional
+  overrides). (SDK v2.4)
+- **Public persona surface** — `agent.AgentDefinition`, `AgentRegistry`,
+  `BuildAgentRegistry`, `LoadDiskAgents`, `ResolveMainProfile`, and the
+  `WithPersonaRegistry` / `WithPersona` options. A host can register
+  in-code personas, load on-disk ones (`<AppHome>/agents/{name}/`), drive
+  the `/profile` picker, and spawn personas as subagents. (SDK v2.3)
+- **Public permission system** — `pkg/permission` (`Store`, `Rule`, `Mode`,
+  `Decision`, `Broker`, `Load`, `NewBroker`, `SetOnRequest`, `ParseMode`)
+  with `WithPermissionStore` / `WithPermissionBroker`; the agent owns the
+  default brokers and emits approval/question events to the sink. (SDK v2.2)
+- **Public UI read-models** — `ui.Controller` returns only `pkg/*` types
+  (`Messages`, `Usage`, `TodoStore`, `DaemonState`, …), so a separate-module
+  UI can fully implement and drive it. (SDK v2.1)
+- **Bundled reference TUI as a public package** — `pkg/ui/bubbletea`
+  (`New(evvaHome)`), moved out of `internal/`. (SDK v2.5)
+- `agent.Agent.Controller() ui.Controller` and `agent.Agent.Shutdown()`;
+  `agent.ErrIterLimit` re-export. (SDK v2.4/v2.5)
+- **LSP integration** — `pkg/tools/lsp` and the deferred `lsp_request` tool
+  (`tools.LSP_REQUEST`): go-to-definition, find references, hover, and
+  document symbols via lazily-started language servers managed by the
+  daemon system.
+- **`examples/full-host`** — a separate Go module reproducing the full
+  `cmd/evva` experience on `pkg/*` only; Go's internal-visibility rule
+  compiler-enforces zero `internal/` imports (the completeness oracle).
+
+### Changed
+
+- **`cmd/evva` rebuilt on `pkg/*` alone** — zero direct `internal/` imports;
+  its ~50-line bootstrap collapsed into one `agent.New(Config, ...Option)`
+  call. (SDK v2.5)
+- **Deferred-tool loading** revamped to match the reference Claude Code
+  on-demand schema-loading model (`ToolSearch` fetches schemas lazily).
+- Stability tiers promoted to **Stable**: `pkg/ui`, `pkg/permission`,
+  `pkg/toolset`. `pkg/ui/bubbletea`, `pkg/tools/lsp` are Experimental;
+  `pkg/update` is Internal-helper.
+
+### Breaking
+
+- **`llm.Client` gained `SupportsDeferLoading() bool`** — providers report
+  whether they natively support `defer_loading`; the agent only mutates the
+  tools array between turns when they do (preserves prompt caching for
+  providers that don't). Custom `llm.Client` implementations must add this
+  method. The bundled anthropic/deepseek/ollama clients implement it.
+- Package moves: `internal/update` → `pkg/update`;
+  `internal/ui/bubbletea_v2` → `pkg/ui/bubbletea` (package `bubbletea`).
+  Only relevant to code that imported the pre-1.0 internal paths.
+
 ## [v0.2.8-alpha.6] — fs edit/write gate ref parity + partial-read fix
 
 Fixes a divergence where evva was stricter than Claude Code's reference
@@ -524,7 +587,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `CLAUDE.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.6...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.0.0...HEAD
+[v1.0.0]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.6...v1.0.0
 [v0.2.8-alpha.6]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.6
 [v0.2.8-alpha.5]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.5
 [v0.2.8-alpha.4]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.4

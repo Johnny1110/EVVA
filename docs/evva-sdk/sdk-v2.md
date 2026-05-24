@@ -1,8 +1,8 @@
 # evva-sdk v2 — Hardening to a stable v1.0
 
-> Status: proposed roadmap (for review). No net-new features — v2 is a
-> **completeness + hardening** arc that closes the remaining embedding
-> gaps and cuts `v1.0.0`.
+> Status: **shipped in `v1.0.0`.** v2 was a **completeness + hardening**
+> arc that closed the remaining embedding gaps and cut `v1.0.0` (folded
+> together with the LSP tool integration). All phases v2.1–v2.6 are done.
 
 ## Context
 

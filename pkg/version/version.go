@@ -12,10 +12,10 @@ package version
 import "fmt"
 
 // Version is the SDK release identifier. Bumped on every tagged
-// release. Pre-1.0 versions carry the `-alpha.N` / `-beta.N` suffix;
-// once Phase 19f completes the surface promise, this drops to a clean
-// semver string.
-const Version = "0.2.8-alpha.6"
+// release. As of v1.0.0 the Stable-tier surface promise in
+// docs/sdk-stability.md is in force: breaking changes to Stable
+// packages require a major bump.
+const Version = "1.0.0"
 
 // BuildStamp is an optional build-identifying string populated at link
 // time via -ldflags. Empty for `go build` / `go run` invocations off
@@ -23,9 +23,9 @@ const Version = "0.2.8-alpha.6"
 // + build date.
 var BuildStamp = ""
 
-// String returns "vX.Y.Z" (Phase 19f and after) or "vX.Y.Z+<stamp>"
-// when a build stamp is present. The leading "v" matches git tag
-// conventions; use Bare for the unprefixed semver.
+// String returns "vX.Y.Z" or "vX.Y.Z+<stamp>" when a build stamp is
+// present. The leading "v" matches git tag conventions; use Bare for
+// the unprefixed semver.
 func String() string {
 	if BuildStamp == "" {
 		return "v" + Version

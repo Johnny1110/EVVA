@@ -13,24 +13,33 @@ proof-of-concept lives at [`examples/minimal-host/`](../examples/minimal-host/ma
 
 | Package | What's in it | When you need it |
 | --- | --- | --- |
-| `pkg/agent` | `New`, `NewWithProfile`, `NewProfile`, `Agent` interface, `Option` aliases | Always — the constructor and the controller surface |
+| `pkg/agent` | `New(Config, ...Option)` one-call constructor, `NewWithProfile`, `NewProfile`, `Agent` interface (incl. `Controller()` / `Shutdown()`), `AgentRegistry`, `AgentDefinition`, `ResolveMainProfile`, `Option` aliases | Always — the constructor, persona catalog, and controller surface |
 | `pkg/config` | `Config`, `Load`, `LoadDefault`, `APIConfig` | Custom `AppHome`, custom per-provider credentials, custom `MaxTokens`/`MaxIterations` defaults |
 | `pkg/event` | `Event`, `Sink`, `Kind`, `Multi`, `BubbleUp`, every payload struct | Consuming agent events (custom UI, JSON-over-stdout, telemetry) |
 | `pkg/observable` | `Store`, `Observer`, `Change` | Building your own observable backing store; reading state mutations |
-| `pkg/ui` | `UI`, `Controller`, `Skill`, `ProfileChoice`, `PermissionDecision`, `QuestionResponse` | Building a custom UI implementation |
+| `pkg/ui` | `UI`, `Controller`, `Skill`, `ProfileChoice`, `PermissionDecision`, `QuestionResponse`, the read-model accessors | Building a custom UI implementation |
+| `pkg/ui/bubbletea` | `New(evvaHome)` — the bundled reference terminal UI | Embedding evva's batteries-included TUI instead of writing your own |
+| `pkg/permission` | `Store`, `Rule`, `Mode`, `Decision`, `Broker`, `Load`, `NewBroker`, `SetOnRequest`, `ParseMode` | Custom approval policy / pre-seeded rule store |
 | `pkg/llm` | `Client`, `Message`, `Response`, `Option`, `Registry`, `ClientFactory` | Registering a custom LLM provider |
 | `pkg/llm/builtins` | side-effect `init()` registering anthropic/deepseek/ollama | Blank-import to get evva's bundled providers |
 | `pkg/llm/{claude,deepseek,ollama}` | direct provider client constructors and `Factory` helpers | Reusing one of evva's bundled clients without going through the registry |
-| `pkg/toolset` | `Registry`, `ToolFactory`, `DefaultRegistry`, `TagsFor`, `HintFor` | Registering custom tools |
+| `pkg/toolset` | `Registry`, `ToolFactory`, `DefaultRegistry`, `Describe`, `Build` | Registering custom tools |
 | `pkg/tools` | `Tool` interface, `Result`, `ContentBlock`, `Descriptor`, `Call`, `State`, `ToolName` constants | Authoring custom tools |
-| `pkg/tools/{fs,shell,web,util,notebook,monitor,cron,todo}` | Bundled tool family implementations | Reusing the bundled tools directly (rare; most callers use them via the registry) |
+| `pkg/tools/{fs,shell,web,util,notebook,monitor,cron,todo,daemon}` | Bundled tool family implementations | Reusing the bundled tools directly (rare; most callers use them via the registry) |
+| `pkg/tools/lsp` | LSP integration — the deferred `lsp_request` tool (`tools.LSP_REQUEST`) | Reusing evva's Language Server tool; semantic code intelligence |
 | `pkg/tools/kits` | `GeneralPurposeKit`, `ReadOnlyKit`, `CodingKit`, `ResearchKit` | Pre-composed tool-name lists for common agent shapes (Phase 19d) |
 | `pkg/skill` | `Registry`, `SkillMeta`, `LoadRegistry`, `NewRegistry`, `Registry.Add`, `SkillTool` | Building custom skill catalogs (disk-loaded, programmatic, or mixed) |
 | `pkg/constant` | `LLMProvider`, `Model`, `AgentStatus`, `MODEL_CONTEXT_SIZE` | Referencing built-in provider / model identifiers |
+| `pkg/update` | `evva update` self-update glue (product-specific) | Rarely — most hosts ship their own update path |
 
 Internal packages (`internal/`) remain inaccessible from outside the
-module by Go's import-visibility rule. Phase 13 finished that boundary;
-everything downstream apps need lives under `pkg/`.
+module by Go's import-visibility rule. As of SDK v2.5, the flagship
+`cmd/evva` itself builds on `pkg/*` alone — zero direct `internal/`
+imports — and the separate-module
+[`examples/full-host/`](../examples/full-host/main.go) reproduces the
+full TUI experience, with Go's internal rule compiler-enforcing that it
+touches no internals. If the bundled host can be built on the public
+contract, yours can too.
 
 ## Extension points
 
@@ -141,11 +150,107 @@ ag, _ := agent.NewWithProfile(prof, agent.WithSink(jsonSink{enc: json.NewEncoder
 commands through (`Run`, `Continue`, `CyclePermissionMode`,
 `RespondPermission`, etc.).
 
-`Controller.Session()` and `Controller.ToolState()` currently return
-internal types — you can call methods on them but cannot fully implement
-`Controller` from outside the module. This is a known follow-up;
-downstream UIs that need to render todos / subagents today should
-subscribe to `event.KindStoreUpdate` events through the sink instead.
+As of SDK v2.1 the entire `Controller` surface is public — its read-models
+return only `pkg/*` types (`Messages() []llm.Message`, `Usage() llm.Usage`,
+`TodoStore() *todo.TodoStore`, `DaemonState() *daemon.DaemonState`), so a
+UI in a separate module can fully implement and drive it without importing
+any evva internals. `pkg/ui/controller_compile_test.go` is the compile-time
+proof of that. You can render todos / subagents either by reading those
+accessors each frame or by subscribing to `event.KindStoreUpdate` through
+the sink — both work.
+
+If you don't want to write a UI at all, embed the bundled reference TUI:
+`pkg/ui/bubbletea.New(evvaHome)` returns a `ui.UI`. Hand it to the agent as
+the sink and hand the agent back as its controller — see the one-call
+constructor below.
+
+### One-call constructor — `agent.New(Config)`
+
+`NewWithProfile` is the à-la-carte constructor: it wires only what you
+pass. `New(Config, ...Option)` is the batteries-included one — it absorbs
+the whole bootstrap a host used to hand-wire, driven by a declarative
+`Config` plus a few options. From `Config` alone it resolves the persona
+(with an `evva` fallback), auto-loads `EVVA.md` / `USER_PROFILE.md` memory
+and the skill catalog, loads the permission store, resolves the mode, and
+installs the approval + question brokers.
+
+```go
+cfg := config.Get() // or config.Load(LoadOptions{...})
+
+tui := bubbletea.New(cfg.AppHome)      // pkg/ui/bubbletea
+ag, _ := agent.New(agent.Config{
+    AppConfig:      cfg,
+    PermissionMode: "default",          // "" → YAML → "default"
+    // Persona, Personas, PermissionStore, Provider, Model, MaxIters,
+    // LLMOptions are all optional.
+}, agent.WithSink(tui), agent.WithRootContext(ctx))
+
+tui.Attach(ag.Controller())            // ag.Controller() is the ui.Controller view
+defer ag.Shutdown()
+tui.Run(ctx)
+```
+
+`agent.Agent` and `ui.Controller` share method names with different payload
+types, so one concrete type can't satisfy both — `ag.Controller()` returns
+the `ui.Controller` view to hand to `UI.Attach`. The runnable end-to-end
+version of the above is [`examples/full-host/`](../examples/full-host/main.go).
+
+### Personas (the `evva → nono` pattern)
+
+A **persona** is a main-tier agent definition — its own system prompt,
+tool lists, and model preference. `pkg/agent` exposes the catalog so a host
+can register its own personas in code, load them from disk, drive the
+`/profile` picker, and spawn them as subagents.
+
+```go
+reg, _ := agent.BuildAgentRegistry(cfg.AppHome) // built-ins + <AppHome>/agents/*
+reg.Register(agent.AgentDefinition{
+    Name:         "nono",
+    WhenToUse:    "financial questions",
+    As:           []string{"main", "subagent"},
+    InjectMemory: true,
+    SystemPrompt: "You are nono, a financial manager.",
+})
+
+ag, _ := agent.New(agent.Config{
+    AppConfig: cfg,
+    Personas:  reg,     // omit → built from <AppHome>/agents/ automatically
+    Persona:   "nono",  // omit → cfg.DefaultProfile → "evva"
+}, agent.WithSink(sink))
+```
+
+On-disk personas live under `<AppHome>/agents/{name}/` as
+`system_prompt.md` + `tools.yml` + `meta.yml` (the `as:` field controls
+whether a persona shows in the `/profile` picker, the subagent catalog, or
+both). The `Controller`'s `ListMainProfiles()` / `SwitchProfile(name)`
+light up off whichever registry you install. `agent.LoadDiskAgents(home)`
+returns the disk catalog without the built-ins.
+
+### Permissions
+
+`pkg/permission` is the approval system: a rule `Store`, a `Mode` (the
+Shift-Tab stance), and a `Broker` back-channel. `New(Config)` wires sane
+defaults — but a host can override either piece.
+
+```go
+store, _ := permission.Load(cfg.WorkDir, cfg.AppHome) // project + user rules
+
+ag, _ := agent.New(agent.Config{
+    AppConfig:       cfg,
+    PermissionStore: store, // omit → loaded from disk automatically
+    PermissionMode:  "accept_edits",
+}, agent.WithSink(tui))
+```
+
+For a non-interactive policy (no UI), install a custom broker via
+`agent.WithPermissionBroker(b)`: build one with `permission.NewBroker()`
+and register a callback with `permission.SetOnRequest` that inspects each
+`permission.ApprovalRequest` and replies with a `permission.Decision`. With
+a sink installed and no custom broker, the agent emits
+`event.KindApprovalNeeded` for an interactive UI to resolve via
+`Agent.RespondPermission`; with no sink it auto-denies (so a request never
+parks a goroutine). For trusted/headless runs, `agent.WithHeadlessBypass()`
+or `PermissionMode: "bypass"` auto-allows everything.
 
 ### Custom skills (Skill SDK)
 
@@ -233,7 +338,7 @@ and the broader "professional SDK" contract.
 
 ### Charmbracelet version pinning
 
-The reference TUI in `internal/ui/bubbletea_v2/` uses bubbletea's
+The reference TUI in `pkg/ui/bubbletea/` uses bubbletea's
 `tea.Program` type on `pkg/ui.UI.Run`. If a downstream UI imports a
 DIFFERENT major-or-minor version of `github.com/charmbracelet/bubbletea`,
 the two `tea.Program` types are distinct and won't unify at the
@@ -417,6 +522,7 @@ the use case.
 
 ## See also
 
-- [`examples/minimal-host/main.go`](../examples/minimal-host/main.go) — runnable end-to-end downstream consumer.
-- [`pkg/agent/downstream_test.go`](../pkg/agent/downstream_test.go) — same shape as a test, useful as a copy-paste template.
-- [`CLAUDE.md`](../CLAUDE.md) Phase 13 section — the roadmap that introduced these public packages.
+- [`examples/full-host/main.go`](../examples/full-host/main.go) — the canonical full host: TUI + personas + permissions via the one-call constructor, in a separate module (compiler-enforced pkg-only).
+- [`examples/minimal-host/main.go`](../examples/minimal-host/main.go) — the tiny host: `NewWithProfile` + a custom provider, tool, and skill.
+- [`pkg/agent/downstream_test.go`](../pkg/agent/downstream_test.go) + [`converged_downstream_test.go`](../pkg/agent/converged_downstream_test.go) — public-only test templates for the à-la-carte and one-call constructors.
+- [`docs/sdk-stability.md`](sdk-stability.md) — the per-package stability tiers.

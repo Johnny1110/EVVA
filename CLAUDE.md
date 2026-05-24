@@ -2,7 +2,11 @@
 
 ## Important
 
-We are in dev phase now, evva is not released, we could revamp and change api anytime if it should be.
+`v1.0.0` is cut: the SDK v2 arc is complete and the Stable-tier surface
+promise in `docs/sdk-stability.md` is in force — breaking changes to Stable
+`pkg/*` packages now require a major bump. Experimental-tier packages
+(`pkg/ui/bubbletea`, `pkg/tools/lsp`, `pkg/observable`, `pkg/tools/kits`)
+may still change in minor versions.
 
 ## Vision
 

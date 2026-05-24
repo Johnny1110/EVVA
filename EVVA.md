@@ -106,18 +106,6 @@ Always ask before pushing — pushing is a shared-state operation.
 
 ---
 
-
-## Project conventions
-
-- All source under `internal/` is private. Public extension points live in `pkg/`.
-- One package per tool family (`fs`, `shell`, `meta`, etc.). A new tool either goes in an existing family or starts a new family package. Phase 13c moves the broadly-reusable families (`fs`, `shell`, `web`, `util`, `notebook`, `monitor`, `cron`, `todo`) under `pkg/tools/`; evva-runtime-specific families (`meta`, `mode`, `skill`, `ux`, `dev`) stay under `internal/tools/`.
-- One package per LLM provider. After Phase 13b they live at `pkg/llm/{claude,deepseek,ollama}/` and register into `pkg/llm.DefaultRegistry()`. The `llm.Client` interface remains the only public seam.
-- Tests live next to the code they cover (`*_test.go`). No parallel `tests/` tree.
-- No comments that restate the code. Only comment WHY when the WHY is non-obvious.
-- Port tool descriptions from `ref/src/tools/*/prompt.ts` verbatim when reasonable. Diverge only with a clear reason.
-
----
-
 ## Project structure
 
 ```

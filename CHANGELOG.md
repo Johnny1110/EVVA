@@ -7,12 +7,6 @@ Stability tiers are defined in [`docs/sdk-stability.md`](docs/sdk-stability.md).
 
 ## [Unreleased]
 
-### Known issues
-
-- `task_stop` and `task_list` do not recognize monitor IDs created by
-  the `monitor` tool. Monitors can currently only be stopped by killing
-  the underlying shell process (e.g., `pkill`).
-
 ## [v0.2.8-alpha.4] — SDK v2.3: multi-persona / subagent SDK + memory absorption
 
 Third slice of the SDK v2 "harden to v1.0" roadmap

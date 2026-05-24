@@ -145,6 +145,25 @@ func mainToolsGuideSection() string {
 		"Extract a value from a JSON blob using a simple path expression.\n\n" +
 		"## Calculate tools (`" + nameCalc + "`)\n" +
 		"Evaluate a mathematical expression and return the result, use it when you need to calculate a big number or complex math calculations.\n\n" +
+		"## LSP tools (`" + nameLspRequest + "`)\n" +
+		"`" + nameLspRequest + "` is a deferred tool that queries language servers for semantic code intelligence — it gives compiler-grade answers that grep cannot. The server starts automatically on first use.\n\n" +
+		"Supported operations:\n" +
+		"- `go_to_definition` — jump to where a symbol is defined.\n" +
+		"- `find_references` — list every usage of a function, type, or variable across the workspace.\n" +
+		"- `hover` — inspect type info, signatures, and doc comments at a cursor position.\n" +
+		"- `document_symbols` — list all symbols (functions, types, variables) in a file.\n" +
+		"- `workspace_symbol` — fuzzy-search for a symbol by name across the entire project.\n" +
+		"- `go_to_implementation` — jump from an interface or abstract type to its concrete implementations.\n" +
+		"- `prepare_call_hierarchy` / `incoming_calls` / `outgoing_calls` — trace the call graph: who calls this function, and what does it call.\n\n" +
+		"When to use:\n" +
+		"- You need precise definition locations (file:line) — `grep` can't distinguish a definition from a reference.\n" +
+		"- You need to find every call site of a function before renaming or refactoring it.\n" +
+		"- You need type information or signatures that the compiler knows but aren't obvious from the source.\n" +
+		"- You're navigating an unfamiliar codebase and want a structured map of symbols in a file.\n\n" +
+		"When NOT to use:\n" +
+		"- Simple text searches (a string literal, a comment, a log message) — `" + nameGrep + "` is faster and doesn't require an LSP server.\n" +
+		"- File-name lookups — use `" + nameGlob + "`.\n" +
+		"- The symbol name is unique enough that `" + nameGrep + "` will find it in one shot.\n\n" +
 		"## Subagents (`" + nameAgent + "`)\n" +
 		"A subagent runs a focused task in its own conversation thread, inherits your provider, and returns a single summary. Use it to keep your own context clean — the subagent's intermediate tool results never enter your transcript, only the final report does.\n\n" +
 		"When to use:\n" +

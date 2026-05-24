@@ -69,6 +69,7 @@ func TestToolNamesAppearInMainPrompt(t *testing.T) {
 		tools.DAEMON_OUTPUT,
 		tools.DAEMON_STOP,
 		tools.MONITOR,
+		tools.LSP_REQUEST,
 	}
 	for _, name := range required {
 		if !contains(prompt, string(name)) {

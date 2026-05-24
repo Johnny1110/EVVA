@@ -35,7 +35,7 @@ func registerGemini() {
 }
 ```
 
-Your `llm.Client` implementation satisfies five methods: `Name()`, `Model()`, `Complete(ctx, msgs, tools)`, `Stream(ctx, msgs, tools, sink)`, and `Apply(opts...)`. See `pkg/llm/client.go` for the contract.
+Your `llm.Client` implementation satisfies six methods: `Name()`, `Model()`, `SupportsDeferLoading()`, `Complete(ctx, msgs, tools)`, `Stream(ctx, msgs, tools, sink)`, and `Apply(opts...)`. `SupportsDeferLoading()` reports whether the provider natively supports `defer_loading` (return `false` if unsure — the agent then keeps the tools array stable to preserve prompt caching). See `pkg/llm/client.go` for the contract.
 
 ### 3. Load a Config with your own AppHome
 
@@ -102,11 +102,36 @@ func (stdoutSink) Emit(e event.Event) {
 
 ### 6. Build the agent
 
-`pkg/agent.NewProfile` constructs a downstream-friendly profile (system prompt + active tool names + provider + model). `pkg/agent.NewWithProfile` assembles the agent against your config, sink, and custom tools.
+There are two constructors. Pick by how much you want wired for you.
+
+**`agent.New(Config, ...Option)` — the one-call path.** A declarative
+`Config` resolves a persona (falling back to `evva`), auto-loads
+`EVVA.md` / `USER_PROFILE.md` memory and the skill catalog, loads the
+permission store, and installs the approval/question brokers. Best when
+you want the batteries-included experience (and the bundled TUI):
 
 ```go
 import "github.com/johnny1110/evva/pkg/agent"
 
+ag, _ := agent.New(agent.Config{
+    AppConfig:      cfg,
+    PermissionMode: "bypass", // "" → YAML → "default"
+}, agent.WithSink(stdoutSink{}), agent.WithMaxIterations(20))
+
+resp, _ := ag.Run(context.Background(), "list files under /tmp")
+```
+
+For an interactive terminal UI, construct the bundled `pkg/ui/bubbletea`
+UI, pass it as the sink, and hand `ag.Controller()` to `tui.Attach` — see
+the full-host example below. Register your own personas with
+`agent.BuildAgentRegistry` + `reg.Register(agent.AgentDefinition{...})` and
+pass `Config.Personas` + `Config.Persona`.
+
+**`agent.NewWithProfile(profile, ...Option)` — the à-la-carte path.** Wires
+only what you pass. Build a profile with `NewProfile`, then add config,
+sink, custom tools, and permission stance by hand:
+
+```go
 prof, _ := agent.NewProfile(
     "myapp",
     "you are a concise assistant",
@@ -116,24 +141,27 @@ prof, _ := agent.NewProfile(
 )
 
 ag, _ := agent.NewWithProfile(prof,
-agent.WithConfig(cfg),
-agent.WithSink(stdoutSink{}),
-agent.WithMaxIterations(20),
-agent.WithPermissionMode("bypass"),       // string-based: "default"|"accept_edits"|"plan"|"bypass"|"auto"
-agent.WithCustomTool("ping", func(tools.State) (tools.Tool, error) {
-    return pingTool{}, nil
+    agent.WithConfig(cfg),
+    agent.WithSink(stdoutSink{}),
+    agent.WithMaxIterations(20),
+    agent.WithHeadlessBypass(), // or WithPermissionMode(agent.PermissionBypass) — typed constants
+    agent.WithCustomTool("ping", func(tools.State) (tools.Tool, error) {
+        return pingTool{}, nil
     }),
 )
 
 resp, err := ag.Run(context.Background(), "list files under /tmp")
 ```
 
-### Full working example
+### Full working examples
 
-A runnable end-to-end downstream consumer lives at [`examples/minimal-host/`](examples/minimal-host/main.go). It registers a custom LLM provider, a custom tool, a custom sink, loads its own config, and runs one turn — in ~110 lines, with **zero `internal/*` imports**.
+Two runnable downstream consumers, both with **zero `internal/*` imports**:
+
+- [`examples/full-host/`](../../../examples/full-host/main.go) — the canonical full host: the bundled TUI + personas + permissions via the one-call constructor, in a **separate Go module** (so Go's `internal/` rule compiler-enforces the pkg-only boundary).
+- [`examples/minimal-host/`](../../../examples/minimal-host/main.go) — a tiny host: a custom LLM provider, custom tool, custom sink, and a programmatic skill, run for one turn via `NewWithProfile`.
 
 ```bash
-go run ./examples/minimal-host
+go run ./examples/full-host     # or ./examples/minimal-host
 ```
 
 ### What you can't change
@@ -149,5 +177,7 @@ If one of these is blocking your use case, fork or file an issue.
 ### See also
 
 - [`docs/extending.md`](../../../docs/extending.md) — full reference covering every public package, every extension point, and the things you can't override.
-- [`examples/minimal-host/main.go`](../../../examples/minimal-host/main.go) — runnable downstream consumer.
-- [`pkg/agent/downstream_test.go`](../../../pkg/agent/downstream_test.go) — the same shape as a test, useful as a copy-paste template.
+- [`docs/sdk-stability.md`](../../../docs/sdk-stability.md) — per-package stability tiers and how to pin evva in `go.mod`.
+- [`examples/full-host/main.go`](../../../examples/full-host/main.go) — full host (TUI + personas + permissions), separate module.
+- [`examples/minimal-host/main.go`](../../../examples/minimal-host/main.go) — tiny host via `NewWithProfile`.
+- [`pkg/agent/downstream_test.go`](../../../pkg/agent/downstream_test.go) + [`converged_downstream_test.go`](../../../pkg/agent/converged_downstream_test.go) — copy-paste test templates for both constructors.

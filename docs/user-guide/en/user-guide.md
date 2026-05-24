@@ -30,6 +30,10 @@
   - [CLI Flags](#cli-flags)
 - [10. Modes — TUI vs CLI](#10-modes--tui-vs-cli)
 - [11. Logs](#11-logs)
+- [12. Building on evva — the SDK (for developers)](#12-building-on-evva--the-sdk-for-developers)
+  - [Quickstart — a full host in ~40 lines](#quickstart--a-full-host-in-40-lines)
+  - [Extension points at a glance](#extension-points-at-a-glance)
+  - [Stability & where to go deeper](#stability--where-to-go-deeper)
 
 ---
 
@@ -738,3 +742,102 @@ echo "list files in /tmp" | evva -no-tui   # piped prompt
 ## 11. Logs
 
 Per-agent text logs land under `$EVVA_HOME/logs/<agent-id>/<agent-id>.log` by default — no setup needed after `make install`. To redirect to a custom directory, set `LOG_DIR=/your/path` in `.env`. To revert to the old stdout-only dev mode (logs streamed to the terminal instead of disk), set `LOG_DIR=` explicitly to empty. `LOG_LEVEL=debug` exposes every iteration's `turn.start` / `llm.call` / `tool.dispatch` / `tool.result` lines — handy when debugging an agent that's stuck or looping.
+
+---
+
+## 12. Building on evva — the SDK (for developers)
+
+Everything above describes evva as an app. evva is *also* an embeddable Go
+SDK: another program can `import "github.com/johnny1110/evva/pkg/agent"`
+and run its own ReAct agent — custom LLM providers, custom tools, its own
+personas, permission policy, and UI — without forking and without touching
+the agent loop.
+
+The whole public surface lives under `pkg/*`. Go's `internal/` rule
+enforces the boundary at compile time: a downstream module that reaches
+into `evva/internal/...` won't build. As of `v1.0.0` the flagship
+`cmd/evva` itself is built on `pkg/*` alone, so anything the bundled app
+does, your app can do too.
+
+```bash
+go get github.com/johnny1110/evva@v1.0.0
+```
+
+### Quickstart — a full host in ~40 lines
+
+One declarative `agent.Config` plus a couple of options gives you the
+complete experience — the bundled terminal UI, persona `/profile`
+switching, permission prompts, `/resume`, and `/compact`. `agent.New`
+absorbs the bootstrap: it resolves the persona (falling back to `evva`),
+auto-loads `EVVA.md` / `USER_PROFILE.md` memory and the skill catalog,
+loads the permission store, and installs the approval/question brokers.
+
+```go
+package main
+
+import (
+    "context"
+    "os"
+    "os/signal"
+    "syscall"
+
+    "github.com/johnny1110/evva/pkg/agent"
+    "github.com/johnny1110/evva/pkg/config"
+    _ "github.com/johnny1110/evva/pkg/llm/builtins" // register anthropic/deepseek/ollama
+    "github.com/johnny1110/evva/pkg/ui/bubbletea"
+)
+
+func main() {
+    cfg := config.Get() // or config.Load(config.LoadOptions{AppName: "myapp", AppHome: ...})
+
+    ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    defer stop()
+
+    tui := bubbletea.New(cfg.AppHome) // the bundled reference TUI (satisfies ui.UI)
+
+    ag, err := agent.New(agent.Config{AppConfig: cfg},
+        agent.WithSink(tui),          // agent emits events into the UI
+        agent.WithRootContext(ctx),   // Ctrl-C tears down every background worker
+    )
+    if err != nil {
+        panic(err)
+    }
+    defer ag.Shutdown()
+
+    tui.Attach(ag.Controller()) // hand the UI the controller view of the agent
+    _ = tui.Run(ctx)
+}
+```
+
+Headless? Drop the TUI: build with `agent.New(agent.Config{AppConfig: cfg,
+PermissionMode: "bypass"})`, then call `ag.Run(ctx, "your prompt")`. With
+no sink the agent auto-denies approvals (so a request never hangs);
+`"bypass"` auto-allows for trusted/CI runs.
+
+### Extension points at a glance
+
+Every piece is swappable through a `pkg/*` seam:
+
+| Want to… | Use |
+| --- | --- |
+| Add an LLM provider | Register a factory on `llm.DefaultRegistry()`; your `llm.Client` satisfies `Name` / `Model` / `SupportsDeferLoading` / `Complete` / `Stream` / `Apply`. |
+| Add a tool | Implement `tools.Tool`; pass `agent.WithCustomTool(name, factory)` or register on `toolset.DefaultRegistry()`. |
+| Add a persona | `agent.BuildAgentRegistry` + `reg.Register(agent.AgentDefinition{...})` (or drop files under `<AppHome>/agents/<name>/`); pass `Config.Personas` + `Config.Persona`. Drives `/profile` and subagents. |
+| Control approvals | `Config.PermissionMode`, `Config.PermissionStore`, or a custom `agent.WithPermissionBroker` (build with `permission.NewBroker` + `SetOnRequest`). |
+| Build a custom UI | Implement `ui.UI`; drive the agent through the fully-public `ui.Controller`. Or embed `pkg/ui/bubbletea`. |
+| Ship skills | `skill.NewRegistry()` + `Add(...)` (programmatic) or drop `SKILL.md` files; pass `agent.WithSkillRegistry`. |
+| Use a custom home dir | `config.Load(config.LoadOptions{AppName, AppHome, ...})` → `Config.AppConfig`. |
+
+### Stability & where to go deeper
+
+`v1.0.0` puts the **Stable** tier under the major-version promise:
+`pkg/agent`, `pkg/config`, `pkg/event`, `pkg/llm`, `pkg/tools`,
+`pkg/toolset`, `pkg/permission`, `pkg/ui`, `pkg/skill`, `pkg/constant`.
+Experimental packages (`pkg/ui/bubbletea`, `pkg/tools/lsp`,
+`pkg/observable`, `pkg/tools/kits`) may still change in minor versions.
+
+- [`integration.md`](integration.md) — step-by-step integration walkthrough.
+- [`docs/extending.md`](../../extending.md) — the full reference: every public package, every extension point, and what you can't override.
+- [`docs/sdk-stability.md`](../../sdk-stability.md) — the per-package stability tiers and how to depend on evva.
+- [`examples/full-host/`](../../../examples/full-host/main.go) — runnable full host (separate module, TUI + personas + permissions).
+- [`examples/minimal-host/`](../../../examples/minimal-host/main.go) — runnable tiny host (custom provider + tool + skill).

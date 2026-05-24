@@ -7,6 +7,46 @@ Stability tiers are defined in [`docs/sdk-stability.md`](docs/sdk-stability.md).
 
 ## [Unreleased]
 
+## [v0.2.8-alpha.6] — fs edit/write gate ref parity + partial-read fix
+
+Fixes a divergence where evva was stricter than Claude Code's reference
+implementation: offset/limit reads would block edits, creating loops where
+the agent couldn't edit files it had seen. Adds four safety/robustness
+items evva was missing relative to ref.
+
+### Fixed
+
+- **Drop the `IsPartialView` block** from `CanEdit` / `CanWrite`: reading
+  a file with offset or a row limit no longer prevents editing it.
+  The edit tool already re-reads the full file and requires `old_string`
+  to match uniquely, so the block added nothing but friction.
+
+### Added
+
+- **File-size cap on edit** (`MaxEditFileSize` = 1 GiB): rejects files
+  that would OOM the process if read into memory. Mirrors ref's
+  `MAX_EDIT_FILE_SIZE`.
+- **TOCTOU re-stat guard** (`fileChangedSince`): before every write
+  (edit main path, edit empty-file path, write overwrite), re-checks
+  that the file's mtime hasn't advanced past the initial stat. If it
+  has, the operation is aborted rather than clobbering a concurrent
+  modification.
+- **Content-hash staleness fallback** (`ContentHash [32]byte` /
+  `HashContent`): when mtime advanced but the stored SHA-256 matches
+  current content, the edit/write proceeds — absorbs touch, formatter,
+  and cloud-sync false positives. Hashing rather than storing full
+  content bounds memory (deliberate evva divergence from ref).
+- **UNC / network-path guard**: `resolvePath` now rejects `//server` and
+  `\\server` prefixes before any normalization, preventing NTLM
+  credential leaks.
+- **Roadmap doc**: `docs/roadmap/fs-edit-gate-parity.md` — planning
+  document with root-cause analysis and implementation decisions.
+
+### Changed
+
+- Tool descriptions for `edit_file` and `write_file` updated to remove
+  the "partial-view (offset/limit) → re-read" sentence.
+
 ## [v0.2.8-alpha.5] — LSP documentation & project roadmap updates
 
 Docs-only release: adds the LSP module feasibility analysis and development
@@ -484,7 +524,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `CLAUDE.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.5...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.6...HEAD
+[v0.2.8-alpha.6]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.6
 [v0.2.8-alpha.5]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.5
 [v0.2.8-alpha.4]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.4
 [v0.2.8-alpha.3]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.3

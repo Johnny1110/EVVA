@@ -13,6 +13,40 @@ Stability tiers are defined in [`docs/sdk-stability.md`](docs/sdk-stability.md).
   the `monitor` tool. Monitors can currently only be stopped by killing
   the underlying shell process (e.g., `pkill`).
 
+## [v0.2.8-alpha.4] — SDK v2.3: multi-persona / subagent SDK + memory absorption
+
+Third slice of the SDK v2 "harden to v1.0" roadmap
+(`docs/evva-sdk/sdk-v2.md`). Promotes the persona system to `pkg/agent` so a
+downstream host can register its own main persona (the evva → nono pattern)
+and drive the /profile picker + subagent catalog from its own registry — and
+folds EVVA.md / USER_PROFILE.md memory loading into the agent.
+
+### Added
+
+- **Public persona surface** on `pkg/agent`: `AgentDefinition` (a closure-free
+  DTO carrying the prompt as `SystemPrompt`), `AgentRegistry` with `Register` /
+  `Get` / `ListMain` / `ListSubagent`, plus `BuildAgentRegistry` and
+  `LoadDiskAgents` constructors.
+- `agent.WithPersonaRegistry(*AgentRegistry)` and `agent.WithPersona(name)`
+  options; `agent.ResolveMainProfile(cfg, reg, name, opts...)` resolves a
+  main-tier Profile by name with skills + memory auto-loaded from config.
+- The agent auto-loads the EVVA.md / USER_PROFILE.md snapshot from config at
+  construction when the host didn't inject one (a host-supplied snapshot still
+  wins), so a host no longer has to call memdir.Load.
+
+### Changed
+
+- `cmd/evva` no longer reads memory files itself — it resolves the initial
+  profile through the memory-absorbing path and lets the agent auto-load.
+  Memory-load warnings now surface on the agent logger rather than stderr.
+
+### Internal
+
+- Persona conversion rides an internal `AgentSpec` seam (`DefinitionFromSpec` /
+  `SpecFromDefinition`) so `pkg/agent` imports no `sysprompt`; the internal
+  `AgentDefinition` gains a `PromptBody` field so a definition round-trips back
+  to the public DTO.
+
 ## [v0.2.8-alpha.3] — SDK v2.2: pluggable permissions
 
 Second slice of the SDK v2 "harden to v1.0" roadmap
@@ -436,7 +470,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `CLAUDE.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.3...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.4...HEAD
+[v0.2.8-alpha.4]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.4
 [v0.2.8-alpha.3]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.3
 [v0.2.8-alpha.2]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.2
 [v0.2.8-alpha.1]: https://github.com/johnny1110/evva/releases/tag/v0.2.8-alpha.1

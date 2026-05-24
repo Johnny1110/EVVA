@@ -191,6 +191,14 @@ func ResolveMainProfile(cfg *config.Config, reg *AgentRegistry, name string, ski
 	if name == "" {
 		name = "evva"
 	}
+	// nil skills means "auto-load from cfg's skill dirs" for every main-tier
+	// persona (Main does this too, but disk personas route around it). Lifting
+	// it here keeps the public pkg/agent.ResolveMainProfile from re-walking the
+	// disk — it can pass nil and rely on this. An explicit empty slice still
+	// suppresses the # Skills section.
+	if skills == nil {
+		skills = refsFromRegistry(loadDiskSkillRegistry(cfg))
+	}
 	if reg == nil {
 		// No registry — only the built-in evva is reachable. Accept the
 		// "evva" name; everything else is unknown.
@@ -210,6 +218,17 @@ func ResolveMainProfile(cfg *config.Config, reg *AgentRegistry, name string, ski
 		return Main(cfg, cfg.DefaultProvider, cfg.DefaultModel, skills, mem, options), nil
 	}
 	return mainProfileFromDiskAgent(def, cfg, cfg.DefaultProvider, cfg.DefaultModel, skills, mem, options), nil
+}
+
+// ResolveMainProfileAutoMem is ResolveMainProfile with the EVVA.md /
+// USER_PROFILE.md snapshot auto-loaded from cfg, so callers (cmd/evva and the
+// public pkg/agent.ResolveMainProfile) don't have to thread a memdir.Snapshot.
+// Skills auto-load via ResolveMainProfile's nil path. Returns the resolved
+// Profile plus any non-fatal memory-load warnings.
+func ResolveMainProfileAutoMem(cfg *config.Config, reg *AgentRegistry, name string, options []llm.Option) (Profile, []string, error) {
+	mem := memdir.Load(cfg.WorkDir, cfg.AppHome, cfg.GetEnableAutoMemory())
+	prof, err := ResolveMainProfile(cfg, reg, name, nil, mem, options)
+	return prof, mem.Warnings, err
 }
 
 // mainProfileFromDiskAgent builds a MAIN-tier Profile from a disk-loaded

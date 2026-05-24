@@ -110,6 +110,26 @@ func WithPermissionStore(s *permission.Store) Option {
 	return agent_impl.WithPermissionStore(s)
 }
 
+// WithPersonaRegistry installs the persona catalog the agent resolves through:
+// the /profile picker (Agent.ListMainProfiles / SwitchProfile) and the Agent
+// tool's subagent kinds. Build one with BuildAgentRegistry (built-ins + disk)
+// and Register your own personas before passing it here. A nil registry leaves
+// the agent with only the built-in "evva".
+func WithPersonaRegistry(r *AgentRegistry) Option {
+	var inner *agent_impl.AgentRegistry
+	if r != nil {
+		inner = r.inner
+	}
+	return agent_impl.WithAgentRegistry(inner)
+}
+
+// WithPersona records the active persona's wire name (e.g. "nono") so
+// Agent.ProfileName and the UI render the right label. Pair it with an initial
+// Profile from ResolveMainProfile for that same name.
+func WithPersona(name string) Option {
+	return agent_impl.WithPersona(name)
+}
+
 // WithPermissionBroker installs a custom approval back-channel — the seam for
 // a downstream allow/deny policy. Build one with permission.NewBroker() and
 // register a callback via permission.SetOnRequest that inspects each

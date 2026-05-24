@@ -6,7 +6,94 @@ import (
 
 	"github.com/johnny1110/evva/internal/agent/loader"
 	"github.com/johnny1110/evva/internal/agent/sysprompt"
+	"github.com/johnny1110/evva/pkg/tools"
 )
+
+// AgentSpec is the closure-free view of an agent definition. The public
+// pkg/agent registry constructs one from its public AgentDefinition DTO and
+// hands it to DefinitionFromSpec, so pkg/agent never imports the sysprompt
+// package. SystemPrompt is the full prompt body — wrapped in the same static
+// closure disk-loaded agents use (see loader.loadOne).
+type AgentSpec struct {
+	Name            string
+	WhenToUse       string
+	As              []string
+	InjectMemory    bool
+	AdvertiseSkills bool
+	ActiveTools     []tools.ToolName
+	DeferredTools   []tools.ToolName
+	Model           string
+	SystemPrompt    string
+}
+
+// DefinitionFromSpec builds a sysprompt.AgentDefinition from a closure-free
+// AgentSpec. The system prompt body is captured by value into a static
+// BuildSystemPrompt closure (the disk-agent pattern); InjectMemory maps to the
+// internal OmitMemory flag. Used by the public pkg/agent.AgentRegistry.
+func DefinitionFromSpec(spec AgentSpec) sysprompt.AgentDefinition {
+	body := spec.SystemPrompt
+	return sysprompt.AgentDefinition{
+		Name:              spec.Name,
+		WhenToUse:         spec.WhenToUse,
+		OmitMemory:        !spec.InjectMemory,
+		AdvertiseSkills:   spec.AdvertiseSkills,
+		BuildSystemPrompt: func(_ sysprompt.PromptContext) string { return body },
+		As:                spec.As,
+		ActiveTools:       spec.ActiveTools,
+		DeferredTools:     spec.DeferredTools,
+		Model:             spec.Model,
+		PromptBody:        body,
+	}
+}
+
+// SpecFromDefinition is the inverse of DefinitionFromSpec: a closure-free view
+// of a definition for the public registry. SystemPrompt is recovered from
+// PromptBody (empty for built-ins, whose prompt is assembled internally and
+// isn't reconstructable as a single string).
+func SpecFromDefinition(def sysprompt.AgentDefinition) AgentSpec {
+	return AgentSpec{
+		Name:            def.Name,
+		WhenToUse:       def.WhenToUse,
+		As:              def.As,
+		InjectMemory:    !def.OmitMemory,
+		AdvertiseSkills: def.AdvertiseSkills,
+		ActiveTools:     def.ActiveTools,
+		DeferredTools:   def.DeferredTools,
+		Model:           def.Model,
+		SystemPrompt:    def.PromptBody,
+	}
+}
+
+func specsFromDefs(defs []sysprompt.AgentDefinition) []AgentSpec {
+	out := make([]AgentSpec, len(defs))
+	for i, d := range defs {
+		out[i] = SpecFromDefinition(d)
+	}
+	return out
+}
+
+// GetSpec returns the closure-free spec for name. Powers the public registry's
+// Get without exposing sysprompt.AgentDefinition.
+func (r *AgentRegistry) GetSpec(name string) (AgentSpec, bool) {
+	def, ok := r.Get(name)
+	if !ok {
+		return AgentSpec{}, false
+	}
+	return SpecFromDefinition(def), true
+}
+
+// ListMainSpecs / ListSubagentSpecs are the closure-free counterparts of
+// ListMain / ListSubagent for the public registry.
+func (r *AgentRegistry) ListMainSpecs() []AgentSpec     { return specsFromDefs(r.ListMain()) }
+func (r *AgentRegistry) ListSubagentSpecs() []AgentSpec { return specsFromDefs(r.ListSubagent()) }
+
+// LoadDiskAgents reads the on-disk personas under <evvaHome>/agents/ as
+// closure-free specs (no built-ins). Wraps loader.Load for the public
+// pkg/agent.LoadDiskAgents.
+func LoadDiskAgents(evvaHome string) ([]AgentSpec, []loader.Warning) {
+	defs, warns := loader.Load(evvaHome)
+	return specsFromDefs(defs), warns
+}
 
 // AgentRegistry holds every agent definition known to the runtime —
 // Go-defined built-ins (sysprompt.MainAgent, ExploreAgent, GeneralAgent)

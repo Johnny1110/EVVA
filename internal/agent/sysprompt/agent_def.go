@@ -49,6 +49,13 @@ type AgentDefinition struct {
 	// Model is the optional model override declared in meta.yml. Empty
 	// means "inherit from parent" (existing built-in behavior).
 	Model string
+
+	// PromptBody is the raw persona prompt body before composition, set when
+	// the definition came from disk (system_prompt.md) or a public AgentSpec.
+	// Empty for built-ins whose prompt is assembled from internal fragments —
+	// their prompt isn't recoverable as a single string. Lets a definition
+	// round-trip back to a public AgentDefinition for inspection.
+	PromptBody string
 }
 
 // IsMain reports whether this agent appears in the /profile picker (Phase 6).

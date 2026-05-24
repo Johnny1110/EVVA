@@ -206,6 +206,7 @@ func WithSkillRefs(refs []sysprompt.SkillRef) Option {
 func WithMemorySnapshot(snap memdir.Snapshot) Option {
 	return func(a *Agent) {
 		a.memSnap = snap
+		a.memSnapSet = true
 	}
 }
 

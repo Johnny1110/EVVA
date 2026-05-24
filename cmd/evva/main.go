@@ -9,12 +9,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/johnny1110/evva/internal/agent"
-	"github.com/johnny1110/evva/internal/memdir"
 	bubbleteav2 "github.com/johnny1110/evva/internal/ui/bubbletea_v2"
 	"github.com/johnny1110/evva/internal/update"
 	config "github.com/johnny1110/evva/pkg/config"
@@ -72,28 +72,19 @@ func main() {
 	// + cfg.WorkDirSkillsDir. Hosts that want a programmatic catalog pre-build
 	// one and pass agent.WithSkillRegistry; this binary uses the default.
 
-	//--------------------------------------------------------------------------------------
-	// Load project memory (<workdir>/EVVA.md) and user memory
-	// (<EVVA_HOME>/USER_PROFILE.md) once at startup; the snapshot threads
-	// into the main agent's prompt. Missing files are silent; oversize /
-	// permission warnings are surfaced on stderr like skill warnings.
-	// TODO: memSnap should move into agent, support evva SDK to have this feature.
-	memSnap := memdir.Load(cfg.WorkDir, cfg.AppHome, cfg.GetEnableAutoMemory())
-	for _, w := range memSnap.Warnings {
-		fmt.Fprintln(os.Stderr, "evva:", w)
-	}
-	// First-session notice for auto-memory: no USER_PROFILE.md yet AND the
-	// feature is on by default. Quiet thereafter — once the file exists,
-	// the user has already seen it (or has opted in by their own writes).
-	if cfg.GetEnableAutoMemory() && memSnap.UserProfile == "" {
-		if _, err := os.Stat(memdir.UserProfilePath(cfg.AppHome)); errors.Is(err, os.ErrNotExist) {
+	// First-session notice for auto-memory: no USER_PROFILE.md yet. Quiet
+	// thereafter — once the file exists the user has seen it (or opted in by
+	// their own writes). The agent now auto-loads EVVA.md / USER_PROFILE.md
+	// into the prompt itself and logs any load warnings, so the host no longer
+	// reads the memory files directly.
+	if cfg.GetEnableAutoMemory() {
+		if _, err := os.Stat(filepath.Join(cfg.AppHome, "USER_PROFILE.md")); errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintln(os.Stderr, "evva: auto-memory is enabled — the agent will save persistent notes to USER_PROFILE.md and projects/<key>/MEMORY.md. Disable with /config.")
 		}
 	}
-	//--------------------------------------------------------------------------------------
 
-	// Build the agent registry first: ResolveMainProfile reads from it to
-	// pick the right persona (built-in evva or a disk-loaded persona under
+	// Build the agent registry first: ResolveMainProfileAutoMem reads from it
+	// to pick the right persona (built-in evva or a disk-loaded persona under
 	// <EVVA_HOME>/agents/). Bad disk agents degrade gracefully — they're
 	// skipped with a warning, the session continues without them.
 	agentReg, agentWarns := agent.BuildAgentRegistry(cfg.AppHome)
@@ -105,13 +96,13 @@ func main() {
 	if profName == "" {
 		profName = "evva"
 	}
-	// nil skills → ResolveMainProfile auto-loads from cfg's skill dirs so
-	// the system prompt's # Skills section matches whatever agent.New
-	// installs on the toolState.
-	prof, profErr := agent.ResolveMainProfile(cfg, agentReg, profName, nil, memSnap, buildOptions(*temp, *maxTokens))
+	// Memory (EVVA.md / USER_PROFILE.md) and skills auto-load inside the
+	// resolver; the resolved prompt carries them, and memory-load warnings
+	// surface on the agent's logger rather than here.
+	prof, _, profErr := agent.ResolveMainProfileAutoMem(cfg, agentReg, profName, buildOptions(*temp, *maxTokens))
 	if profErr != nil {
 		fmt.Fprintln(os.Stderr, "evva:", profErr, "— falling back to evva")
-		prof, _ = agent.ResolveMainProfile(cfg, agentReg, "evva", nil, memSnap, buildOptions(*temp, *maxTokens))
+		prof, _, _ = agent.ResolveMainProfileAutoMem(cfg, agentReg, "evva", buildOptions(*temp, *maxTokens))
 		profName = "evva"
 	}
 
@@ -131,10 +122,10 @@ func main() {
 
 	useTUI := !*noTUI && isTTY(os.Stdout)
 	if useTUI {
-		runTUI(ctx, prof, profName, memSnap, *maxIters, cfg.AppName, cfg.AppHome, agentReg, permStore, permMode, *uiKind)
+		runTUI(ctx, prof, profName, *maxIters, cfg.AppName, cfg.AppHome, agentReg, permStore, permMode, *uiKind)
 		return
 	}
-	runCLI(ctx, prof, profName, memSnap, *maxIters, cfg.AppName, agentReg, permStore, permMode)
+	runCLI(ctx, prof, profName, *maxIters, cfg.AppName, agentReg, permStore, permMode)
 }
 
 // resolvePermissionMode picks the active mode using CLI > YAML > "default"
@@ -161,7 +152,7 @@ func resolvePermissionMode(cliFlag, yamlValue string) permission.Mode {
 // or "v2" (clean-architecture rewrite, in active development). Both
 // satisfy the same ui.UI contract, so the agent-side wiring is
 // identical.
-func runTUI(ctx context.Context, prof agent.Profile, profName string, memSnap memdir.Snapshot, maxIters int, name, evvaHome string, agents *agent.AgentRegistry, permStore *permission.Store, permMode permission.Mode, kind string) {
+func runTUI(ctx context.Context, prof agent.Profile, profName string, maxIters int, name, evvaHome string, agents *agent.AgentRegistry, permStore *permission.Store, permMode permission.Mode, kind string) {
 	var tui ui.UI
 	switch kind {
 	default:
@@ -178,7 +169,6 @@ func runTUI(ctx context.Context, prof agent.Profile, profName string, memSnap me
 		agent.WithMaxIterations(maxIters),
 		agent.WithAgentRegistry(agents),
 		agent.WithPersona(profName),
-		agent.WithMemorySnapshot(memSnap),
 		agent.WithPermissionStore(permStore),
 		agent.WithPermissionMode(permMode),
 		agent.WithRootContext(ctx), // signal pump + bg tasks track the TUI ctx
@@ -197,7 +187,7 @@ func runTUI(ctx context.Context, prof agent.Profile, profName string, memSnap me
 // Preserves the original behavior: read prompt → run → stream events as
 // plain text → exit. ErrIterLimit triggers a synchronous "press Enter to
 // continue" prompt on stderr.
-func runCLI(ctx context.Context, prof agent.Profile, profName string, memSnap memdir.Snapshot, maxIters int, name string, agents *agent.AgentRegistry, permStore *permission.Store, permMode permission.Mode) {
+func runCLI(ctx context.Context, prof agent.Profile, profName string, maxIters int, name string, agents *agent.AgentRegistry, permStore *permission.Store, permMode permission.Mode) {
 	prompt, err := readPrompt(flag.Args())
 	if err != nil {
 		exitf(2, "evva: %v", err)
@@ -217,7 +207,6 @@ func runCLI(ctx context.Context, prof agent.Profile, profName string, memSnap me
 		agent.WithMaxIterations(maxIters),
 		agent.WithAgentRegistry(agents),
 		agent.WithPersona(profName),
-		agent.WithMemorySnapshot(memSnap),
 		agent.WithPermissionStore(permStore),
 		agent.WithPermissionMode(permMode),
 		agent.WithRootContext(ctx),

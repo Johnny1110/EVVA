@@ -95,7 +95,12 @@ type Agent struct {
 	// construction. Reused by SwitchProfile when rebuilding the system
 	// prompt for a new persona (the snapshot itself is stable for the
 	// lifetime of the process).
-	memSnap memdir.Snapshot
+	//
+	// memSnapSet records whether a host injected the snapshot via
+	// WithMemorySnapshot. When false, New auto-loads from cfg so a host
+	// doesn't have to call memdir.Load itself.
+	memSnap    memdir.Snapshot
+	memSnapSet bool
 
 	// permissionMode is the active stance the gate enforces. Subagents
 	// inherit the parent's mode (CLAUDE.md). Set via WithPermissionMode at
@@ -296,6 +301,18 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 		a.toolState.SetSkillRegistry(reg)
 		if a.skillRefs == nil {
 			a.skillRefs = refsFromRegistry(reg)
+		}
+	}
+
+	// Auto-load the EVVA.md + USER_PROFILE.md snapshot when no host injected
+	// one via WithMemorySnapshot. SwitchProfile reuses a.memSnap to rebuild a
+	// persona's prompt, so loading it here means a host no longer has to call
+	// memdir.Load itself. Warnings surface on the agent logger (matching the
+	// skill-load warnings above), not the host's stderr.
+	if !a.memSnapSet {
+		a.memSnap = memdir.Load(a.workdir, a.cfg.AppHome, a.cfg.GetEnableAutoMemory())
+		for _, w := range a.memSnap.Warnings {
+			lgr.Warn("memory: load", "msg", w)
 		}
 	}
 

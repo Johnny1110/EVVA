@@ -52,6 +52,11 @@ func (c *Client) Name() string {
 	return c.name
 }
 
+// SupportsDeferLoading reports false — Ollama does not have a defer_loading
+// mechanism. Mutating the tools array between turns changes the request prefix
+// and invalidates any provider-side caching.
+func (c *Client) SupportsDeferLoading() bool { return false }
+
 func (c *Client) Model() string     { return c.model }
 func (c *Client) SetModel(m string) { c.model = m }
 

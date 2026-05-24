@@ -223,6 +223,19 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return firstErr
 }
 
+// FirstExtensionFor returns the first file extension (including leading dot)
+// mapped to the given server name, or "" if none is mapped.
+func (m *Manager) FirstExtensionFor(serverName string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for ext, name := range m.extMap {
+		if name == serverName {
+			return ext
+		}
+	}
+	return ""
+}
+
 // Servers returns all managed server names.
 func (m *Manager) Servers() []string {
 	names := make([]string, 0, len(m.servers))

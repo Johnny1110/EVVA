@@ -16,6 +16,7 @@ type nullClient struct{ model string }
 
 func (n *nullClient) Name() string  { return "null" }
 func (n *nullClient) Model() string { return n.model }
+func (*nullClient) SupportsDeferLoading() bool { return false }
 func (n *nullClient) Complete(context.Context, []llm.Message, []tools.Tool) (llm.Response, error) {
 	return llm.Response{Content: "ok"}, nil
 }

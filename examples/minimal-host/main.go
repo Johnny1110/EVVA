@@ -40,6 +40,7 @@ type echoClient struct{ model string }
 
 func (e *echoClient) Name() string  { return "echo" }
 func (e *echoClient) Model() string { return e.model }
+func (*echoClient) SupportsDeferLoading() bool { return false }
 func (e *echoClient) Complete(_ context.Context, msgs []llm.Message, _ []tools.Tool) (llm.Response, error) {
 	last := ""
 	if len(msgs) > 0 {

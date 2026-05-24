@@ -23,6 +23,7 @@ type stubLLM struct {
 
 func (s *stubLLM) Name() string  { return "stub" }
 func (s *stubLLM) Model() string { return "stub-model" }
+func (s *stubLLM) SupportsDeferLoading() bool { return false }
 func (s *stubLLM) Apply(...llm.Option) {}
 func (s *stubLLM) Complete(ctx context.Context, msgs []llm.Message, toolSet []tools.Tool) (llm.Response, error) {
 	return s.complete(ctx, msgs, toolSet)

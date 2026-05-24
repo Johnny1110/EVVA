@@ -15,6 +15,12 @@ import (
 type Client interface {
 	Name() string
 	Model() string
+	// SupportsDeferLoading reports whether this provider natively supports
+	// defer_loading (Anthropic, OpenAI). When false, the agent MUST NOT
+	// mutate the tools array between turns — doing so would change the
+	// prefix and invalidate prompt caching for providers that lack a
+	// server-side defer_loading / tool_reference mechanism.
+	SupportsDeferLoading() bool
 	Complete(ctx context.Context, messages []Message, tools []tools.Tool) (Response, error)
 	// Stream is the chunk-by-chunk variant of Complete. Implementations push
 	// each text/thinking delta through sink as it arrives, then return the

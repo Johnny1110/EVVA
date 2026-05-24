@@ -202,12 +202,7 @@ func (t *lspTool) executeWorkspaceSymbol(ctx context.Context, _ *slog.Logger, in
 		if !ok {
 			return tools.Result{IsError: true, Content: fmt.Sprintf("lsp_request: no LSP server for %s", filePath)}, nil
 		}
-		srv, err := t.manager.EnsureServerStarted(ctx, filePath)
-		if err != nil {
-			return tools.Result{IsError: true, Content: fmt.Sprintf("lsp_request: server start: %v", err)}, nil
-		}
-		_ = srv
-		_ = err
+		var err error
 		srv, err = t.manager.EnsureServerStarted(ctx, filePath)
 		if err != nil {
 			return tools.Result{IsError: true, Content: fmt.Sprintf("lsp_request: server start: %v", err)}, nil
@@ -217,16 +212,13 @@ func (t *lspTool) executeWorkspaceSymbol(ctx context.Context, _ *slog.Logger, in
 		if len(names) == 0 {
 			return tools.Result{IsError: true, Content: "lsp_request: no LSP servers configured"}, nil
 		}
-		// Use first server — find a file with a matching extension to start it.
 		firstName := names[0]
-		srv, _ = t.manager.ServerForFile("/dummy." + firstName)
-		if srv == nil {
-			return tools.Result{IsError: true, Content: "lsp_request: no LSP server available"}, nil
+		ext := t.manager.FirstExtensionFor(firstName)
+		if ext == "" {
+			return tools.Result{IsError: true, Content: fmt.Sprintf("lsp_request: no file extension for server %q", firstName)}, nil
 		}
 		var err error
-		// Try to ensure any server is started by using a dummy path with the right ext.
-		// Manager.Servers() returns names; we need to map name to extension.
-		srv, err = t.manager.EnsureServerStarted(ctx, "/dummy."+firstName)
+		srv, err = t.manager.EnsureServerStarted(ctx, "/dummy"+ext)
 		if err != nil {
 			return tools.Result{IsError: true, Content: fmt.Sprintf("lsp_request: server start: %v", err)}, nil
 		}

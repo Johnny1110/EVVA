@@ -155,6 +155,34 @@ func TestManagerServerNames(t *testing.T) {
 	}
 }
 
+func TestManagerFirstExtensionFor(t *testing.T) {
+	configs := map[string]LspServerConfig{
+		"gopls": {
+			Command:    "gopls",
+			Extensions: map[string]string{".go": "go"},
+		},
+		"typescript": {
+			Command:    "typescript-language-server",
+			Extensions: map[string]string{".ts": "typescript", ".tsx": "typescriptreact"},
+		},
+	}
+
+	mgr := NewManager(configs, "file:///test", slog.Default())
+
+	if got := mgr.FirstExtensionFor("gopls"); got != ".go" {
+		t.Errorf("FirstExtensionFor(gopls) = %q, want %q", got, ".go")
+	}
+
+	// Multiple extensions — returns first in map order (non-deterministic), so just check non-empty.
+	if got := mgr.FirstExtensionFor("typescript"); got == "" {
+		t.Error("FirstExtensionFor(typescript) should not be empty")
+	}
+
+	if got := mgr.FirstExtensionFor("nonexistent"); got != "" {
+		t.Errorf("FirstExtensionFor(nonexistent) = %q, want \"\"", got)
+	}
+}
+
 func TestNormalizeExt(t *testing.T) {
 	tests := []struct {
 		input    string

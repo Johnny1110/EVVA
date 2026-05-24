@@ -35,6 +35,7 @@ type echoLLM struct{ model string }
 
 func (e *echoLLM) Name() string  { return "echo" }
 func (e *echoLLM) Model() string { return e.model }
+func (*echoLLM) SupportsDeferLoading() bool { return false }
 func (e *echoLLM) Complete(_ context.Context, msgs []llm.Message, _ []tools.Tool) (llm.Response, error) {
 	return llm.Response{Content: "echo: ok"}, nil
 }

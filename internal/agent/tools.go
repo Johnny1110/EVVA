@@ -87,6 +87,14 @@ func (a *Agent) MarkDiscovered(names []tools.ToolName) error {
 	a.resolveMu.Lock()
 	defer a.resolveMu.Unlock()
 
+	if !a.llm.SupportsDeferLoading() {
+		a.logger.Debug("tool_search: skipping MarkDiscovered — provider lacks defer_loading",
+			"provider", a.llm.Name(),
+			"count", len(names),
+		)
+		return nil
+	}
+
 	var toBuild []tools.ToolName
 	for _, n := range names {
 		if _, ok := a.active[string(n)]; ok {

@@ -20,6 +20,7 @@ type stubClient struct {
 
 func (s *stubClient) Name() string  { return s.name }
 func (s *stubClient) Model() string { return s.model }
+func (s *stubClient) SupportsDeferLoading() bool { return false }
 func (s *stubClient) Complete(_ context.Context, _ []Message, _ []tools.Tool) (Response, error) {
 	return Response{Content: "stub: " + s.model}, nil
 }

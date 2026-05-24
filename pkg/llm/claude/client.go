@@ -83,6 +83,13 @@ func (c *Client) Name() string {
 	return c.name
 }
 
+// SupportsDeferLoading currently returns false for all providers.
+// The native Anthropic defer_loading + tool_reference pipeline is not yet
+// wired in evva's client layer; once toAPITools annotates deferred tools
+// with defer_loading:true and the response parser handles tool_reference
+// blocks, this can be flipped to true.
+func (c *Client) SupportsDeferLoading() bool { return false }
+
 // SetModel swaps the active model id.
 func (c *Client) SetModel(m string) { c.model = m }
 

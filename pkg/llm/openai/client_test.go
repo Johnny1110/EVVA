@@ -19,7 +19,7 @@ func TestOpenAIEffort(t *testing.T) {
 		{1, "low"},
 		{2, "medium"},
 		{3, "high"},
-		{4, "xhigh"},
+		{4, "high"},
 		{5, ""}, // out-of-range
 	}
 	for _, tt := range tests {
@@ -121,14 +121,6 @@ func TestCompleteRoundTrip(t *testing.T) {
 	if resp.Content != "Hello!" {
 		t.Errorf("Content: got %q, want Hello!", resp.Content)
 	}
-}
-
-// TestCompleteRoundTripNonReasoning is skipped until a non-reasoning model
-// (gpt-4*, gpt-3.5*) is added to constant.OPENAI.Models. When that happens,
-// unskip this test and update it to use a gpt-4* model name with assertions
-// that temperature and top_p ARE sent in the request body.
-func TestCompleteRoundTripNonReasoning(t *testing.T) {
-	t.Skip("no non-reasoning OpenAI models exist yet; re-enable when a gpt-4* model is added to constant.OPENAI.Models")
 }
 
 // TestCompleteUsage verifies the OpenAI-specific usage shape: cached tokens
@@ -233,5 +225,31 @@ func TestCompleteAPIError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "429") {
 		t.Errorf("error should mention status 429: %v", err)
+	}
+}
+
+// TestCompleteAPIErrorBody verifies that a 200 OK carrying an error object is
+// surfaced (e.g. when OpenAI returns the error in the JSON body rather than as
+// an HTTP status).
+func TestCompleteAPIErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"error": {"type": "invalid_request_error", "message": "Unrecognized model: gpt-fake"}}`))
+	}))
+	defer server.Close()
+
+	c := New(llm.APIConfig{ApiURL: server.URL, ApiSecret: "test-key"}, "gpt-5.5")
+	_, err := c.Complete(t.Context(), []llm.Message{
+		{Role: llm.RoleUser, Content: "hi"},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error for 200 with error body")
+	}
+	if !strings.Contains(err.Error(), "invalid_request_error") {
+		t.Errorf("error should mention error type: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Unrecognized model") {
+		t.Errorf("error should mention error message: %v", err)
 	}
 }

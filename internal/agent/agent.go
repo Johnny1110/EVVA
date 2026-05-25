@@ -820,7 +820,8 @@ func (a *Agent) SwitchLLM(provider constant.LLMProvider, model constant.Model) e
 	newProfile := a.profile
 	newProfile.LLMProvider = provider
 	newProfile.LLMModel = model
-	client, err := buildLLMClient(a.cfg, provider, model, newProfile.LLMOptions)
+	effortOpts := append(newProfile.LLMOptions, llm.WithEffort(llm.ParseEffort(a.effort)))
+	client, err := buildLLMClient(a.cfg, provider, model, effortOpts)
 	if err != nil {
 		return fmt.Errorf("agent: build llm client: %w", err)
 	}

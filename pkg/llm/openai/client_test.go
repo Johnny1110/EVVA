@@ -123,46 +123,12 @@ func TestCompleteRoundTrip(t *testing.T) {
 	}
 }
 
-// TestCompleteRoundTripNonReasoning verifies that sampling params ARE sent
-// for a hypothetical non-reasoning model. Since no such model currently
-// exists in the constant table, this test overrides the isReasoningModel
-// guard by using a model name that doesn't match the reasoning allowlist.
-// This test will need updating when isReasoningModel grows real logic.
+// TestCompleteRoundTripNonReasoning is skipped until a non-reasoning model
+// (gpt-4*, gpt-3.5*) is added to constant.OPENAI.Models. When that happens,
+// unskip this test and update it to use a gpt-4* model name with assertions
+// that temperature and top_p ARE sent in the request body.
 func TestCompleteRoundTripNonReasoning(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body apiRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		// Currently all models are reasoning-class, so this test is
-		// documenting the expected behavior for when a non-reasoning
-		// model is added. For now, temperature is still stripped.
-		// When isReasoningModel grows real logic, this test should
-		// use a gpt-4* model name and expect Temperature != nil.
-		_ = body
-		resp := apiResponse{
-			Choices: []struct {
-				Message      apiMessage `json:"message"`
-				FinishReason string     `json:"finish_reason"`
-			}{
-				{Message: apiMessage{Role: "assistant", Content: "OK"}},
-			},
-		}
-		w.Header().Set("content-type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	c := New(llm.APIConfig{ApiURL: server.URL, ApiSecret: "test-key"}, "gpt-5.4-mini",
-		llm.WithTemperature(0.7),
-	)
-
-	_, err := c.Complete(t.Context(), []llm.Message{
-		{Role: llm.RoleUser, Content: "hi"},
-	}, nil)
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
+	t.Skip("no non-reasoning OpenAI models exist yet; re-enable when a gpt-4* model is added to constant.OPENAI.Models")
 }
 
 // TestCompleteUsage verifies the OpenAI-specific usage shape: cached tokens

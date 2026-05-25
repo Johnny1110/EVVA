@@ -187,7 +187,8 @@ func sessionSpecificGuidanceSection() string {
 		" - `" + nameLspRequest + "` is a deferred tool that queries language servers for semantic code intelligence. Use it for: go-to-definition, find references, hover type info, and document symbols — it gives compiler-grade answers that grep cannot. The server starts automatically on first use.\n" +
 		" - For simple, directed codebase searches (e.g. finding a file by name, searching for a text pattern or string constant) use `" + nameGlob + "` or `" + nameGrep + "` directly.\n" +
 		" - For broader codebase exploration and deep research, use the `" + nameAgent + "` tool with `subagent_type=\"" + subagentExplore + "\"`. This is slower than using `" + nameGlob + "` / `" + nameGrep + "` directly, so use this only when a simple, directed search proves to be insufficient or when your task will clearly require more than 3 queries.\n" +
-		" - `/<skill-name>` (e.g., `/commit`) is shorthand for users to invoke a user-invocable skill. When executed, the skill gets expanded to a full prompt. Use the `" + nameSkill + "` tool to execute them. IMPORTANT: Only use `" + nameSkill + "` for skills listed in its user-invocable skills section — do not guess or use built-in CLI commands."
+		" - `/<skill-name>` (e.g., `/commit`) is shorthand for users to invoke a user-invocable skill. When executed, the skill gets expanded to a full prompt. Use the `" + nameSkill + "` tool to execute them. IMPORTANT: Only use `" + nameSkill + "` for skills listed in the available-skills section — do not guess or use built-in CLI commands.\n" +
+		" - When the user's request matches the purpose of a listed skill, this is a BLOCKING REQUIREMENT: invoke the `" + nameSkill + "` tool with that skill BEFORE generating any other response about the task. Skills contain detailed instructions that enable you to complete these tasks correctly."
 }
 
 // summarizeToolResultsSection — ported verbatim from

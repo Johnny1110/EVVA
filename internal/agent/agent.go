@@ -440,6 +440,7 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	a.toolState.SetQuestionBroker(a.questionBroker)
 
 	effortOpts := append(profile.LLMOptions, llm.WithEffort(llm.ParseEffort(a.effort)))
+	effortOpts = append(effortOpts, runtimeLLMOptions(a.cfg)...)
 	llmClient, err := buildLLMClient(a.cfg, profile.LLMProvider, profile.LLMModel, effortOpts)
 	if err != nil {
 		return nil, fmt.Errorf("agent: init llm client: %w", err)
@@ -510,6 +511,58 @@ func (a *Agent) SetEffort(level string) error {
 	return a.cfg.SetDefaultEffort(level)
 }
 
+// LLMTemperature returns the current runtime temperature or nil (provider default).
+func (a *Agent) LLMTemperature() *float64 { return a.cfg.LLMTemperature() }
+
+// SetLLMTemperature updates the session-only temperature. nil unsets
+// (provider default). Validates 0 ≤ v ≤ 2. Applies to live LLM client
+// immediately. Not persisted to disk.
+func (a *Agent) SetLLMTemperature(v *float64) error {
+	if err := a.cfg.SetLLMTemperature(v); err != nil {
+		return err
+	}
+	if v == nil {
+		a.llm.Apply(llm.UnsetTemperature())
+	} else {
+		a.llm.Apply(llm.WithTemperature(*v))
+	}
+	return nil
+}
+
+// LLMTopK returns the current runtime top_k or nil (provider default).
+func (a *Agent) LLMTopK() *int { return a.cfg.LLMTopK() }
+
+// SetLLMTopK updates the session-only top_k. nil unsets (provider default).
+// Validates v > 0. Applies to live LLM client immediately. Not persisted.
+func (a *Agent) SetLLMTopK(v *int) error {
+	if err := a.cfg.SetLLMTopK(v); err != nil {
+		return err
+	}
+	if v == nil {
+		a.llm.Apply(llm.UnsetTopK())
+	} else {
+		a.llm.Apply(llm.WithTopK(*v))
+	}
+	return nil
+}
+
+// LLMTopP returns the current runtime top_p or nil (provider default).
+func (a *Agent) LLMTopP() *float64 { return a.cfg.LLMTopP() }
+
+// SetLLMTopP updates the session-only top_p. nil unsets (provider default).
+// Validates 0 ≤ v ≤ 1. Applies to live LLM client immediately. Not persisted.
+func (a *Agent) SetLLMTopP(v *float64) error {
+	if err := a.cfg.SetLLMTopP(v); err != nil {
+		return err
+	}
+	if v == nil {
+		a.llm.Apply(llm.UnsetTopP())
+	} else {
+		a.llm.Apply(llm.WithTopP(*v))
+	}
+	return nil
+}
+
 // SwitchProfile rebuilds the agent for a new persona — different system
 // prompt, different active/deferred tool lists, fresh session. Mirrors
 // SwitchLLM's running-guard discipline.
@@ -554,6 +607,7 @@ func (a *Agent) SwitchProfile(name string) error {
 	}
 
 	effortOpts := append(newProfile.LLMOptions, llm.WithEffort(llm.ParseEffort(a.effort)))
+	effortOpts = append(effortOpts, runtimeLLMOptions(a.cfg)...)
 	client, err := buildLLMClient(a.cfg, newProfile.LLMProvider, newProfile.LLMModel, effortOpts)
 	if err != nil {
 		return fmt.Errorf("agent: build llm client: %w", err)
@@ -594,6 +648,41 @@ func baseLLMOptions(opts []llm.Option) []llm.Option {
 		out = append(out, opt)
 	}
 	return out
+}
+
+// runtimeLLMOptions returns sampling-parameter Options for any
+// temperature / top_k / top_p currently set on the runtime config.
+// nil (unset) values are skipped so the provider default is used.
+func runtimeLLMOptions(cfg *config.Config) []llm.Option {
+	var opts []llm.Option
+	if t := cfg.LLMTemperature(); t != nil {
+		opts = append(opts, llm.WithTemperature(*t))
+	}
+	if k := cfg.LLMTopK(); k != nil {
+		opts = append(opts, llm.WithTopK(*k))
+	}
+	if p := cfg.LLMTopP(); p != nil {
+		opts = append(opts, llm.WithTopP(*p))
+	}
+	return opts
+}
+
+// applyRuntimeLLMParams pushes the current runtime sampling params
+// onto the live LLM client. Called after SwitchLLM so a new client
+// picks up any session-level overrides.
+func (a *Agent) applyRuntimeLLMParams() {
+	if a.cfg == nil {
+		return
+	}
+	if t := a.cfg.LLMTemperature(); t != nil {
+		a.llm.Apply(llm.WithTemperature(*t))
+	}
+	if k := a.cfg.LLMTopK(); k != nil {
+		a.llm.Apply(llm.WithTopK(*k))
+	}
+	if p := a.cfg.LLMTopP(); p != nil {
+		a.llm.Apply(llm.WithTopP(*p))
+	}
 }
 
 // ResumeSnapshot swaps the live agent into a previously-persisted session
@@ -671,6 +760,7 @@ func (a *Agent) ResumeSnapshot(snap *session.Snapshot) error {
 	}
 
 	effortOpts := append(newProfile.LLMOptions, llm.WithEffort(llm.ParseEffort(a.effort)))
+	effortOpts = append(effortOpts, runtimeLLMOptions(a.cfg)...)
 	client, err := buildLLMClient(a.cfg, provider, model, effortOpts)
 	if err != nil {
 		return fmt.Errorf("agent: build llm client: %w", err)
@@ -730,7 +820,8 @@ func (a *Agent) SwitchLLM(provider constant.LLMProvider, model constant.Model) e
 	newProfile := a.profile
 	newProfile.LLMProvider = provider
 	newProfile.LLMModel = model
-	client, err := buildLLMClient(a.cfg, provider, model, newProfile.LLMOptions)
+	effortOpts := append(newProfile.LLMOptions, llm.WithEffort(llm.ParseEffort(a.effort)))
+	client, err := buildLLMClient(a.cfg, provider, model, effortOpts)
 	if err != nil {
 		return fmt.Errorf("agent: build llm client: %w", err)
 	}
@@ -738,6 +829,7 @@ func (a *Agent) SwitchLLM(provider constant.LLMProvider, model constant.Model) e
 	a.profile = newProfile
 	a.llm = client
 	a.session = session.New()
+	a.applyRuntimeLLMParams()
 	a.logger.Info("agent: llm switched", "provider", provider.Name, "model", string(model))
 	return nil
 }

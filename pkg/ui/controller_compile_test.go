@@ -39,6 +39,12 @@ func (publicOnlyController) ProfileName() string                                
 func (publicOnlyController) ListMainProfiles() []ui.ProfileChoice                  { return nil }
 func (publicOnlyController) Effort() string                                        { return "" }
 func (publicOnlyController) SetEffort(string) error                                { return nil }
+func (publicOnlyController) LLMTemperature() *float64                              { return nil }
+func (publicOnlyController) LLMTopK() *int                                         { return nil }
+func (publicOnlyController) LLMTopP() *float64                                     { return nil }
+func (publicOnlyController) SetLLMTemperature(*float64) error                      { return nil }
+func (publicOnlyController) SetLLMTopK(*int) error                                 { return nil }
+func (publicOnlyController) SetLLMTopP(*float64) error                             { return nil }
 func (publicOnlyController) Skills() []ui.Skill                                    { return nil }
 func (publicOnlyController) Compact(context.Context, string) error                 { return nil }
 func (publicOnlyController) PermissionModeName() string                            { return "" }

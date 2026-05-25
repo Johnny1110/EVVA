@@ -240,6 +240,14 @@ func (a *agentAdapter) Effort() string { return a.inner.Effort() }
 
 func (a *agentAdapter) SetEffort(level string) error { return a.inner.SetEffort(level) }
 
+func (a *agentAdapter) LLMTemperature() *float64 { return a.inner.LLMTemperature() }
+func (a *agentAdapter) LLMTopK() *int           { return a.inner.LLMTopK() }
+func (a *agentAdapter) LLMTopP() *float64       { return a.inner.LLMTopP() }
+
+func (a *agentAdapter) SetLLMTemperature(v *float64) error { return a.inner.SetLLMTemperature(v) }
+func (a *agentAdapter) SetLLMTopK(v *int) error            { return a.inner.SetLLMTopK(v) }
+func (a *agentAdapter) SetLLMTopP(v *float64) error        { return a.inner.SetLLMTopP(v) }
+
 func (a *agentAdapter) Skills() []Skill {
 	inner := a.inner.Skills()
 	out := make([]Skill, len(inner))

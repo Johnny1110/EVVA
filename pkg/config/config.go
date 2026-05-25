@@ -153,9 +153,18 @@ type Config struct {
 	// feature flags). evva itself never reads from CustomConfig.
 	CustomConfig map[string]any
 
+	// LLMParamsTemperature / LLMParamsTopP / LLMParamsTopK are session-only
+	// sampling knobs the /config form mutates at runtime. nil → provider
+	// default (not sent in API request). Reset to nil on every evva start;
+	// never persisted to YAML.
+	LLMParamsTemperature *float64
+	LLMParamsTopP        *float64
+	LLMParamsTopK        *int
+
 	// mu guards the runtime-mutable fields below (DisplayThinking,
 	// AutoCompactThreshold, DefaultMaxIterations, DefaultMaxTokens,
-	// FetchMaxBytes, TavilyAPIKey, LLMProviderConfig, CustomConfig) once
+	// FetchMaxBytes, TavilyAPIKey, LLMProviderConfig, CustomConfig,
+	// LLMParamsTemperature, LLMParamsTopP, LLMParamsTopK) once
 	// Load returns. Use the Get* / Set* accessors — direct field reads
 	// from outside this package race the UI goroutine's edits.
 	mu sync.RWMutex
@@ -207,6 +216,9 @@ func (c *Config) Clone() *Config {
 		EnableAutoMemory:     c.EnableAutoMemory,
 		TavilyAPIKey:         c.TavilyAPIKey,
 		FetchMaxBytes:        c.FetchMaxBytes,
+		LLMParamsTemperature: c.LLMParamsTemperature,
+		LLMParamsTopP:        c.LLMParamsTopP,
+		LLMParamsTopK:        c.LLMParamsTopK,
 	}
 	if c.CustomConfig != nil {
 		clone.CustomConfig = make(map[string]any, len(c.CustomConfig))
@@ -451,6 +463,63 @@ func (c *Config) SetTavilyAPIKey(s string) error {
 	c.TavilyAPIKey = s
 	c.mu.Unlock()
 	return c.SaveFile()
+}
+
+// LLMTemperature returns the current temperature or nil (provider default).
+func (c *Config) LLMTemperature() *float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.LLMParamsTemperature
+}
+
+// SetLLMTemperature updates the session-only temperature. nil clears it
+// (provider default). Validates 0 ≤ v ≤ 2. Never persisted to disk.
+func (c *Config) SetLLMTemperature(v *float64) error {
+	if v != nil && (*v < 0 || *v > 2) {
+		return fmt.Errorf("temperature must be in [0, 2], got %g", *v)
+	}
+	c.mu.Lock()
+	c.LLMParamsTemperature = v
+	c.mu.Unlock()
+	return nil
+}
+
+// LLMTopK returns the current top_k or nil (provider default).
+func (c *Config) LLMTopK() *int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.LLMParamsTopK
+}
+
+// SetLLMTopK updates the session-only top_k. nil clears it (provider
+// default). Validates v > 0. Never persisted to disk.
+func (c *Config) SetLLMTopK(v *int) error {
+	if v != nil && *v <= 0 {
+		return fmt.Errorf("top_k must be > 0, got %d", *v)
+	}
+	c.mu.Lock()
+	c.LLMParamsTopK = v
+	c.mu.Unlock()
+	return nil
+}
+
+// LLMTopP returns the current top_p or nil (provider default).
+func (c *Config) LLMTopP() *float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.LLMParamsTopP
+}
+
+// SetLLMTopP updates the session-only top_p. nil clears it (provider
+// default). Validates 0 ≤ v ≤ 1. Never persisted to disk.
+func (c *Config) SetLLMTopP(v *float64) error {
+	if v != nil && (*v < 0 || *v > 1) {
+		return fmt.Errorf("top_p must be in [0, 1], got %g", *v)
+	}
+	c.mu.Lock()
+	c.LLMParamsTopP = v
+	c.mu.Unlock()
+	return nil
 }
 
 // SetProviderAPIKey installs an api key for the named provider and

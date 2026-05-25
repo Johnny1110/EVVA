@@ -22,6 +22,7 @@ import (
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/todo"
+	"github.com/johnny1110/evva/internal/ui/lowprofile"
 	"github.com/johnny1110/evva/pkg/ui"
 	"github.com/johnny1110/evva/pkg/ui/bubbletea"
 	"github.com/johnny1110/evva/pkg/update"
@@ -63,6 +64,7 @@ func main() {
 	maxTokens := flag.Int("max-tokens", cfg.DefaultMaxTokens, "max output tokens (0 → provider default)")
 	maxIters := flag.Int("max-iters", cfg.DefaultMaxIterations, "max loop iterations before pausing for Continue")
 	noTUI := flag.Bool("no-tui", false, "disable the bubbletea TUI; read a prompt and run once with plain CLI output")
+	lowProfile := flag.Bool("lp", false, "use low-profile black & gold TUI")
 	permModeFlag := flag.String("permission-mode", "", "permission stance: default|accept_edits|plan|bypass (overrides YAML)")
 	flag.Parse()
 
@@ -95,21 +97,28 @@ func main() {
 
 	useTUI := !*noTUI && isTTY(os.Stdout)
 	if useTUI {
-		runTUI(ctx, acfg, cfg.AppHome)
+		runTUI(ctx, acfg, cfg.AppHome, *lowProfile)
 		return
 	}
 	runCLI(ctx, acfg)
 }
 
-// runTUI is the interactive path. The bubbletea UI owns the screen; the
-// agent emits events into it; the user drives prompts from the textarea.
-// evvaHome lets the TUI resolve banner.txt (and any future user config).
+// runTUI is the interactive path. The bubbletea (or lowprofile) UI owns the
+// screen; the agent emits events into it; the user drives prompts from the
+// textarea. evvaHome lets the TUI resolve banner.txt (and any future user
+// config). When lowProfile is true, the black & gold low-profile TUI is used
+// instead of the default neon tokyo theme.
 //
 // With a sink installed the agent emits KindApprovalNeeded /
 // KindQuestionNeeded to the TUI, which renders the overlay and resolves via
 // Controller.RespondPermission / RespondQuestion — no host broker wiring.
-func runTUI(ctx context.Context, acfg agent.Config, evvaHome string) {
-	tui := bubbletea.New(evvaHome)
+func runTUI(ctx context.Context, acfg agent.Config, evvaHome string, lowProfile bool) {
+	var tui ui.UI
+	if lowProfile {
+		tui = lowprofile.New()
+	} else {
+		tui = bubbletea.New(evvaHome)
+	}
 
 	ag, err := agent.New(acfg,
 		agent.WithSink(tui),

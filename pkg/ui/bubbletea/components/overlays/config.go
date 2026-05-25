@@ -288,6 +288,69 @@ func buildConfigFields(cfg *config.Config, ctrl ui.Controller) []ConfigField {
 			},
 		},
 		{
+			Label: "temperature", Kind: cfgKindFloat,
+			Get: func() string {
+				t := cfg.LLMTemperature()
+				if t == nil {
+					return "(default)"
+				}
+				return strconv.FormatFloat(*t, 'g', -1, 64)
+			},
+			Apply: func(s string) error {
+				s = strings.TrimSpace(s)
+				if s == "" || s == "default" {
+					return ctrl.SetLLMTemperature(nil)
+				}
+				v, err := strconv.ParseFloat(s, 64)
+				if err != nil {
+					return fmt.Errorf("not a number: %s", s)
+				}
+				return ctrl.SetLLMTemperature(&v)
+			},
+		},
+		{
+			Label: "top_k", Kind: cfgKindInt,
+			Get: func() string {
+				k := cfg.LLMTopK()
+				if k == nil {
+					return "(default)"
+				}
+				return strconv.Itoa(*k)
+			},
+			Apply: func(s string) error {
+				s = strings.TrimSpace(s)
+				if s == "" || s == "default" {
+					return ctrl.SetLLMTopK(nil)
+				}
+				v, err := strconv.Atoi(s)
+				if err != nil {
+					return fmt.Errorf("not an integer: %s", s)
+				}
+				return ctrl.SetLLMTopK(&v)
+			},
+		},
+		{
+			Label: "top_p", Kind: cfgKindFloat,
+			Get: func() string {
+				p := cfg.LLMTopP()
+				if p == nil {
+					return "(default)"
+				}
+				return strconv.FormatFloat(*p, 'g', -1, 64)
+			},
+			Apply: func(s string) error {
+				s = strings.TrimSpace(s)
+				if s == "" || s == "default" {
+					return ctrl.SetLLMTopP(nil)
+				}
+				v, err := strconv.ParseFloat(s, 64)
+				if err != nil {
+					return fmt.Errorf("not a number: %s", s)
+				}
+				return ctrl.SetLLMTopP(&v)
+			},
+		},
+		{
 			Label: "auto_compact_threshold", Kind: cfgKindFloat,
 			Get: func() string { return strconv.FormatFloat(cfg.AutoCompactThreshold, 'g', -1, 64) },
 			Apply: func(s string) error {

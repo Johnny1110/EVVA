@@ -151,6 +151,19 @@ type Controller interface {
 	// to the LLM client on the next completion.
 	SetEffort(level string) error
 
+	// LLMTemperature / LLMTopK / LLMTopP return the current session-level
+	// sampling parameters. nil means "provider default".
+	LLMTemperature() *float64
+	LLMTopK() *int
+	LLMTopP() *float64
+
+	// SetLLMTemperature / SetLLMTopK / SetLLMTopP update the session-only
+	// sampling parameters. nil unsets (reverts to provider default).
+	// Applies to the live LLM client immediately. Never persisted to disk.
+	SetLLMTemperature(v *float64) error
+	SetLLMTopK(v *int) error
+	SetLLMTopP(v *float64) error
+
 	// Skills returns the merged catalog of user-installed skills (home
 	// and workdir, with workdir overrides applied). The TUI's slash
 	// suggestion panel surfaces each entry as `/<name>` with the

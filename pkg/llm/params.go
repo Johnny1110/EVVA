@@ -33,6 +33,9 @@ func WithStopSequences(seqs ...string) Option {
 func WithSystem(s string) Option           { return func(p *LLMParams) { p.System = s } }
 func WithEffort(e int) Option              { return func(p *LLMParams) { p.Effort = e } }
 func WithHTTPClient(c *http.Client) Option { return func(p *LLMParams) { p.HTTPClient = c } }
+func UnsetTemperature() Option              { return func(p *LLMParams) { p.Temperature = nil } }
+func UnsetTopK() Option                     { return func(p *LLMParams) { p.TopK = nil } }
+func UnsetTopP() Option                     { return func(p *LLMParams) { p.TopP = nil } }
 
 // Apply runs every option against p in order. Later options override earlier ones.
 func (p *LLMParams) Apply(opts ...Option) {

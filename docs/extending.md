@@ -21,8 +21,8 @@ proof-of-concept lives at [`examples/minimal-host/`](../examples/minimal-host/ma
 | `pkg/ui/bubbletea` | `New(evvaHome)` — the bundled reference terminal UI | Embedding evva's batteries-included TUI instead of writing your own |
 | `pkg/permission` | `Store`, `Rule`, `Mode`, `Decision`, `Broker`, `Load`, `NewBroker`, `SetOnRequest`, `ParseMode` | Custom approval policy / pre-seeded rule store |
 | `pkg/llm` | `Client`, `Message`, `Response`, `Option`, `Registry`, `ClientFactory` | Registering a custom LLM provider |
-| `pkg/llm/builtins` | side-effect `init()` registering anthropic/deepseek/ollama | Blank-import to get evva's bundled providers |
-| `pkg/llm/{claude,deepseek,ollama}` | direct provider client constructors and `Factory` helpers | Reusing one of evva's bundled clients without going through the registry |
+| `pkg/llm/builtins` | side-effect `init()` registering anthropic/deepseek/openai/ollama | Blank-import to get evva's bundled providers |
+| `pkg/llm/{claude,deepseek,openai,ollama}` | direct provider client constructors and `Factory` helpers | Reusing one of evva's bundled clients without going through the registry |
 | `pkg/toolset` | `Registry`, `ToolFactory`, `DefaultRegistry`, `Describe`, `Build` | Registering custom tools |
 | `pkg/tools` | `Tool` interface, `Result`, `ContentBlock`, `Descriptor`, `Call`, `State`, `ToolName` constants | Authoring custom tools |
 | `pkg/tools/{fs,shell,web,util,notebook,monitor,cron,todo,daemon}` | Bundled tool family implementations | Reusing the bundled tools directly (rare; most callers use them via the registry) |
@@ -52,7 +52,7 @@ provider name, then build a profile that targets it.
 ```go
 import (
     "github.com/johnny1110/evva/pkg/llm"
-    _ "github.com/johnny1110/evva/pkg/llm/builtins" // optional: pulls in anthropic/deepseek/ollama
+    _ "github.com/johnny1110/evva/pkg/llm/builtins" // optional: pulls in anthropic/deepseek/openai/ollama
 )
 
 func init() {
@@ -302,6 +302,17 @@ and call `Add(...)` for any programmatic extras. To disable skills
 entirely, pass `agent.WithSkillRegistry(skill.NewRegistry())` — an empty
 registry suppresses both the SKILL tool's dispatch list and the system
 prompt's `# Skills` section.
+
+**Bundled skills.** evva ships its own first-party SKILL.md catalog
+(`commit`, `review`, `security-review`, `simplify`, `setup-hooks` — see the
+v1.4.0 `CHANGELOG.md` entry), overlaid onto the disk catalog automatically by
+the one-call `agent.New`. Bundled is the **lowest-precedence** tier
+(`skill.SourceBundled`): a user disk skill with the same name silently
+overrides the bundled body — no shadowing warning. Hosts that construct their
+agent through `agent.NewWithProfile` + an explicit `WithSkillRegistry` do
+**not** pick up the bundled catalog; to ship your own content, build a
+programmatic catalog (the pattern above) rather than reaching into evva's
+private `internal/skills/bundled` package.
 
 ### Custom AppConfig — `CustomConfig`
 

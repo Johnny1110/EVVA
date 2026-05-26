@@ -47,7 +47,9 @@ func (t *SkillTool) Description() string {
 		"give the agent task-specific instructions. " +
 		"Set `skill` to the exact name from the available-skills list; " +
 		"set `args` to pass any free-form arguments. " +
-		"The tool returns the skill's instructions for you to follow on the next turn."
+		"The tool returns the skill's instructions for you to follow on the next turn. " +
+		"When the user's request aligns with a listed skill's purpose, invoke this tool " +
+		"before responding — skills contain detailed domain knowledge needed to complete the task correctly."
 }
 
 func (t *SkillTool) Schema() json.RawMessage {

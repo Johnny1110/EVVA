@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/johnny1110/evva/internal/question"
 	"github.com/johnny1110/evva/pkg/mcp"
 	"github.com/johnny1110/evva/pkg/tools"
 	pubtoolset "github.com/johnny1110/evva/pkg/toolset"
+	"github.com/johnny1110/evva/pkg/ui"
 )
 
 // autoLoadMcp loads the MCP server config from settings.json, opens
@@ -43,6 +45,40 @@ func (a *Agent) autoLoadMcp(lgr *slog.Logger) {
 	// deferred allowlist so tool_search can surface its now-real tools.
 	mgr.SetOnToolsChanged(a.foldMcpIntoAllowlist)
 	a.toolState.SetMcpManager(mgr)
+}
+
+// MCPServers returns a UI-facing snapshot of every configured MCP server and
+// its live connection status — what the read-only /mcp panel renders. It
+// includes disabled servers (Status() reports them) and maps mcp.ServerState
+// into the public ui.MCPServerInfo so the ui package never sees pkg/mcp.
+// Nil-safe: returns nil when no manager is installed (nothing configured).
+func (a *Agent) MCPServers() []ui.MCPServerInfo {
+	mgr := a.toolState.McpManager()
+	if mgr == nil {
+		return nil
+	}
+	states := mgr.Status()
+	if len(states) == 0 {
+		return nil
+	}
+	out := make([]ui.MCPServerInfo, 0, len(states))
+	for _, s := range states {
+		detail := s.Config.URL
+		if s.Config.Type == mcp.TransportStdio {
+			detail = strings.TrimSpace(s.Config.Command + " " + strings.Join(s.Config.Args, " "))
+		}
+		out = append(out, ui.MCPServerInfo{
+			Name:          s.Name,
+			Transport:     string(s.Config.Type),
+			Status:        string(s.Status),
+			Scope:         string(s.Config.Scope),
+			Detail:        detail,
+			ToolCount:     s.ToolCount,
+			ResourceCount: s.ResourceCount,
+			Error:         s.Error,
+		})
+	}
+	return out
 }
 
 // mcpDiscoveredNames returns every mcp__<server>__<tool> (and per-server

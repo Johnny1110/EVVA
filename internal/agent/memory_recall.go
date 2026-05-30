@@ -22,12 +22,11 @@ import (
 // persistent agent state (PRD §5.3).
 const recallMarkerOpen = "[memory: "
 
-// recallDefaultModel is the Sonnet-class model the recall side-query prefers
-// when an Anthropic key is configured — ref parity (findRelevantMemories.ts uses
-// a Sonnet-tier model for selection quality). evva falls back to the active
-// model otherwise so recall works on every provider config (a deliberate
-// divergence from ref's fixed-Sonnet default — evva is multi-provider).
-const recallDefaultModel = constant.SONNET_4_6
+// recallEffortName is the effort level the recall side-query runs at on the
+// hosted providers (Anthropic / DeepSeek / OpenAI). Selecting relevant memories
+// is a light judgment task, so medium is plenty and keeps the call cheap. Ollama
+// mirrors the main agent's effort instead (see recallTarget).
+const recallEffortName = "medium"
 
 // runMemoryRecall runs the per-user-turn relevance side-query and returns a
 // single <system-reminder> message carrying the bodies of the memories judged
@@ -58,31 +57,61 @@ func (a *Agent) runMemoryRecall(ctx context.Context, query string) string {
 	return composeRecallReminder(headers)
 }
 
-// recallClient builds a DEDICATED client for the recall side-query (never a.llm
-// — FindRelevant pins its own system prompt via Apply, which would clobber the
-// main loop's prompt on the shared client). Resolution order: an explicit
-// cfg.MemoryRecallModel, then the Sonnet-class default, then the active model;
-// the first whose provider has a configured API key wins. The active model is
-// always reachable, so recall works for every provider config. Returns
-// (nil, "") if even that build fails — recall then degrades to off.
-func (a *Agent) recallClient() (llm.Client, constant.Model) {
-	provider, model := a.profile.LLMProvider, a.profile.LLMModel
+// recallTarget resolves the (provider, model, effort) for the recall side-query.
+//
+// An explicit, credentialed cfg.MemoryRecallModel wins. Otherwise the default is
+// picked WITHIN the active provider — which is always credentialed, so recall
+// never depends on a second provider's key:
+//
+//   - anthropic → claude-sonnet  (Sonnet-tier selection quality, ref parity), medium effort
+//   - deepseek  → deepseek-v4-flash (the cheap tier),                         medium effort
+//   - openai    → gpt-5.4-mini,                                               medium effort
+//   - ollama / other → the active model + the main agent's effort (local / always reachable)
+//
+// The models are named explicitly (not derived from Models[0]) so the choice is
+// self-documenting and stable if a provider's model list is later reordered.
+func (a *Agent) recallTarget() (constant.LLMProvider, constant.Model, int) {
+	medium := llm.ParseEffort(recallEffortName)
 
-	var prefs []constant.Model
+	// Explicit override: a known model whose provider is credentialed.
 	if raw := a.cfg.GetMemoryRecallModel(); raw != "" {
 		if m, ok := constant.GetModel(raw); ok {
-			prefs = append(prefs, m)
-		}
-	}
-	prefs = append(prefs, recallDefaultModel)
-	for _, m := range prefs {
-		if p, ok := providerForModel(m); ok && a.providerConfigured(p.Name) {
-			provider, model = p, m
-			break
+			if p, ok := providerForModel(m); ok && a.providerConfigured(p.Name) {
+				return p, m, medium
+			}
 		}
 	}
 
-	c, err := buildLLMClient(a.cfg, provider, model, nil)
+	p := a.profile.LLMProvider
+	switch p.Name {
+	case constant.ANTHROPIC.Name:
+		return p, constant.SONNET_4_6, medium
+	case constant.DEEPSEEK.Name:
+		return p, constant.DEEPSEEK_V4_FLASH, medium
+	case constant.OPENAI.Name:
+		return p, constant.GPT_5_4_MINI, medium
+	default: // ollama + any custom provider: mirror the main agent exactly
+		return p, a.profile.LLMModel, a.mainEffortLevel()
+	}
+}
+
+// mainEffortLevel is the effort level the main agent runs at (medium when unset),
+// so the ollama recall path can mirror it.
+func (a *Agent) mainEffortLevel() int {
+	if lvl := llm.ParseEffort(a.effort); lvl > 0 {
+		return lvl
+	}
+	return llm.ParseEffort(recallEffortName)
+}
+
+// recallClient builds a DEDICATED client for the recall side-query (never a.llm
+// — FindRelevant pins its own system prompt via Apply, which would clobber the
+// main loop's prompt on the shared client). Model + effort are resolved per
+// active provider by recallTarget. Returns (nil, "") if the build fails — recall
+// then degrades to off for the turn.
+func (a *Agent) recallClient() (llm.Client, constant.Model) {
+	provider, model, effort := a.recallTarget()
+	c, err := buildLLMClient(a.cfg, provider, model, []llm.Option{llm.WithEffort(effort)})
 	if err != nil {
 		a.logger.Debug("memory.recall.client_build_failed", "provider", provider.Name, "model", model, "err", err)
 		return nil, ""
@@ -91,8 +120,8 @@ func (a *Agent) recallClient() (llm.Client, constant.Model) {
 }
 
 // providerConfigured reports whether the named provider has a non-empty API key
-// in the loaded config. Used so the Sonnet-class default only fires when its
-// provider (Anthropic) is actually credentialed.
+// in the loaded config. Used so an explicit cross-provider MemoryRecallModel
+// override only fires when its provider is actually credentialed.
 func (a *Agent) providerConfigured(name string) bool {
 	if a.cfg == nil {
 		return false

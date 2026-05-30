@@ -806,7 +806,7 @@ tavily_api_key: ""
 # Memory (typed-memory directory at ~/.evva/memory/)
 enable_auto_memory: true     # memory guidance + MEMORY.md index + write carve-out + recall
 enable_memory_recall: true   # per-turn relevance side-query (cost lever; false keeps the index only)
-memory_recall_model: ""      # pin the recall model; empty = Sonnet-class when an Anthropic key is set, else the active model
+memory_recall_model: ""      # empty = cheap model in the active provider (anthropic→sonnet, deepseek→flash, openai→gpt-5.4-mini @ medium; ollama→active model+effort)
 
 # Per-provider credentials. Empty api_url falls back to the constant's default.
 providers:
@@ -831,8 +831,9 @@ auto-approved, so it won't prompt you for each note.
   few individual memories relevant to your message; they appear as a
   `<system-reminder>` in the transcript/logs. Set `enable_memory_recall: false`
   to keep the index but skip the extra call. By default the side-query uses a
-  Sonnet-class model when an Anthropic key is configured, otherwise your active
-  model; pin a cheaper one with `memory_recall_model`.
+  cheap model within your active provider — Anthropic → Sonnet, DeepSeek →
+  v4-flash, OpenAI → gpt-5.4-mini (all at medium effort); Ollama uses your active
+  model and effort — and you can pin a specific one with `memory_recall_model`.
 - **Freshness:** a recalled memory older than a day is prefixed with its age and
   a caveat to verify against current code before trusting it.
 - **Turning it off:** `enable_auto_memory: false` (or `EVVA_AUTO_MEMORY=0`)

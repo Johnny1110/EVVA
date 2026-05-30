@@ -32,8 +32,10 @@ migration.**
   (`MemoryDir`, `MemoryIndexPath`, `EnsureMemoryDir`, `IsInMemoryDir`). Stdlib-only.
 - **`internal/memdir/recall`** — `FindRelevant`, a per-turn LLM side-query that
   selects ≤5 relevant memories by name/description; returns `nil` on any failure
-  so a recall hiccup never breaks a turn. Defaults to a Sonnet-class model when an
-  Anthropic key is configured, else the active model.
+  so a recall hiccup never breaks a turn. The model + effort default per active
+  provider (anthropic: sonnet, deepseek: v4-flash, openai: gpt-5.4-mini at medium
+  effort; ollama/other: the active model + the main agent's effort); override with
+  `memory_recall_model`.
 - **`pkg/permission.IsAutoMemPath`** + an `isAutoMemWrite` carve-out in `Decide`
   (new `memDir` param): a `write`/`edit` confined to `<APP_HOME>/memory/`
   auto-allows in default + accept-edits modes (plan mode still denies).

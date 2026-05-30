@@ -143,8 +143,9 @@ type Config struct {
 	EnableMemoryRecall bool
 
 	// MemoryRecallModel optionally pins the recall side-query model id. Empty →
-	// default resolution (Sonnet-class when an Anthropic key is set, else the
-	// active model). See internal/agent recall wiring.
+	// a cheap model within the active provider (anthropic: sonnet, deepseek:
+	// flash, openai: gpt-5.4-mini at medium effort; ollama/other: the active
+	// model + the main agent's effort). See internal/agent recall wiring.
 	MemoryRecallModel string
 
 	// Web tools

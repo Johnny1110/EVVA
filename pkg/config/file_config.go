@@ -53,10 +53,11 @@ type FileConfig struct {
 	EnableMemoryRecall *bool `yaml:"enable_memory_recall,omitempty"`
 
 	// MemoryRecallModel optionally pins the model used for the recall side-query.
-	// Empty → evva prefers a Sonnet-class model when an Anthropic key is set,
-	// else falls back to the active model. Set a cheaper model (a Haiku/flash/
-	// mini tier) here as a cost lever, or any model whose provider you have a key
-	// for. Unknown values are ignored (fall back to the default resolution).
+	// Empty → a cheap model within the active provider (anthropic: sonnet,
+	// deepseek: flash, openai: gpt-5.4-mini at medium effort; ollama/other: the
+	// active model + the main agent's effort). Set a specific model here to
+	// override, e.g. a different cost lever or any model whose provider you have a
+	// key for. Unknown values are ignored (fall back to the default resolution).
 	MemoryRecallModel string `yaml:"memory_recall_model,omitempty"`
 
 	Providers map[string]FileProviderConfig `yaml:"providers"`

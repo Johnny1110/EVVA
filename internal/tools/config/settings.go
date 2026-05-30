@@ -143,7 +143,7 @@ var SUPPORTED_SETTINGS = map[string]SettingConfig{
 	},
 	"memory_recall_model": {
 		Type:        TypeString,
-		Description: "Model id for the recall side-query; empty = prefer a Sonnet-class model when an Anthropic key is set, else the active model",
+		Description: "Model id for the recall side-query; empty = a cheap model within the active provider (anthropic: sonnet, deepseek: flash, openai: gpt-5.4-mini at medium effort; ollama/other: the active model + effort)",
 		Get:         func(c *config.Config) any { return c.GetMemoryRecallModel() },
 		Set:         func(c *config.Config, v any) error { return c.SetMemoryRecallModel(toString(v)) },
 	},

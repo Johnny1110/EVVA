@@ -60,6 +60,18 @@ migration.**
   read or written. **No migration** — old files are left untouched on disk; copy
   anything worth keeping into a new memory and let the model file it.
 
+### Bundled `build-agent` skill
+
+#### Added
+
+- **Bundled `build-agent` skill** (`internal/skills/bundled/content/build-agent/`)
+  — walks the user through scaffolding a downstream Go host on the evva-sdk
+  (`pkg/agent`): a constructor decision tree (`agent.New(Config)` vs
+  `NewWithProfile`), per-extension-point wiring, the two `examples/` host
+  templates, the headless `WithHeadlessBypass()` requirement, and `go doc` as
+  the version-accurate API source. Lowest-precedence tier (`skill.SourceBundled`)
+  — a user disk skill of the same name silently overrides it.
+
 ## [v1.3.0-beta.1] — 2026-05-29
 
 First beta since v1.1.0. `main` jumps straight from 1.1.0 to 1.3.0, so

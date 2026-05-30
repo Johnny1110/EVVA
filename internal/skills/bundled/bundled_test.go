@@ -105,3 +105,32 @@ func TestEachSkillHasMatchingFolder(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildAgentSkill_Content pins the hygiene rules from the build-agent PRD
+// (A4/A6/A7/A9) so a future edit can't silently regress them.
+func TestBuildAgentSkill_Content(t *testing.T) {
+	body, err := readBundled("build-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A4: no Claude Code tool names / paths leaked in.
+	for _, bad := range []string{"~/.claude", "`Task`", "`Bash`", "`Read`", "`Grep`"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("build-agent body contains forbidden token %q", bad)
+		}
+	}
+	// A6/A7/A9: the load-bearing instructions are present.
+	for _, must := range []string{
+		"agent.New(",           // constructor decision tree
+		"agent.NewWithProfile", // the à-la-carte alternative
+		"WithHeadlessBypass",   // the headless warning (A6)
+		"internal/",            // the guardrail mentions it (A7)
+		"go doc",               // drift-resistance (A9)
+		"examples/full-host/main.go",
+		"examples/minimal-host/main.go",
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("build-agent body missing required reference %q", must)
+		}
+	}
+}

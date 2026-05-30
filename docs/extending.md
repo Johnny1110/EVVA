@@ -304,8 +304,9 @@ registry suppresses both the SKILL tool's dispatch list and the system
 prompt's `# Skills` section.
 
 **Bundled skills.** evva ships its own first-party SKILL.md catalog
-(`commit`, `review`, `security-review`, `simplify`, `setup-hooks` — see the
-v1.4.0 `CHANGELOG.md` entry), overlaid onto the disk catalog automatically by
+(`commit`, `review`, `security-review`, `simplify`, `setup-hooks`, `setup-mcp`,
+and `build-agent` — the last scaffolds a downstream Go host on the public
+`pkg/*` surface), overlaid onto the disk catalog automatically by
 the one-call `agent.New`. Bundled is the **lowest-precedence** tier
 (`skill.SourceBundled`): a user disk skill with the same name silently
 overrides the bundled body — no shadowing warning. Hosts that construct their

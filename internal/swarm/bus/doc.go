@@ -5,9 +5,11 @@
 // channel (ordering guarantee). "to: all" broadcasts to every active member.
 //
 // Carrying only UUIDs is what makes restart-resume trivial: on boot the
-// Supervisor reloads unread UUIDs (store.UnreadFor) back onto the channels and
-// nothing in flight is lost.
+// Supervisor reloads unread UUIDs (store.UnreadFor) back onto the channels via
+// Bus.Requeue and nothing in flight is lost.
 //
-// TODO(SPRD-1-5): implement Bus.Send(to, msgUUID), Bus.Inbox(name)
-// <-chan string, and broadcast, over the store's message DAO.
+// A "to: all" broadcast fans out into one durable row per active peer (each its
+// own UUID and read_at), not a single recipient="all" row — that is what lets a
+// broadcast restart-resume and track per-recipient read state exactly like a
+// unicast message.
 package bus

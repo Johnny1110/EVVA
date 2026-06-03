@@ -5,7 +5,13 @@ import (
 	"testing"
 
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
+	"github.com/johnny1110/evva/internal/swarm/bus"
 )
+
+// The Roster is the bus's roster view for expanding "to: all" broadcasts. The
+// interface lives in package bus so the bus never imports swarm; this asserts
+// the structural satisfaction at compile time (SPRD-1-5).
+var _ bus.Membership = (*Roster)(nil)
 
 func TestRosterAddSnapshotAndDuplicate(t *testing.T) {
 	r := newRoster()
@@ -55,6 +61,19 @@ func TestRosterStatusMutatorsReflectInSnapshot(t *testing.T) {
 	r.setRun("ghost", RunBusy)
 	r.setMembership("ghost", MembershipFrozen)
 	r.setCurrentTask("ghost", 1)
+}
+
+func TestRosterActiveMembersExcludesFrozen(t *testing.T) {
+	r := newRoster()
+	_ = r.add("a", agentdef.RoleWorker, "", nil)
+	_ = r.add("b", agentdef.RoleWorker, "", nil)
+	_ = r.add("c", agentdef.RoleWorker, "", nil)
+
+	r.setMembership("b", MembershipFrozen)
+
+	if got := r.ActiveMembers(); !reflect.DeepEqual(got, []string{"a", "c"}) {
+		t.Fatalf("ActiveMembers = %v, want insertion-ordered actives [a c]", got)
+	}
 }
 
 func TestRosterControllerLookup(t *testing.T) {

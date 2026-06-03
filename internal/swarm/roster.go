@@ -125,6 +125,21 @@ func (r *Roster) Snapshot() []MemberView {
 	return out
 }
 
+// ActiveMembers returns the names of active (in-service) members in insertion
+// order. It is the bus.Membership view used to expand a "to: all" broadcast;
+// frozen members are excluded so a broadcast never reaches them (SPRD-1-5).
+func (r *Roster) ActiveMembers() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.order))
+	for _, name := range r.order {
+		if r.entries[name].membership == MembershipActive {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // setRun updates a member's run status (used by the scheduler/supervisor in
 // SPRD-1-6). Unknown names are ignored.
 func (r *Roster) setRun(name string, s RunStatus) {

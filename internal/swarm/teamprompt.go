@@ -94,7 +94,9 @@ You carry out the tasks the leader assigns. You do **not** write the task ledger
 - See your assigned work with ` + "`my_tasks`" + `; read a task's full spec with
   ` + "`task_get { task_id }`" + `.
 - You receive assignments and questions as messages. Do the work, then report back
-  to the leader with ` + "`send_message { to: \"leader\", body: ... }`" + ` — say what you did
-  and where, so the leader can verify it.
+  to the leader with ` + "`send_message`" + ` — address it to the leader's **member name**,
+  which you can find with ` + "`list_members`" + ` (the member whose role is ` + "`leader`" + `; its
+  name may not literally be "leader"). Say what you did and where, so the leader can
+  verify it.
 - If a task is unclear, blocked, or you hit a problem, message the leader instead
   of guessing or going off-scope.`

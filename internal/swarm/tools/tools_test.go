@@ -133,6 +133,35 @@ func TestSendMessageBroadcast(t *testing.T) {
 	}
 }
 
+// An unknown recipient must surface a correctable error, not silently
+// dead-letter. Regression for the role-vs-name slip: a worker addressing the
+// leader as "lead" (or "leader") when the member has a different name — the
+// message was durably stored to a mailbox nobody drained, so the leader never
+// woke and never replied.
+func TestSendMessageRejectsUnknownRecipient(t *testing.T) {
+	sp := realSpace(t) // members: leader, worker-a, worker-b
+	tool := newSendMessage(workerMC(sp, "worker-a"))
+
+	res := exec(t, tool, `{"to":"lead","body":"task #2 done"}`)
+	if !res.IsError {
+		t.Fatalf("send to unknown recipient should error, got ok: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "leader") || !strings.Contains(res.Content, "worker-b") {
+		t.Errorf("error should list valid member names, got: %s", res.Content)
+	}
+	if unread, _ := sp.Store.UnreadFor("lead"); len(unread) != 0 {
+		t.Errorf("dead-letter: %d message(s) stored for unknown recipient %q", len(unread), "lead")
+	}
+
+	// The correct name still delivers.
+	if res := exec(t, tool, `{"to":"leader","body":"task #2 done"}`); res.IsError {
+		t.Fatalf("send to a valid member should succeed: %s", res.Content)
+	}
+	if unread, _ := sp.Store.UnreadFor("leader"); len(unread) != 1 {
+		t.Fatalf("valid send: leader unread = %d, want 1", len(unread))
+	}
+}
+
 // AC#5: list_members returns the live roster snapshot.
 func TestListMembers(t *testing.T) {
 	sp := realSpace(t)
@@ -164,6 +193,29 @@ func TestTaskCreate(t *testing.T) {
 	tasks, _ := sp.Store.ListTasks(store.TaskFilter{})
 	if len(tasks) != 1 || tasks[0].Assignee != "worker-a" || tasks[0].Status != store.StatusPending || tasks[0].CreatedBy != "leader" {
 		t.Fatalf("task = %+v, want pending/worker-a/created-by-leader", tasks[0])
+	}
+}
+
+// task_create must reject an unknown assignee — assigning to a non-member would
+// dead-letter the dispatch (same class as the send_message recipient bug).
+func TestTaskCreateRejectsUnknownAssignee(t *testing.T) {
+	sp := realSpace(t) // members: leader, worker-a, worker-b
+	tool := newTaskCreate(leaderMC(sp))
+
+	res := exec(t, tool, `{"title":"build it","assignee":"bilder"}`) // typo'd worker name
+	if !res.IsError {
+		t.Fatalf("task_create with unknown assignee should error, got: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "worker-a") || !strings.Contains(res.Content, "worker-b") {
+		t.Errorf("error should list valid assignees, got: %s", res.Content)
+	}
+	if tasks, _ := sp.Store.ListTasks(store.TaskFilter{}); len(tasks) != 0 {
+		t.Errorf("unknown-assignee task should not be created; got %d", len(tasks))
+	}
+
+	// A valid assignee still creates the task.
+	if res := exec(t, tool, `{"title":"build it","assignee":"worker-a"}`); res.IsError {
+		t.Fatalf("task_create with valid assignee should succeed: %s", res.Content)
 	}
 }
 

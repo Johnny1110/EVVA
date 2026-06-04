@@ -127,3 +127,23 @@ func errf(format string, args ...any) pubtools.Result {
 func okf(format string, args ...any) pubtools.Result {
 	return pubtools.Result{Content: fmt.Sprintf(format, args...)}
 }
+
+// rosterHas reports whether name is a current member of the space, and returns
+// the full list of member names for a correctable error message. It is the
+// shared recipient/assignee guard for send_message and task_create: addressing
+// a non-member (e.g. the classic "leader" vs member-name "lead" slip) would
+// otherwise dead-letter — durably stored to a mailbox nobody drains, waking no
+// one. A space with no roster (the lite unit-test construction) is treated as
+// valid so the check is a no-op there; production spaces always carry a roster.
+func rosterHas(sp *swarm.SwarmSpace, name string) (ok bool, names []string) {
+	if sp == nil || sp.Roster == nil {
+		return true, nil
+	}
+	for _, m := range sp.Roster.Snapshot() {
+		names = append(names, m.Name)
+		if m.Name == name {
+			ok = true
+		}
+	}
+	return ok, names
+}

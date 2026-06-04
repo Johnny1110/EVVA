@@ -81,6 +81,16 @@ func newTaskCreate(mc swarm.MemberContext) pubtools.Tool {
 			if err := json.Unmarshal(input, &in); err != nil {
 				return errf("task_create: invalid input: %v", err), nil
 			}
+			// Validate the assignee against the live roster: assigning to a
+			// non-member would dead-letter the dispatch (task_assign notifies a
+			// mailbox nobody drains). Empty assignee falls through to CreateTask's
+			// ErrEmptyAssignee. Same guard as send_message (see rosterHas).
+			if strings.TrimSpace(in.Assignee) != "" {
+				if ok, names := rosterHas(mc.Space, in.Assignee); !ok {
+					return errf("task_create: no swarm member named %q to assign. Valid assignees: %s. "+
+						"Run list_members for exact names.", in.Assignee, strings.Join(names, ", ")), nil
+				}
+			}
 			id, err := mc.Space.Store.CreateTask(store.Task{
 				Title:     in.Title,
 				Spec:      in.Spec,

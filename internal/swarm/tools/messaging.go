@@ -41,6 +41,18 @@ func newSendMessage(mc swarm.MemberContext) pubtools.Tool {
 				return errf("send_message: both 'to' and 'body' are required"), nil
 			}
 
+			// Validate the recipient against the live roster (the "all" broadcast
+			// is exempt). Without this, a wrong name is silently dead-lettered (see
+			// rosterHas). Surfacing a correctable error with the real names lets the
+			// model retry.
+			if in.To != store.RecipientAll {
+				if ok, names := rosterHas(mc.Space, in.To); !ok {
+					return errf("send_message: no swarm member named %q. Valid recipients: %s (or \"all\"). "+
+						"Run list_members for exact names — the leader's role is \"leader\" but its member name may differ.",
+						in.To, strings.Join(names, ", ")), nil
+				}
+			}
+
 			uuid, err := mc.Space.Bus.Send(store.Message{
 				Sender:    mc.Name,
 				Recipient: in.To,

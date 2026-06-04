@@ -152,10 +152,15 @@ POST /api/agents/{name}/message?space=<id>     body: { "body": "...", "subject":
 
 ## 5. 里程碑 / Gate
 
-- **M1 — 正向 + 可觀測（核心）**
+- **M1 — 正向 + 可觀測（核心）** ✅ **已交付（2026-06-04）**
   - Gate：① web 可對**任一成員**發訊息，該成員（idle 喚醒 / busy 折入）確實收到並
     處理、標已讀；② Member Console 即時顯示該成員的 turn + **工具調用細節**；③ 並行
     e2e 證明 leader↔worker 任務迴路**不受影響**。
+  - 實作：`Backend.SendUserMessage` + `POST /api/agents/{name}/message`（sender
+    `"user"`，`all` 廣播）走既有 `Bus.Send`；`MemberInfo.AgentID` 讓前端 demux 事件
+    流；前端 `MemberConsole.vue`（取代 `LeaderChat`，依 `AgentID` 過濾、含工具調用
+    細節、輸入即 mail-mode）+ Roster 點擊聚焦。測試：webapi 路由、service「user 訊息
+    喚醒 idle 成員→drain→標已讀、不動帳本」、前端 `consoleTurns` demux 單元測試。
 - **M2 — 雙向**
   - Gate：① 成員 `send_message {to:"user"}` → web User 收件匣可見；② `list_members`
     顯示 user 為可定址對象。

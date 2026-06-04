@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { openSocket } from '../ws.js'
-import { reduceChat, isApproval, isQuestion, approvalOf, questionOf, touchesLedger } from '../events.js'
-import LeaderChat from './LeaderChat.vue'
+import { reduceChat, consoleTurns, isApproval, isQuestion, approvalOf, questionOf, touchesLedger } from '../events.js'
+import MemberConsole from './MemberConsole.vue'
 import TeamBoard from './TeamBoard.vue'
 import Roster from './Roster.vue'
 import AgentTranscript from './AgentTranscript.vue'
@@ -22,7 +22,8 @@ const chat = ref([])
 const wsStatus = ref('connecting')
 const approval = ref(null)
 const question = ref(null)
-const selected = ref('')
+const focused = ref('') // the member whose console is in the center pane
+const selected = ref('') // the member whose transcript+mailbox is in the right pane
 const transcript = ref([])
 const err = ref('')
 
@@ -33,6 +34,12 @@ const leader = computed(() => {
   const m = roster.value.find((x) => x.role === 'leader')
   return m ? m.name : roster.value[0] ? roster.value[0].name : ''
 })
+// The member the console is focused on — explicit focus, else the leader.
+const focusedMember = computed(() => focused.value || leader.value)
+const focusedEntry = computed(() => roster.value.find((m) => m.name === focusedMember.value) || {})
+const focusedAgentId = computed(() => focusedEntry.value.agentId || '')
+// One mixed event stream, demuxed to the focused member.
+const focusedTurns = computed(() => consoleTurns(chat.value, focusedAgentId.value, focusedMember.value))
 const selectedMail = computed(() =>
   messages.value.filter((m) => m.recipient === selected.value || m.sender === selected.value || m.recipient === 'all'),
 )
@@ -66,10 +73,18 @@ function onEvent(ev) {
   if (touchesLedger(ev)) refreshSnapshots()
 }
 
-function send(prompt) {
-  // Interactive turn over the socket so its events stream straight back.
-  sock && sock.send({ type: 'run', agent: leader.value, prompt })
-  chat.value = [...chat.value, { type: 'user', agentId: 'you', text: prompt }]
+async function send(text) {
+  // Mail-mode: deliver the operator's message onto the focused member's mailbox.
+  // It rides the same bus + drain path as inter-agent mail, so an idle member is
+  // woken and a busy one folds it mid-run — no disruption to the workflow. Its
+  // reply streams back over the event feed and lands in this same console.
+  const to = focusedMember.value
+  chat.value = [...chat.value, { type: 'user', target: to, agentId: focusedAgentId.value, text }]
+  try {
+    await props.api.message(props.space.id, to, text)
+  } catch (e) {
+    err.value = String(e.message || e)
+  }
 }
 
 function onPermission(d) {
@@ -91,6 +106,9 @@ async function memberCmd(verb, name) {
 }
 
 async function selectMember(name) {
+  // Clicking a member both focuses the live console on it (center) and opens its
+  // transcript + mailbox (right) — flat comms: any member is one click away.
+  focused.value = name
   selected.value = name
   try {
     transcript.value = (await props.api.transcript(props.space.id, name)) || []
@@ -147,7 +165,14 @@ onBeforeUnmount(() => {
           <TeamBoard :tasks="tasks" />
         </section>
         <section class="chat-wrap">
-          <LeaderChat :turns="chat" :leader="leader" :status="wsStatus" @send="send" />
+          <MemberConsole
+            :member="focusedMember"
+            :role="focusedEntry.role || ''"
+            :current-task="focusedEntry.currentTask || 0"
+            :turns="focusedTurns"
+            :status="wsStatus"
+            @send="send"
+          />
         </section>
       </main>
 

@@ -7,6 +7,7 @@ import {
   approvalOf,
   questionOf,
   isApproval,
+  consoleTurns,
   TASK_STATES,
 } from './events.js'
 
@@ -109,6 +110,31 @@ test('groupTasks preserves order within a column', () => {
     { id: 1, status: 'pending' },
   ])
   assert.deepEqual(cols.pending.map((t) => t.id), [5, 1])
+})
+
+test('consoleTurns demuxes one mixed stream per member', () => {
+  const turns = [
+    { type: 'assistant', agentId: 'AID-leader', text: 'hi' },
+    { type: 'tool', agentId: 'AID-worker', tool: 'bash' },
+    { type: 'user', target: 'worker', text: 'status?' },
+    { type: 'user', target: 'leader', text: 'go' },
+    { type: 'assistant', agentId: 'AID-worker', text: 'done' },
+  ]
+  const w = consoleTurns(turns, 'AID-worker', 'worker')
+  assert.equal(w.length, 3) // worker tool + user→worker + worker assistant
+  assert.ok(w.every((t) => (t.type === 'user' ? t.target === 'worker' : t.agentId === 'AID-worker')))
+
+  const l = consoleTurns(turns, 'AID-leader', 'leader')
+  assert.equal(l.length, 2) // leader assistant + user→leader
+})
+
+test('consoleTurns with an unknown agentId shows only operator turns', () => {
+  const turns = [
+    { type: 'assistant', agentId: 'AID-x', text: 'a' },
+    { type: 'user', target: 'worker', text: 'b' },
+  ]
+  // agentId "" (member not yet resolved) must not match every agent turn.
+  assert.deepEqual(consoleTurns(turns, '', 'worker'), [{ type: 'user', target: 'worker', text: 'b' }])
 })
 
 test('approvalOf and questionOf normalise the gate payloads', () => {

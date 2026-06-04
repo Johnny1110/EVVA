@@ -284,8 +284,13 @@ Open the URL, paste the token, and you'll see your team online.
 The web UI (`:8888`) has, per space:
 
 - **Space picker** — the list of registered swarms; click one to enter.
-- **Leader Chat** — type a goal to the leader; its reply streams live
-  (text, tool calls, thinking). This is how you kick work off.
+- **Member Console** — a live, focused view of one member: its streamed turns
+  and tool calls. It defaults to the leader (type a goal to kick work off), but
+  **click any member in the roster to focus its console and message it
+  directly** — you can talk to a basement worker exactly like you talk to the
+  leader. Your message rides the swarm's message bus, so an idle member wakes to
+  handle it and a busy one folds it into its current work — **without disturbing
+  the rest of the team's workflow** (flat management).
 - **Team Board** — a 5-column kanban (`pending / running / suspended /
   verifying / completed`) that reflects the task ledger as it moves.
 - **Agent Roster** — every member with its membership (active/frozen) and run

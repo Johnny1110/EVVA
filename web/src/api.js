@@ -34,6 +34,9 @@ export function createApi(getToken) {
     // commands
     run: (id, agent, prompt) =>
       req('POST', `/api/agents/${enc(agent)}/run?space=${enc(id)}`, { prompt }),
+    // Operator → member message (flat comms). `to` may be "all".
+    message: (id, to, body, subject) =>
+      req('POST', `/api/agents/${enc(to)}/message?space=${enc(id)}`, { body, subject }),
     suspend: (id, agent) => req('POST', `/api/agents/${enc(agent)}/suspend?space=${enc(id)}`),
     resume: (id, agent) => req('POST', `/api/agents/${enc(agent)}/resume?space=${enc(id)}`),
     freeze: (id, agent) => req('POST', `/api/agents/${enc(agent)}/freeze?space=${enc(id)}`),

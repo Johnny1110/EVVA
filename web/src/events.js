@@ -107,6 +107,17 @@ export function groupTasks(tasks) {
   return cols
 }
 
+// consoleTurns selects the turns belonging to one member's console: that
+// member's own agent turns (matched by AgentID), plus the operator's outgoing
+// messages addressed to it (user turns matched by `target` member name). This is
+// what powers the per-member view of the flat-comms UI — one mixed event stream,
+// demuxed per member.
+export function consoleTurns(turns, agentId, member) {
+  return (turns || []).filter((t) =>
+    t.type === 'user' ? t.target === member : agentId !== '' && t.agentId === agentId,
+  )
+}
+
 // isApproval / isQuestion classify the two interactive gate events the Leader
 // Chat surfaces as overlays.
 export function isApproval(ev) {

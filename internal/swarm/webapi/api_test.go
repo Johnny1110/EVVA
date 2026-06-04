@@ -24,6 +24,7 @@ type fakeBackend struct {
 
 	mu       sync.Mutex
 	runs     [][3]string // {space, agent, prompt}
+	msgs     [][3]string // {space, to, body}
 	perms    [][5]string // {space, agent, reqId, behavior, reason}
 	suspends [][2]string
 }
@@ -69,6 +70,12 @@ func (f *fakeBackend) Run(space, agent, prompt string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.runs = append(f.runs, [3]string{space, agent, prompt})
+	return nil
+}
+func (f *fakeBackend) SendUserMessage(space, to, subject, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.msgs = append(f.msgs, [3]string{space, to, body})
 	return nil
 }
 func (f *fakeBackend) RespondPermission(space, agent, reqID, behavior, reason string) error {
@@ -188,6 +195,15 @@ func TestRESTCommands(t *testing.T) {
 	}
 	if len(fake.suspends) != 1 {
 		t.Fatalf("suspend not recorded: %+v", fake.suspends)
+	}
+
+	// Operator → member message (flat comms).
+	mbody := bytes.NewBufferString(`{"body":"status?"}`)
+	if s := post(t, srv.URL+"/api/agents/worker-a/message?space=sp-a&token=secret", mbody); s != http.StatusNoContent {
+		t.Fatalf("message status = %d, want 204", s)
+	}
+	if len(fake.msgs) != 1 || fake.msgs[0] != [3]string{"sp-a", "worker-a", "status?"} {
+		t.Fatalf("user message not recorded: %+v", fake.msgs)
 	}
 }
 

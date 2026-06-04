@@ -275,8 +275,11 @@ evva swarm ls
 Web 界面（`:8888`）针对每个 space 提供：
 
 - **Space 选择器** —— 已注册 swarm 的列表；点一个进入。
-- **Leader Chat（与 leader 对话）** —— 给 leader 输入一个目标；它的回复实时流式
-  返回（文本、工具调用、思考）。这是你启动工作的入口。
+- **Member Console（成员控制台）** —— 某个成员的实时聚焦视图：它的流式 turn 与
+  工具调用。默认聚焦 leader（输入目标即可启动工作），但你也可以**点击花名册里的
+  任意成员，聚焦它的控制台并直接给它发消息** —— 你能像跟 leader 对话一样，直接跟
+  基层 worker 沟通。你的消息走 swarm 的消息总线，所以空闲成员会被唤醒处理、繁忙
+  成员会把它折进当前工作 —— 而**不打扰团队其余的工作流**（扁平化管理）。
 - **Team Board（看板）** —— 5 列看板（`pending / running / suspended /
   verifying / completed`），随任务账本的流转实时反映。
 - **Agent Roster（花名册）** —— 列出每个成员的成员状态（active/frozen）和运行状态

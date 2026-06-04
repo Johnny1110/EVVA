@@ -1,9 +1,15 @@
 <script setup>
 import { ref, nextTick, watch } from 'vue'
 
+// A per-member console: the live, focused view of ONE member — its streamed
+// turns and tool calls, plus an input that sends the operator a message to it
+// (mail-mode flat comms). The same component serves the leader and every
+// worker, so "talking to a worker" is identical to "talking to the leader".
 const props = defineProps({
-  turns: { type: Array, default: () => [] },
-  leader: { type: String, default: '' },
+  member: { type: String, default: '' },
+  role: { type: String, default: '' },
+  currentTask: { type: Number, default: 0 },
+  turns: { type: Array, default: () => [] }, // already filtered to this member
   status: { type: String, default: '' }, // ws status
 })
 const emit = defineEmits(['send'])
@@ -12,15 +18,15 @@ const draft = ref('')
 const scroller = ref(null)
 
 function send() {
-  const p = draft.value.trim()
-  if (p) {
-    emit('send', p)
+  const t = draft.value.trim()
+  if (t) {
+    emit('send', t)
     draft.value = ''
   }
 }
 
 watch(
-  () => props.turns.length,
+  () => [props.turns.length, props.member],
   async () => {
     await nextTick()
     if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
@@ -29,17 +35,18 @@ watch(
 </script>
 
 <template>
-  <div class="chat">
+  <div class="console">
     <div class="chead">
-      <span>Leader Chat</span>
-      <span class="who">{{ leader }}</span>
+      <span class="who">{{ member || '—' }}</span>
+      <span v-if="role" class="role" :class="role">{{ role }}</span>
+      <span v-if="currentTask" class="task">task #{{ currentTask }}</span>
       <span :class="['ws', status]">{{ status }}</span>
     </div>
 
     <div ref="scroller" class="stream">
       <div v-for="(t, i) in turns" :key="i" :class="['turn', t.type]">
         <div class="meta">
-          <span class="agent">{{ t.agentId }}</span>
+          <span class="agent">{{ t.type === 'user' ? 'you' : member }}</span>
           <span class="tag">{{ t.type }}</span>
         </div>
         <div v-if="t.type === 'tool'" class="tool">
@@ -47,16 +54,18 @@ watch(
           <span :class="['st', t.status]">{{ t.status }}</span>
           <pre v-if="t.result" class="result">{{ t.result }}</pre>
         </div>
-        <pre v-else class="body" :class="{ think: t.type === 'thinking' }">{{ t.text }}</pre>
+        <pre v-else class="body" :class="{ think: t.type === 'thinking', mine: t.type === 'user' }">{{ t.text }}</pre>
       </div>
-      <div v-if="!turns.length" class="empty">Send a prompt to the leader to begin.</div>
+      <div v-if="!turns.length" class="empty">
+        No activity yet. Send {{ member || 'this member' }} a message to begin.
+      </div>
     </div>
 
     <div class="input">
       <textarea
         v-model="draft"
         rows="2"
-        placeholder="Message the leader…  (Enter to send, Shift+Enter for newline)"
+        :placeholder="`Message ${member || 'member'}…  (Enter to send, Shift+Enter for newline)`"
         @keydown.enter.exact.prevent="send"
       ></textarea>
       <button class="primary" @click="send">Send</button>
@@ -65,7 +74,7 @@ watch(
 </template>
 
 <style scoped>
-.chat {
+.console {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -74,14 +83,24 @@ watch(
   display: flex;
   align-items: baseline;
   gap: 0.6rem;
-  font-weight: 600;
   font-size: 0.85rem;
   padding-bottom: 0.5rem;
 }
 .who {
-  font-family: var(--mono);
+  font-weight: 600;
+}
+.role {
+  font-size: 0.62rem;
+  text-transform: uppercase;
   color: var(--dim);
-  font-size: 0.75rem;
+}
+.role.leader {
+  color: var(--accent);
+}
+.task {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--dim);
 }
 .ws {
   margin-left: auto;
@@ -118,6 +137,11 @@ watch(
 .body.think {
   color: var(--dim);
   font-style: italic;
+}
+.body.mine {
+  color: #cdd9e5;
+  border-left: 2px solid var(--accent);
+  padding-left: 0.5rem;
 }
 .turn.error .body {
   color: var(--danger);

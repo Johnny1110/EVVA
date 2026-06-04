@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -452,8 +453,13 @@ func (s *Service) Roster(id string) ([]webapi.MemberInfo, bool) {
 	views := ent.space.Roster.Snapshot()
 	out := make([]webapi.MemberInfo, 0, len(views))
 	for _, v := range views {
+		var agentID string
+		if ctl, ok := ent.space.Roster.Controller(v.Name); ok {
+			agentID = ctl.AgentID()
+		}
 		out = append(out, webapi.MemberInfo{
 			Name:        v.Name,
+			AgentID:     agentID,
 			Role:        string(v.Role),
 			Membership:  string(v.Membership),
 			Run:         string(v.Run),
@@ -533,6 +539,34 @@ func (s *Service) Run(id, agent, prompt string) error {
 		}
 	}()
 	return nil
+}
+
+// SendUserMessage drops an operator message onto a member's mailbox as sender
+// "user" (or broadcasts when to == "all"). It deliberately reuses Bus.Send — the
+// exact path inter-agent mail takes — so the supervisor's wake/drain delivers it
+// without any new orchestration: an idle member is woken (drain A), a busy one
+// folds it mid-run (drain B), and the task ledger is untouched. This is the
+// non-disruptive core of flat operator↔member comms.
+func (s *Service) SendUserMessage(id, to, subject, body string) error {
+	ent, ok := s.entry(id)
+	if !ok {
+		return fmt.Errorf("swarm: unknown space %q", id)
+	}
+	if strings.TrimSpace(body) == "" {
+		return fmt.Errorf("swarm: message body is required")
+	}
+	if to != store.RecipientAll {
+		if _, known := ent.space.Roster.Controller(to); !known {
+			return fmt.Errorf("swarm: unknown member %q", to)
+		}
+	}
+	_, err := ent.space.Bus.Send(store.Message{
+		Sender:    "user",
+		Recipient: to,
+		Subject:   subject,
+		Body:      body,
+	})
+	return err
 }
 
 func (s *Service) RespondPermission(id, agent, reqID, behavior, reason string) error {

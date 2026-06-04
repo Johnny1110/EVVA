@@ -171,6 +171,12 @@ type Agent struct {
 
 	sink event.Sink // event to ui
 
+	// inboxDrainer, when set, is polled at every loop iteration boundary so a
+	// busy agent can fold an incoming message into its current run (the
+	// generalisation of the background-task drain). Nil is a no-op — single-
+	// agent behaviour is unaffected. Set via WithInboxDrainer.
+	inboxDrainer Drainer
+
 	// maxIters is the agent loop's safety cap. Atomic so the TUI's
 	// /config form can mutate it from another goroutine while the loop
 	// reads it at iteration boundaries.

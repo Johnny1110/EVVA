@@ -90,6 +90,17 @@ func (s *Supervisor) serve(ctx context.Context, name string, m *memberRun, reaso
 		return // nothing to do — idle burns no tokens
 	}
 
+	// The run-start prompt already folded the whole unread batch (msgIDs) from
+	// the store. Their mailbox hints are still buffered, so clear them now —
+	// otherwise the in-run inbox drainer (drain B) would re-fold the same
+	// messages from those stale hints. Done after composePrompt so anything in
+	// the snapshot is covered; mail arriving AFTER this point keeps its hint and
+	// is delivered mid-run by drain B. (Timer wakes fold no batch, msgIDs nil,
+	// so their message hints are left for normal handling.)
+	if len(msgIDs) > 0 {
+		s.drainStaleHints(name)
+	}
+
 	// Claim the run unless a Suspend beat us to it. The roster status flips under
 	// m.mu so a racing Suspend's RunSuspended can't be overwritten by our
 	// RunBusy.
@@ -176,6 +187,26 @@ func (s *Supervisor) composePrompt(name string, reason wakeReason) (string, []st
 }
 
 const scheduledDutyPrompt = "[Scheduled duty] Your recurring schedule fired. Carry out your standing responsibilities now: check the state you are responsible for and take any action it requires. If everything is in order, report that briefly and stand down — do not invent work."
+
+// drainStaleHints empties a member's mailbox channel of buffered UUID hints.
+// Called once the run-start prompt has folded the unread batch from the store,
+// so the leftover hints for that batch don't make the in-run drainer (drain B)
+// re-fold the same messages. Runs on the loop goroutine (no concurrent reader),
+// non-blocking via select-default. The durable rows are untouched — only the
+// best-effort hints are cleared.
+func (s *Supervisor) drainStaleHints(name string) {
+	inbox := s.bus.Inbox(name)
+	if inbox == nil {
+		return
+	}
+	for {
+		select {
+		case <-inbox:
+		default:
+			return
+		}
+	}
+}
 
 // poke signals a member's non-message wake (timer or resume). Non-blocking: if a
 // poke is already pending, the loop is guaranteed to run, so dropping this one

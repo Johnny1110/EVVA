@@ -168,6 +168,10 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 		agent.WithSkillRegistry(ld.Skills),
 		agent.WithName(name),
 		agent.WithRootContext(sp.ctx),
+		// drain B (SPRD-1-12): fold incoming mailbox messages into a busy
+		// member's current run. The mailbox is resolved lazily per Drain, so
+		// it works regardless of Bus.Register ordering below.
+		agent.WithInboxDrainer(newInboxDrainer(name, sp.Bus, sp.Store)),
 	}
 	opts = append(opts, sp.ts.For(name, ld.Role, sp)...)
 

@@ -97,6 +97,7 @@ func (s *Supervisor) AddMember(name string) error {
 		return fmt.Errorf("swarm: add member %q: %w", name, err)
 	}
 	s.startMemberLoop(ctx, name)
+	s.sp.persistRuntime()
 	return nil
 }
 
@@ -108,6 +109,7 @@ func (s *Supervisor) Freeze(name string) error {
 		return fmt.Errorf("swarm: freeze: unknown member %q", name)
 	}
 	s.sp.Roster.setMembership(name, MembershipFrozen)
+	s.sp.persistRuntime()
 	return nil
 }
 
@@ -118,6 +120,7 @@ func (s *Supervisor) Unfreeze(name string) error {
 		return fmt.Errorf("swarm: unfreeze: unknown member %q", name)
 	}
 	s.sp.Roster.setMembership(name, MembershipActive)
+	s.sp.persistRuntime()
 	if m := s.memberOf(name); m != nil {
 		s.poke(m, wakeMessage)
 	}

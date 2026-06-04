@@ -96,6 +96,7 @@ func serviceStart(out io.Writer) error {
 // and serve until SIGTERM/SIGINT. It removes the runtime files on a clean exit.
 func serviceRun() {
 	svc := service.New(listenAddr())
+	svc.SetStateDir(serviceDir()) // persist + reconcile registered spaces across restarts
 	if err := svc.Listen(); err != nil {
 		fmt.Fprintf(os.Stderr, "evva service: %v\n", err)
 		os.Exit(1)
@@ -107,6 +108,12 @@ func serviceRun() {
 	}
 	if err := os.WriteFile(addrPath(), []byte(svc.Addr()), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "evva service: write addr: %v\n", err)
+	}
+
+	// Rebuild any spaces that were registered before the last shutdown so a
+	// restart picks up where it left off (SPRD-1-11).
+	if err := svc.Reconcile(); err != nil {
+		slog.Warn("evva service: reconcile incomplete", "err", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -64,10 +65,18 @@ type Service struct {
 	ln     net.Listener // bound listener, nil until Listen
 	spaces map[string]*spaceEntry
 
+	// stateDir, when set, is where the set of registered workdirs is persisted
+	// (spaces.json) so Reconcile can rebuild every space after a restart. Empty
+	// disables persistence (tests that register stub spaces in-memory).
+	stateDir string
+
 	// loadConfig builds the per-space *config.Config for a workdir. Overridable
 	// in tests to inject a stub LLM provider without touching disk/env.
 	loadConfig func(workdir string) (*config.Config, error)
 }
+
+// spacesFileName holds the registered workdirs across restarts (SPRD-1-11).
+const spacesFileName = "spaces.json"
 
 // spaceEntry holds one live space plus the handles needed to tear it down
 // independently of its siblings.
@@ -124,6 +133,11 @@ func (s *Service) SetLogger(l *slog.Logger) {
 	}
 }
 
+// SetStateDir enables restart persistence: the set of registered workdirs is
+// written under dir/spaces.json so Reconcile can rebuild every space after a
+// process death (SPRD-1-11). Call before Reconcile / the first Register.
+func (s *Service) SetStateDir(dir string) { s.stateDir = dir }
+
 // Listen binds the configured address without serving. Exposed so callers
 // (and tests using a :0 ephemeral port) can read Addr() before Serve blocks.
 // Idempotent: a second call is a no-op once bound.
@@ -164,16 +178,34 @@ func (s *Service) Serve(ctx context.Context) error {
 	}
 }
 
-// Stop tears down every space and the HTTP server. Safe to call once; the
-// rootCtx cancel cascades to all supervisors and pumps.
+// Stop tears down every space and the HTTP server — a graceful process
+// shutdown. Crucially it does NOT rewrite spaces.json: the registered set is
+// preserved so the next start reconciles the same spaces back (SPRD-1-11). Use
+// StopSpace to deliberately drop one from the reconcile set.
 func (s *Service) Stop() error {
-	for _, id := range s.spaceIDs() {
-		_ = s.StopSpace(id)
+	s.mu.Lock()
+	ents := make([]*spaceEntry, 0, len(s.spaces))
+	for id, ent := range s.spaces {
+		ents = append(ents, ent)
+		delete(s.spaces, id)
+	}
+	s.mu.Unlock()
+	for _, ent := range ents {
+		teardownSpace(ent)
 	}
 	s.rootCancel()
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.srv.Shutdown(shutCtx)
+}
+
+// teardownSpace stops a space's supervisor, shuts its agents + store down, and
+// drains then stops its event pump. Shared by Stop (whole host) and StopSpace
+// (one space).
+func teardownSpace(ent *spaceEntry) {
+	ent.cancel()         // stop run loops + timer (no new runs)
+	ent.space.Shutdown() // cancel agents + close store; trailing events still buffered
+	close(ent.stopPump)  // pump does a final drain, then exits
 }
 
 // Addr returns the address the service is bound to. Before Listen it is the
@@ -221,6 +253,11 @@ func (s *Service) register(m agentdef.Manifest, loaded []agentdef.Loaded, cfg *c
 		return "", err
 	}
 
+	// Restore any prior on-disk state (transcripts, unread mail, frozen
+	// membership) before the supervisor starts the run loops — a no-op for a
+	// fresh workdir, the restart-resume path for one that died (SPRD-1-11 §6.2).
+	sp.Reload()
+
 	super := swarm.NewSupervisor(sp)
 	spaceCtx, cancel := context.WithCancel(s.rootCtx)
 	super.Start(spaceCtx)
@@ -231,6 +268,7 @@ func (s *Service) register(m agentdef.Manifest, loaded []agentdef.Loaded, cfg *c
 	s.mu.Unlock()
 
 	go s.pump(sp, stopPump)
+	s.persistSpaces()
 	s.log.Info("swarm: space registered", "id", id, "name", m.Name, "members", len(loaded))
 	return id, nil
 }
@@ -249,11 +287,89 @@ func (s *Service) StopSpace(id string) error {
 		return fmt.Errorf("swarm: unknown space %q", id)
 	}
 
-	ent.cancel()           // stop run loops + timer (no new runs)
-	ent.space.Shutdown()   // cancel agents + close store; trailing events still buffered
-	close(ent.stopPump)    // pump does a final drain, then exits
+	teardownSpace(ent)
+	s.persistSpaces() // a deliberate stop drops it from the reconcile set
 	s.log.Info("swarm: space stopped", "id", id)
 	return nil
+}
+
+// spacesFile is the persisted reconcile manifest path, or "" when persistence
+// is disabled (no state dir).
+func (s *Service) spacesFile() string {
+	if s.stateDir == "" {
+		return ""
+	}
+	return filepath.Join(s.stateDir, spacesFileName)
+}
+
+// persistedSpaces is the on-disk shape of spaces.json.
+type persistedSpaces struct {
+	Workdirs []string `json:"workdirs"`
+}
+
+// persistSpaces snapshots every live space's workdir to spaces.json so a later
+// Reconcile rebuilds exactly this set. Best-effort: a write failure costs the
+// post-restart auto-rebuild, never live correctness.
+func (s *Service) persistSpaces() {
+	path := s.spacesFile()
+	if path == "" {
+		return
+	}
+	s.mu.RLock()
+	seen := map[string]bool{}
+	var dirs []string
+	for _, ent := range s.spaces {
+		wd := ent.space.Workdir
+		if wd != "" && !seen[wd] {
+			seen[wd] = true
+			dirs = append(dirs, wd)
+		}
+	}
+	s.mu.RUnlock()
+
+	data, err := json.MarshalIndent(persistedSpaces{Workdirs: dirs}, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		s.log.Warn("swarm: persist spaces.json", "err", err)
+	}
+}
+
+// Reconcile rebuilds every space recorded in spaces.json — the boot path after
+// a process death (SPRD-1-11). A per-space failure is logged and skipped so one
+// bad workdir never blocks the rest; the first error is returned for the caller
+// to surface. A no-op when persistence is disabled or the file is absent.
+func (s *Service) Reconcile() error {
+	path := s.spacesFile()
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("swarm: read spaces.json: %w", err)
+	}
+	var ps persistedSpaces
+	if err := json.Unmarshal(b, &ps); err != nil {
+		return fmt.Errorf("swarm: parse spaces.json: %w", err)
+	}
+
+	var firstErr error
+	for _, wd := range ps.Workdirs {
+		id, err := s.Register(wd)
+		if err != nil {
+			s.log.Warn("swarm: reconcile space failed", "workdir", wd, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		s.log.Info("swarm: reconciled space", "workdir", wd, "id", id)
+	}
+	return firstErr
 }
 
 // pump drains one space's event stream into the hub for the life of the space.
@@ -293,15 +409,6 @@ type wireEvent struct {
 	Event   any    `json:"event"`
 }
 
-func (s *Service) spaceIDs() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	ids := make([]string, 0, len(s.spaces))
-	for id := range s.spaces {
-		ids = append(ids, id)
-	}
-	return ids
-}
 
 func (s *Service) entry(id string) (*spaceEntry, bool) {
 	s.mu.RLock()

@@ -108,7 +108,7 @@ watch(
   font-weight: 600;
 }
 .role {
-  font-size: 0.62rem;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   color: var(--dim);
 }
@@ -122,7 +122,7 @@ watch(
 }
 .ws {
   margin-left: auto;
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
   color: var(--dim);
 }
 .ws.open { color: #22c55e; }
@@ -141,7 +141,7 @@ watch(
 .turn .meta {
   display: flex;
   gap: 0.5rem;
-  font-size: 0.62rem;
+  font-size: var(--fs-xs);
   color: var(--dim);
   font-family: var(--mono);
 }
@@ -170,7 +170,7 @@ watch(
 }
 .tool .st {
   margin-left: 0.4rem;
-  font-size: 0.66rem;
+  font-size: var(--fs-xs);
   color: var(--dim);
 }
 .tool .st.done { color: #22c55e; }

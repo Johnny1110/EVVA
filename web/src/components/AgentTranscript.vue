@@ -74,7 +74,7 @@ const emit = defineEmits(['close'])
   padding-bottom: 0.5rem;
 }
 .section {
-  font-size: 0.65rem;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--dim);
@@ -150,7 +150,7 @@ const emit = defineEmits(['close'])
 .time {
   margin-left: auto;
   font-family: var(--mono);
-  font-size: 0.65rem;
+  font-size: var(--fs-xs);
   color: var(--dim);
 }
 .subj {

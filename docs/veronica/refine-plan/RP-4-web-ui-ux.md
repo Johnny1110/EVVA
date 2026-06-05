@@ -143,9 +143,9 @@ RP-1 §3.6（inter-agent 訊息可見化）。
 | **UX-1 態勢感知** | Attention Bar + 審批 tray 選項 + per-phase 計時 | 4.1 | 直接回答「有什麼需要我」，承接 RP-2/RP-3 |
 | └ UX-1a ✅ | **已落地**：`AttentionBar.vue`（聚合 waiting-approval/input + error/paused、可點聚焦、live elapsed）+ roster pill 顯示 phase 計時（後端 `roster.phaseSince` → `MemberInfo.phaseSince`） | — | 已實作、測試＋smoke 驗證 |
 | └ UX-1b ✅ | **已落地**：審批改可選**非阻斷 tray**（`ApprovalTray.vue` 浮動側欄列出整個佇列）＋ modal↔tray 偏好（header toggle，localStorage 持久化，預設 modal）；抽出共用 `GateCard.vue`（modal 與 tray 共用一份 allow/deny/問答邏輯，不重複） | — | 已實作、build 驗證 |
-| **UX-2 版面重整** | 中欄 tab 化、focused/selected 釐清、detail 三分區、Timeline 檢視（收 RP-1 §3.6） | 4.2 | 監看效率與可觀測性 |
-| **UX-3 安全與互動** | 自訂 confirm、halt 二次確認、鍵盤、per-gate 錯誤 | 4.3 | 防呆、效率 |
-| **UX-4 設計系統** | design token、type scale、icon set、降噪、RWD、a11y 四態 | 4.4/4.5 | 一致性、可讀性、無障礙 |
+| **UX-2 版面重整** ✅ | **已落地**：中欄 Board/Timeline/Console **分頁化**；`Timeline.vue` 全 space 訊息活動流（收 RP-1 §3.6）；board 卡片加 assignee 配色/相對時間/可點展開 spec·result·verify；detail 改標 history·transcript / mailbox + 相對時間 | 4.2 | 監看效率與可觀測性 |
+| **UX-3 安全與互動** ✅ | **已落地**：`ConfirmDialog.vue` 取代原生 confirm（Enter/Esc）；reset + **halt all 皆需確認**；審批 modal 鍵盤 A=allow/D=deny；失敗的 gate 回應帶 reqId 並 re-hydrate（不再無聲卡住） | 4.3 | 防呆、效率 |
+| **UX-4 設計系統** ✅ | **已落地（核心子集）**：type-scale token（`--fs-xs/sm/md/lg`，可讀性 floor ~11.5px，掃掉散落的 ~10px）；roster 降噪（隱藏 active badge、控制 hover 顯示）；WS 斷線全域 banner；RWD 斷點（窄螢幕收合）；全域 `:focus-visible` + 關鍵容器 ARIA role。**未做（後續）：完整 icon set、Figma 高保真、深度 a11y（roster li 鍵盤化）** | 4.4/4.5 | 一致性、可讀性、無障礙 |
 
 > 順序刻意把**態勢感知（UX-1）擺第一** —— 它與剛落地的 RP-2/RP-3 直接相乘，投入小、感受大。
 > 設計系統（UX-4）擺後面：先把「看得懂、不出錯」做對，再系統化美化。

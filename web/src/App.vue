@@ -89,6 +89,13 @@ onMounted(loadSpaces)
   --accent: #3b82f6;
   --danger: #ef4444;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Type scale (RP-4 UX-4). One small set of steps, floored at ~11.5px so the
+     dense meta text is still legible — replaces the scattered 0.62–0.68rem
+     (≈10px) values. Components reference these instead of magic numbers. */
+  --fs-xs: 0.72rem;
+  --fs-sm: 0.8rem;
+  --fs-md: 0.9rem;
+  --fs-lg: 1.05rem;
 }
 * {
   box-sizing: border-box;
@@ -98,6 +105,13 @@ body {
   background: var(--bg);
   color: #e6edf3;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-size: var(--fs-md);
+}
+/* Visible keyboard focus everywhere (a11y) — the browser default is often
+   invisible on a dark theme. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 button {
   background: var(--panel);

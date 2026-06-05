@@ -37,7 +37,8 @@ function add() {
           <span class="role" :class="m.role">{{ m.role }}</span>
         </div>
         <div class="line2">
-          <span :class="['badge', m.membership]">{{ m.membership }}</span>
+          <!-- "active" is the norm — only flag the exception (frozen) to cut noise. -->
+          <span v-if="m.membership !== 'active'" :class="['badge', m.membership]">{{ m.membership }}</span>
           <span :class="['badge', 'phase-' + phaseClass(m)]" :title="displayPhase(m)">{{ displayPhase(m) }}</span>
           <span v-if="phaseClass(m) !== 'idle' && m.phaseSince" class="since">{{ elapsed(m.phaseSince, now) }}</span>
           <span v-if="m.currentTask" class="task">#{{ m.currentTask }}</span>
@@ -107,7 +108,7 @@ li.sel {
   flex: none;
 }
 .role {
-  font-size: 0.65rem;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   color: var(--dim);
 }
@@ -121,7 +122,7 @@ li.sel {
   align-items: center;
 }
 .badge {
-  font-size: 0.65rem;
+  font-size: var(--fs-xs);
   padding: 0.05rem 0.35rem;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -137,21 +138,26 @@ li.sel {
 .badge.phase-idle { color: var(--dim); }
 .since {
   font-family: var(--mono);
-  font-size: 0.62rem;
+  font-size: var(--fs-xs);
   color: var(--dim);
 }
 .task {
   font-family: var(--mono);
-  font-size: 0.65rem;
+  font-size: var(--fs-xs);
   color: var(--dim);
 }
+/* Controls are revealed on hover / when selected, so the resting roster is calm. */
 .ctl {
-  display: flex;
+  display: none;
   gap: 0.3rem;
   margin-top: 0.45rem;
 }
+li:hover .ctl,
+li.sel .ctl {
+  display: flex;
+}
 .ctl button {
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
   padding: 0.1rem 0.4rem;
 }
 .add {

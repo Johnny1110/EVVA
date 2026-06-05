@@ -163,7 +163,7 @@ const titles = {
   margin-right: 0.4rem;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 0.64rem;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
 }
 .empty {

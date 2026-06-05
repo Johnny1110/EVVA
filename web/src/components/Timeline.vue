@@ -114,11 +114,11 @@ watch(
 }
 .ref {
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
   color: var(--dim);
 }
 .badge {
-  font-size: 0.62rem;
+  font-size: var(--fs-xs);
   color: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 8px;
@@ -127,7 +127,7 @@ watch(
 .time {
   margin-left: auto;
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
   color: var(--dim);
 }
 .subj {

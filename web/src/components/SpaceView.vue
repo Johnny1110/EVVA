@@ -278,6 +278,9 @@ onBeforeUnmount(() => {
       <button class="danger ghost" @click="resetSpace" title="Wipe ledger + all agent context and restart the team (same id)">reset</button>
     </header>
 
+    <div v-if="wsStatus !== 'open'" class="wsbanner" role="status">
+      ⚠ live connection {{ wsStatus }} — reconnecting… (the view falls back to a 2.5s refresh)
+    </div>
     <p v-if="err" class="err">{{ err }}</p>
 
     <AttentionBar :items="attention" @focus="selectMember" />
@@ -389,7 +392,16 @@ onBeforeUnmount(() => {
 .err {
   color: var(--danger);
   margin: 0 0 0.4rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
+}
+.wsbanner {
+  background: #f59e0b22;
+  border: 1px solid #f59e0b88;
+  color: #fbbf24;
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  margin-bottom: 0.5rem;
+  font-size: var(--fs-sm);
 }
 .grid {
   flex: 1;
@@ -400,6 +412,17 @@ onBeforeUnmount(() => {
 }
 .grid:has(.right) {
   grid-template-columns: 16rem 1fr 22rem;
+}
+/* Narrow screens: drop to a single column and hide the detail rail; the center
+   tabs still give Board / Timeline / Console. (RP-4 UX-4 RWD.) */
+@media (max-width: 860px) {
+  .grid,
+  .grid:has(.right) {
+    grid-template-columns: 1fr;
+  }
+  .right {
+    display: none;
+  }
 }
 .left,
 .right {

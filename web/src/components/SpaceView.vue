@@ -4,6 +4,7 @@ import { openSocket } from '../ws.js'
 import { reduceChat, consoleTurns, isApproval, isQuestion, approvalOf, questionOf, touchesLedger, attentionItems } from '../events.js'
 import MemberConsole from './MemberConsole.vue'
 import TeamBoard from './TeamBoard.vue'
+import Timeline from './Timeline.vue'
 import Roster from './Roster.vue'
 import AgentTranscript from './AgentTranscript.vue'
 import ApprovalOverlay from './ApprovalOverlay.vue'
@@ -41,6 +42,7 @@ function toggleGateMode() {
 }
 const focused = ref('') // the member whose console is in the center pane
 const selected = ref('') // the member whose transcript+mailbox is in the right pane
+const centerTab = ref('board') // 'board' | 'timeline' | 'console' (RP-4 UX-2)
 const transcript = ref([])
 const err = ref('')
 const now = ref(Date.now()) // ticks every 1s so elapsed clocks stay live
@@ -263,11 +265,18 @@ onBeforeUnmount(() => {
       </aside>
 
       <main class="center">
-        <section class="board-wrap">
-          <TeamBoard :tasks="tasks" />
-        </section>
-        <section class="chat-wrap">
+        <nav class="tabs">
+          <button :class="{ active: centerTab === 'board' }" @click="centerTab = 'board'">Board</button>
+          <button :class="{ active: centerTab === 'timeline' }" @click="centerTab = 'timeline'">Timeline</button>
+          <button :class="{ active: centerTab === 'console' }" @click="centerTab = 'console'">
+            Console<span v-if="focusedMember" class="who-tab"> · {{ focusedMember }}</span>
+          </button>
+        </nav>
+        <section class="tabbody">
+          <TeamBoard v-show="centerTab === 'board'" :tasks="tasks" :now="now" />
+          <Timeline v-show="centerTab === 'timeline'" :messages="messages" :now="now" />
           <MemberConsole
+            v-show="centerTab === 'console'"
             :member="focusedMember"
             :role="focusedEntry.role || ''"
             :current-task="focusedEntry.currentTask || 0"
@@ -283,6 +292,7 @@ onBeforeUnmount(() => {
           :agent="selected"
           :transcript="transcript"
           :messages="selectedMail"
+          :now="now"
           @close="selected = ''"
         />
       </aside>
@@ -354,14 +364,39 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .center {
-  display: grid;
-  grid-template-rows: 40% 60%;
-  gap: 0.7rem;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
-.board-wrap,
-.chat-wrap {
+.tabs {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+.tabs button {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--dim);
+}
+.tabs button.active {
+  color: #e6edf3;
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.tabs .who-tab {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+.tabbody {
+  flex: 1;
   min-height: 0;
+}
+.tabbody > * {
+  height: 100%;
 }
 </style>
 

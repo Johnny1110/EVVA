@@ -1,12 +1,18 @@
 <script setup>
-import { computed } from 'vue'
-import { groupTasks, TASK_STATES } from '../events.js'
+import { computed, ref } from 'vue'
+import { groupTasks, TASK_STATES, relTime } from '../events.js'
+import { agentColor } from '../colors.js'
 
 const props = defineProps({
   tasks: { type: Array, default: () => [] },
+  now: { type: Number, default: 0 },
 })
 
 const columns = computed(() => groupTasks(props.tasks))
+const open = ref(null) // id of the expanded card, or null
+function toggle(id) {
+  open.value = open.value === id ? null : id
+}
 
 const titles = {
   pending: 'Pending',
@@ -25,13 +31,28 @@ const titles = {
         <span class="count">{{ columns[s].length }}</span>
       </div>
       <div class="cards">
-        <div v-for="t in columns[s]" :key="t.id" class="card">
+        <div
+          v-for="t in columns[s]"
+          :key="t.id"
+          class="card"
+          :class="{ open: open === t.id }"
+          @click="toggle(t.id)"
+        >
           <div class="title">{{ t.title || ('task #' + t.id) }}</div>
           <div class="who">
             <span>#{{ t.id }}</span>
-            <span class="assignee">→ {{ t.assignee }}</span>
+            <span class="assignee">
+              <span class="dot" :style="{ background: agentColor(t.assignee) }"></span>{{ t.assignee }}
+            </span>
+            <span class="time">{{ relTime(t.updatedAt, now) }}</span>
           </div>
-          <div v-if="t.verifyNote" class="note">{{ t.verifyNote }}</div>
+          <div v-if="open === t.id" class="detail">
+            <div v-if="t.spec" class="field"><span class="k">spec</span>{{ t.spec }}</div>
+            <div v-if="t.result" class="field"><span class="k">result</span>{{ t.result }}</div>
+            <div v-if="t.verifyNote" class="field"><span class="k">verify</span>{{ t.verifyNote }}</div>
+            <div v-if="t.createdBy" class="field"><span class="k">by</span>{{ t.createdBy }}</div>
+          </div>
+          <div v-else-if="t.verifyNote" class="note">{{ t.verifyNote }}</div>
         </div>
         <div v-if="!columns[s].length" class="empty">—</div>
       </div>
@@ -86,6 +107,13 @@ const titles = {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 0.5rem 0.55rem;
+  cursor: pointer;
+}
+.card:hover {
+  border-color: var(--accent);
+}
+.card.open {
+  border-color: var(--accent);
 }
 .title {
   font-size: 0.82rem;
@@ -93,17 +121,50 @@ const titles = {
 }
 .who {
   display: flex;
+  align-items: center;
   gap: 0.4rem;
   font-family: var(--mono);
   font-size: 0.7rem;
   color: var(--dim);
   margin-top: 0.3rem;
 }
+.assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.assignee .dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+}
+.who .time {
+  margin-left: auto;
+}
 .note {
   font-size: 0.72rem;
   color: var(--dim);
   margin-top: 0.3rem;
   font-style: italic;
+}
+.detail {
+  margin-top: 0.4rem;
+  display: grid;
+  gap: 0.3rem;
+}
+.field {
+  font-size: 0.74rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+.field .k {
+  display: inline-block;
+  min-width: 3.2rem;
+  margin-right: 0.4rem;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  text-transform: uppercase;
 }
 .empty {
   color: var(--line);

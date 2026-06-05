@@ -13,6 +13,7 @@ import {
   attentionKind,
   elapsed,
   attentionItems,
+  relTime,
   TASK_STATES,
 } from './events.js'
 
@@ -211,4 +212,14 @@ test('attentionItems sorts act before warn, then longest-waiting first', () => {
   assert.equal(items[0].kind, 'act')
   assert.equal(items[2].kind, 'warn')
   assert.equal(items[1].elapsed, '5s')
+})
+
+test('relTime formats a short relative age (RP-4 UX-2)', () => {
+  const now = 10_000_000
+  assert.equal(relTime(0, now), '')
+  assert.equal(relTime(now - 2000, now), 'now')
+  assert.equal(relTime(now - 40_000, now), '40s')
+  assert.equal(relTime(now - 5 * 60_000, now), '5m')
+  assert.equal(relTime(now - 3 * 3_600_000, now), '3h')
+  assert.equal(relTime(now - 2 * 86_400_000, now), '2d')
 })

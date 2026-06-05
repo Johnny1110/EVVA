@@ -1,10 +1,12 @@
 <script setup>
 import { agentColor } from '../colors.js'
+import { relTime } from '../events.js'
 
 defineProps({
   agent: { type: String, default: '' },
   transcript: { type: Array, default: () => [] }, // [{role, text}]
-  messages: { type: Array, default: () => [] }, // mailbox: [{sender,recipient,subject,body,readAt}]
+  messages: { type: Array, default: () => [] }, // mailbox: [{sender,recipient,subject,body,readAt,createdAt}]
+  now: { type: Number, default: 0 },
 })
 const emit = defineEmits(['close'])
 </script>
@@ -16,7 +18,7 @@ const emit = defineEmits(['close'])
       <button class="ghost" @click="emit('close')">close</button>
     </div>
 
-    <div class="section">transcript</div>
+    <div class="section">history · transcript</div>
     <div class="transcript">
       <div v-for="(m, i) in transcript" :key="i" :class="['msg', m.role]">
         <span class="role">{{ m.role }}</span>
@@ -45,6 +47,7 @@ const emit = defineEmits(['close'])
             </span>
           </span>
           <span v-if="!m.readAt" class="badge">unread</span>
+          <span class="time">{{ relTime(m.createdAt, now) }}</span>
         </div>
         <div v-if="m.subject" class="subj">{{ m.subject }}</div>
         <pre class="lbody">{{ m.body }}</pre>
@@ -143,6 +146,12 @@ const emit = defineEmits(['close'])
 }
 .badge {
   color: var(--accent);
+}
+.time {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--dim);
 }
 .subj {
   font-weight: 600;

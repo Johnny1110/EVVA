@@ -145,6 +145,20 @@ export function phaseClass(m) {
   return 'busy'
 }
 
+// relTime formats an absolute unix-ms timestamp as a short relative age — "now",
+// "8s", "3m", "2h", "4d" — for board cards and the activity timeline.
+export function relTime(ms, now = Date.now()) {
+  if (!ms) return ''
+  const s = Math.floor((now - ms) / 1000)
+  if (s < 5) return 'now'
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h`
+  return `${Math.floor(h / 24)}d`
+}
+
 // attentionKind classifies whether a roster member needs the operator's
 // attention right now, and how urgently (RP-4 UX-1): 'act' = blocked waiting for
 // a human (approval / question); 'warn' = errored or paused (likely needs a

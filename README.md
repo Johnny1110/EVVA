@@ -131,6 +131,20 @@ day-2 ops, restart-resume:
 Or just try the ready-to-run [example swarm](docs/veronica/example-swarm/) — copy
 it out, `evva swarm .`, and watch a 3-agent team build a small site.
 
+**CLI quick reference** (`evva swarm help` for the full list). Spaces are
+Docker-style: a stable id plus a unique **name**, and every `<ref>` below accepts
+either:
+
+| Command | What it does |
+| --- | --- |
+| `evva swarm . [--name <n>]` | register `./evva-swarm.yml` as a new space (name: `--name` → manifest `name:` → generated) |
+| `evva swarm ls` | list spaces — running and stopped (like `docker ps -a`) |
+| `evva swarm run <ref>` | (re)start a stopped space, under its same id / URL |
+| `evva swarm stop <ref>` | stop a space but keep it (restart with `run`) |
+| `evva swarm rm <ref>` | forget a space entirely (its workdir data is left intact) |
+| `evva swarm reset <ref>` | wipe a space — fresh ledger + cleared agent context, same id |
+| `evva swarm add <ref> <m>` | hot-load member `<m>` into a space |
+
 ---
 
 ## How to integrate EVVA agent in your Go project?

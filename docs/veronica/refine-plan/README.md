@@ -71,3 +71,36 @@ depcheck clean、web `npm test` + build 完成）。
 > ＋ 疊加 event 推導的 fine `phase`**，前端/`DisplayPhase` 合成顯示（suspended 優先 → phase → coarse）。
 > 理由：測試以無 event 的 fake controller 驅動，純 event 推導會讓它們失去狀態；coarse + fine 兩層
 > 同時相容測試與真實 agent，且 web-`Run` 路徑也因 event 推導而自動正確。
+
+---
+
+## 第二波 refine —— 優化（RP-5 ~ RP-8）
+
+> 狀態：**草案 / Draft（待 Johnny 拍板，尚未實作）** ｜ 日期：2026-06-06
+> 觸發：RP-1~4 落地後的下一輪使用回饋 —— 不是「卡死 bug」，而是**長時間運行的規模化、
+> 排程自動化、與團隊編組**。依使用者框定分兩階段：Phase 1（RP-5~7）先做、Phase 2（RP-8）
+> 接在其後。每份皆已做 source-code review（含 file:line 證據）。
+
+| # | 計畫 | 階段 | 主題 | 一句話 |
+| --- | --- | --- | --- | --- |
+| [RP-5](RP-5-member-prompt-env.md) | 成員提示詞環境接地 | Phase 1 | OS/env grounding | （**初稿前提已更正**：成員其實已有 env 段）真正缺口是去掉會漂移的 `- Today:` 日期 ＋ 補 swarm 接地（space/name/role）→ 提示詞前綴位元穩定、cache 友善。 |
+| [RP-6](RP-6-completed-task-scaling.md) | Completed-task 規模化 | Phase 1 | 分頁/漸進 reload | `completed` 只增不減 → store 加分頁+計數原語；`task_list` 預設只回最近 N + 總數（leader 上下文不膨脹）；Web 看板 completed「最近 5 + 獨立分頁」。 |
+| [RP-7](RP-7-leader-scheduled-wake.md) | Leader 主導排程喚醒 | Phase 1 | crontab 工具化 | 排程骨架已存在但是半成品 → 開給 leader `schedule_set/clear`、喚醒注入 `<system-reminder>currenttime: …, #{prompt}</system-reminder>`、`list_members` 常駐顯示班表、執行中跳過本輪、leader 不能改自己的。 |
+| [RP-8](RP-8-web-agent-schedule-mgmt.md) | Web 端 Agent/排程管理 | Phase 2 | User 的方向盤 | User 在 Web 管理任一成員（含 leader）班表、動態新增/移除 worker（leader 唯一不可增刪）、協作工具對 User 透明、增刪後系統發事件通知 leader（露 when_to_use）。 |
+| [RP-9](RP-9-external-event-webhook.md) | 外部事件 Webhook | Phase 2 | event-driven 入口 | 新增 `POST /api/swarm/{ref}/event`，讓外部應用（如 `localhost:7777` 的交易 engine）把事件推給 leader 觸發工作流；**測試階段免 token**（靠 loopback 邊界）、`<system-reminder>` 塑形、可靠投遞——webhook 機制上「就是一則 message」，沿用既有喚醒/folding。 |
+| [RP-10](RP-10-agent-skills-injection-and-web-mgmt.md) | Agent Skills 注入＋Web 管理 | Phase 1＋2 | 動態能力擴容 | 注入機制本就存在、只是被 `advertise_skills:false` 關著：P1 強制注入 skill name+desc ＋ 預設掛 `skill` 工具 ＋ 接對來源；P2 Web 動態增刪 agent skills、reload system prompt（接受 KV cache miss）。**agent 只能載入、不能著作**（紀律）。 |
+
+**相依**：RP-8（Phase 2）依賴 RP-7 的後端 seam（`Supervisor.SetSchedule/ClearSchedule`、roster
+schedule 欄位）；RP-9（Phase 2）獨立，但與 RP-7 互補（timer 驅動 vs 外部事件驅動）；RP-10 P2 與 RP-8
+並列（皆 Web 動態 reconfigure agent，共用 reload/寫目錄 pattern）；**RP-5 依賴 RP-10 P1**——兩者
+**共用一個 `LongRunning` 旗標**（✅ Johnny 2026-06-06；RP-10-3 引入、RP-5 複用：swarm persona ⇒ 去
+`- Today:` 日期 ＋ 去 skill 自建引導）；RP-6 獨立。**建議落地序**：RP-10 P1（打開 skill 注入 ＋ 引入
+`LongRunning`，地基；sub-tickets 見 [`RP-10A-subtickets.md`](RP-10A-subtickets.md)）→ RP-5（接 `OmitDate`
+消費端）→ RP-6（規模化）→ RP-7（排程能力）→ RP-8／RP-9／RP-10 P2（Web 編組、外部事件、skill 增刪，可並行）。
+
+> **喚醒源全景**：設計文件 §5.5 的 `{message, task, timer}` 在這波擴成四種——RP-7 補實
+> **timer**（定時自驅）、RP-9 補 **external event**（外部世界驅動）；兩者機制上都收斂成「投一則
+> message 給 leader」，故沿用既有喚醒/drain，不新增編排。
+
+**與第一波的關係**：RP-1~4 是「讓團隊**不卡死**」；RP-5~8 是「讓團隊**跑得久、管得動、編得了**」
+—— 接續 [RP-4](RP-4-web-ui-ux.md) 把 Web 從 console（監看+介入）再往「**team & schedule 編組台**」推進。

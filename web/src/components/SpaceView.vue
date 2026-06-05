@@ -113,6 +113,30 @@ async function memberCmd(verb, name) {
   }
 }
 
+// Reset wipes the whole space — task ledger, all messages, and every agent's
+// context — and rebuilds it under the SAME id. Destructive, so confirm first;
+// then drop the now-stale local view (the live event-stream accumulation, the
+// open transcript, any pending overlay) and re-pull the fresh (empty) snapshots.
+async function resetSpace() {
+  const ok = window.confirm(
+    'Reset this swarm?\n\nThis wipes the task ledger, all messages, and every ' +
+      "agent's context, then restarts the team from scratch. This cannot be undone.",
+  )
+  if (!ok) return
+  try {
+    await props.api.reset(props.space.id)
+    chat.value = []
+    transcript.value = []
+    approval.value = null
+    question.value = null
+    selected.value = ''
+    focused.value = ''
+    await refreshSnapshots()
+  } catch (e) {
+    err.value = String(e.message || e)
+  }
+}
+
 async function selectMember(name) {
   // Clicking a member both focuses the live console on it (center) and opens its
   // transcript + mailbox (right) — flat comms: any member is one click away.
@@ -150,6 +174,7 @@ onBeforeUnmount(() => {
       <span class="title">{{ space.name || space.id }}</span>
       <span class="sid">{{ space.id }}</span>
       <button class="danger ghost halt" @click="memberCmd('halt', undefined)">halt all</button>
+      <button class="danger ghost" @click="resetSpace" title="Wipe ledger + all agent context and restart the team (same id)">reset</button>
     </header>
 
     <p v-if="err" class="err">{{ err }}</p>

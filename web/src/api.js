@@ -44,5 +44,8 @@ export function createApi(getToken) {
     addMember: (id, agent) => req('POST', `/api/members?space=${enc(id)}`, { agent }),
     halt: (id) => req('POST', `/api/halt?space=${enc(id)}`),
     stopSpace: (id) => req('DELETE', `/api/swarm/${enc(id)}`),
+    // Wipe the space (ledger + every agent's context) and rebuild it under the
+    // same id; returns { id }. Destructive — the caller should confirm first.
+    reset: (id) => req('POST', `/api/swarm/${enc(id)}/reset`),
   }
 }

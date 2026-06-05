@@ -178,6 +178,14 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 		agent.WithSkillRegistry(ld.Skills),
 		agent.WithName(name),
 		agent.WithRootContext(sp.ctx),
+		// Stream tokens live to the web console. Every swarm member is a root
+		// persona whose run is watched in the :8888 UI, so the streaming UX win
+		// applies — text/thinking/tool deltas reach the console as they happen
+		// instead of one buffered dump per turn after the (blocking) LLM call
+		// returns. pkg/agent's Profile.Stream defaults off (buffered Complete);
+		// the swarm opts in here. The phase deriver + web reduce the same chunk
+		// events, so "thinking"/"texting" sub-phases also go live.
+		agent.WithStream(true),
 		// drain B (SPRD-1-12): fold incoming mailbox messages into a busy
 		// member's current run. The mailbox is resolved lazily per Drain, so
 		// it works regardless of Bus.Register ordering below.

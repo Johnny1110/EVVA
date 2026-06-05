@@ -80,7 +80,7 @@ func stubLoaded() []agentdef.Loaded {
 // registerStub brings a stub-LLM space up through the real register() core.
 func registerStub(t *testing.T, s *Service) string {
 	t.Helper()
-	id, err := s.register(common.GenUUID(), stubManifest(), stubLoaded(), stubConfig(t))
+	id, err := s.register(common.GenUUID(), "stub-"+common.GenUUID()[:6], stubManifest(), stubLoaded(), stubConfig(t))
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}

@@ -130,6 +130,10 @@ li.sel {
 }
 .badge.active { color: #22c55e; border-color: #22c55e55; }
 .badge.frozen { color: #60a5fa; border-color: #60a5fa55; }
+/* "thinking" — the LLM is generating (running/thinking/texting collapsed). Sky
+   blue makes "the model is working" pop, distinct from the amber busy below
+   (which now only shows for non-LLM busy states) and executing a tool. */
+.badge.phase-thinking { color: #38bdf8; border-color: #38bdf855; }
 .badge.phase-busy { color: #f59e0b; border-color: #f59e0b55; }
 .badge.phase-suspended { color: #ef4444; border-color: #ef444455; }
 /* waiting-approval / waiting-input demands operator action — make it loud. */

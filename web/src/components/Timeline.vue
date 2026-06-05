@@ -5,14 +5,18 @@
 // subsumes RP-1 §3.6 (inter-agent messages were previously only visible in a
 // member's mailbox). Messages are the durable, timestamped, cross-member signal,
 // so the feed is built from them.
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { agentColor } from '../colors.js'
-import { relTime } from '../events.js'
+import { relTime, mailState } from '../events.js'
 
 const props = defineProps({
-  messages: { type: Array, default: () => [] }, // [{id,sender,recipient,subject,body,refTask,readAt,createdAt}]
+  messages: { type: Array, default: () => [] }, // [{id,sender,recipient,subject,body,refTask,readAt,claimedAt,createdAt}]
   now: { type: Number, default: 0 },
 })
+
+// Tag each message with its unread→reading→read state once (avoids re-deriving
+// it in three template bindings per row).
+const rows = computed(() => props.messages.map((m) => ({ ...m, state: mailState(m) })))
 
 const scroller = ref(null)
 // Keep the newest activity in view (the REST list is oldest-first).
@@ -31,7 +35,7 @@ watch(
       Team activity <span class="dim">— every message across the swarm</span>
     </div>
     <div ref="scroller" class="feed">
-      <div v-for="m in messages" :key="m.id" class="evt" :class="{ unread: !m.readAt }">
+      <div v-for="m in rows" :key="m.id" class="evt" :class="m.state">
         <div class="line1">
           <span class="route">
             <span class="dot" :style="{ background: agentColor(m.sender) }"></span>
@@ -40,7 +44,7 @@ watch(
             <span class="who" :style="{ color: agentColor(m.recipient) }">{{ m.recipient }}</span>
           </span>
           <span v-if="m.refTask" class="ref">task #{{ m.refTask }}</span>
-          <span v-if="!m.readAt" class="badge">unread</span>
+          <span v-if="m.state !== 'read'" class="badge" :class="m.state">{{ m.state === 'reading' ? 'reading…' : 'unread' }}</span>
           <span class="time">{{ relTime(m.createdAt, now) }}</span>
         </div>
         <div v-if="m.subject" class="subj">{{ m.subject }}</div>
@@ -90,6 +94,11 @@ watch(
 .evt.unread {
   border-color: var(--accent);
 }
+/* "reading" — the recipient has this message folded into a run right now. Sky
+   blue, the same language as the roster's "thinking" pill. */
+.evt.reading {
+  border-color: #38bdf8;
+}
 .line1 {
   display: flex;
   align-items: center;
@@ -123,6 +132,10 @@ watch(
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 0 0.3rem;
+}
+.badge.reading {
+  color: #38bdf8;
+  border-color: #38bdf8;
 }
 .time {
   margin-left: auto;

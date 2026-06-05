@@ -4,6 +4,13 @@ defineProps({
   error: { type: String, default: '' },
 })
 const emit = defineEmits(['enter', 'refresh', 'reset-token'])
+
+// A stopped space has no live agents to stream, so it can't be opened — start it
+// first with `evva swarm run <name>`. Only running spaces are enterable.
+function enter(s) {
+  if (s.status === 'stopped') return
+  emit('enter', s)
+}
 </script>
 
 <template>
@@ -24,13 +31,24 @@ const emit = defineEmits(['enter', 'refresh', 'reset-token'])
     </p>
 
     <ul v-else class="spaces">
-      <li v-for="s in spaces" :key="s.id" @click="emit('enter', s)">
-        <div class="name">{{ s.name || s.id }}</div>
+      <li
+        v-for="s in spaces"
+        :key="s.id"
+        :class="{ stopped: s.status === 'stopped' }"
+        @click="enter(s)"
+      >
+        <div class="name">
+          {{ s.name || s.id }}
+          <span class="status" :class="s.status || 'running'">{{ s.status || 'running' }}</span>
+        </div>
         <div class="meta">
           <span>{{ s.members }} member{{ s.members === 1 ? '' : 's' }}</span>
           <span class="path">{{ s.workdir }}</span>
         </div>
         <div class="id">{{ s.id }}</div>
+        <div v-if="s.status === 'stopped'" class="hint">
+          stopped — run <code>evva swarm run {{ s.name || s.id }}</code> to start
+        </div>
       </li>
     </ul>
   </section>
@@ -73,6 +91,39 @@ h1 {
 }
 .name {
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.status {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  padding: 0.05rem 0.4rem;
+  border-radius: 10px;
+  border: 1px solid;
+}
+.status.running {
+  color: #22c55e;
+  border-color: #22c55e55;
+}
+.status.stopped {
+  color: var(--dim);
+  border-color: var(--line);
+}
+/* A stopped space can't be opened (no live agents) — show it dimmed + not-allowed. */
+.spaces li.stopped {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.spaces li.stopped:hover {
+  border-color: var(--line);
+}
+.hint {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--dim);
 }
 .meta {
   display: flex;

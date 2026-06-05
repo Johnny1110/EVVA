@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { openSocket } from '../ws.js'
-import { reduceChat, consoleTurns, isApproval, isQuestion, approvalOf, questionOf, touchesLedger, attentionItems } from '../events.js'
+import { reduceChat, reducePhase, consoleTurns, isApproval, isQuestion, approvalOf, questionOf, touchesLedger, attentionItems } from '../events.js'
 import MemberConsole from './MemberConsole.vue'
 import TeamBoard from './TeamBoard.vue'
 import Timeline from './Timeline.vue'
@@ -23,6 +23,11 @@ const roster = ref([])
 const tasks = ref([])
 const messages = ref([])
 const chat = ref([])
+// Live per-agent sub-phase derived from the WS event stream (AgentID → {phase,
+// tool, since}). Overlaid onto the 2.5s-polled roster so the status pill —
+// notably the sky-blue "thinking" — tracks the agent loop in real time instead
+// of lagging a poll behind.
+const livePhases = ref({})
 const wsStatus = ref('connecting')
 // Pending gates are QUEUES, not single slots: in a swarm several members can
 // block on approval at once, and a single ref would let the second event clobber
@@ -63,9 +68,20 @@ let sock = null
 let poll = null
 let clock = null
 
+// The polled roster with each member's live event-derived phase overlaid (by
+// agentId). The poll stays the source of truth for structure (membership, role,
+// task, coarse run); the WS stream supplies the fresh sub-phase + tool + clock.
+const mergedRoster = computed(() =>
+  roster.value.map((m) => {
+    const lp = livePhases.value[m.agentId]
+    return lp ? { ...m, phase: lp.phase, tool: lp.tool, phaseSince: lp.since } : m
+  }),
+)
+
 // What needs the operator: blocked-on-approval/question or errored/paused
-// members, most-urgent first, with live elapsed times (RP-4 UX-1).
-const attention = computed(() => attentionItems(roster.value, now.value))
+// members, most-urgent first, with live elapsed times (RP-4 UX-1). Built off the
+// merged roster so a waiting-approval lights up the instant the event arrives.
+const attention = computed(() => attentionItems(mergedRoster.value, now.value))
 
 const leader = computed(() => {
   const m = roster.value.find((x) => x.role === 'leader')
@@ -107,6 +123,10 @@ function onEvent(ev) {
     hydratePending()
     return
   }
+  // Every real event may move a member's sub-phase — including the gate events
+  // (→ waiting-approval / waiting-input). Fold it into the live phase map before
+  // the gate early-returns below so the roster pill reflects it immediately.
+  livePhases.value = reducePhase(livePhases.value, ev)
   if (isApproval(ev)) {
     enqueueGate(approvals, approvalOf(ev))
     return
@@ -202,6 +222,7 @@ async function doReset() {
   try {
     await props.api.reset(props.space.id)
     chat.value = []
+    livePhases.value = {}
     transcript.value = []
     approvals.value = []
     questions.value = []
@@ -239,8 +260,35 @@ async function hydratePending() {
   }
 }
 
+// hydrateConsole rebuilds the console from each member's persisted transcript so
+// a stop→run (or a plain page reload / reconnect after the live stream was lost)
+// doesn't show an empty console — the conversation that already happened is back.
+// Best-effort: the transcript carries role+text only, so tool-call cards from the
+// old run aren't reconstructed (the live stream renders those going forward); we
+// seed the agents' assistant turns, which is the history worth keeping.
+async function hydrateConsole() {
+  try {
+    const seeded = []
+    for (const m of roster.value) {
+      if (!m.agentId) continue
+      const tr = await props.api.transcript(props.space.id, m.name)
+      for (const e of tr || []) {
+        if (e.role === 'assistant' && e.text) {
+          seeded.push({ type: 'assistant', agentId: m.agentId, text: e.text, open: false })
+        }
+      }
+    }
+    // Only replace an empty console — never clobber turns the live stream already
+    // delivered while we were fetching.
+    if (seeded.length && !chat.value.length) chat.value = seeded
+  } catch {
+    /* non-fatal — the live stream still populates the console from here on */
+  }
+}
+
 onMounted(async () => {
   await refreshSnapshots()
+  await hydrateConsole()
   sock = openSocket({
     token: props.token,
     spaceId: props.space.id,
@@ -288,7 +336,7 @@ onBeforeUnmount(() => {
     <div class="grid">
       <aside class="left">
         <Roster
-          :members="roster"
+          :members="mergedRoster"
           :selected="selected"
           :now="now"
           @select="selectMember"

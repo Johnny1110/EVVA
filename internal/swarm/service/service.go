@@ -89,15 +89,34 @@ type Service struct {
 // spacesFileName holds the registered workdirs across restarts (SPRD-1-11).
 const spacesFileName = "spaces.json"
 
-// spaceEntry holds one live space plus the handles needed to tear it down
-// independently of its siblings.
+// spaceStatus is a space's lifecycle state. A stopped space keeps its identity
+// (id/name/workdir) in the registry — Docker-style — so `evva swarm run <ref>`
+// can rebuild it and `evva swarm ls` can still show it; only `rm` forgets it.
+type spaceStatus string
+
+const (
+	statusRunning spaceStatus = "running"
+	statusStopped spaceStatus = "stopped"
+)
+
+// spaceEntry holds one space's identity plus, while running, the live handles
+// needed to tear it down independently of its siblings. A stopped entry keeps
+// id/name/workdir and leaves the live fields nil.
 type spaceEntry struct {
+	id      string
+	name    string // unique human handle: --name > manifest name > generated
+	workdir string
+	status  spaceStatus
+
 	space    *swarm.SwarmSpace
 	super    *swarm.Supervisor
 	cancel   context.CancelFunc // stops the supervisor's run loops + timer tick
 	stopPump chan struct{}      // closed after Shutdown so the pump drains then exits
 	pending  *gateTracker       // outstanding approval/question gates, for reconnect replay
 }
+
+// live reports whether the entry currently has a running space behind it.
+func (e *spaceEntry) live() bool { return e != nil && e.status == statusRunning && e.space != nil }
 
 // gateTracker remembers a space's outstanding approval/question gates so a
 // browser that connects late — after a gate fired, or across a WS reconnect gap
@@ -278,12 +297,22 @@ func (s *Service) Stop() error {
 }
 
 // teardownSpace stops a space's supervisor, shuts its agents + store down, and
-// drains then stops its event pump. Shared by Stop (whole host) and StopSpace
-// (one space).
+// drains then stops its event pump. Shared by Stop (whole host), StopSpace, and
+// RemoveSpace. Nil-safe on every live handle so it is a no-op for an entry that
+// is already stopped (its live fields were cleared when it was stopped).
 func teardownSpace(ent *spaceEntry) {
-	ent.cancel()         // stop run loops + timer (no new runs)
-	ent.space.Shutdown() // cancel agents + close store; trailing events still buffered
-	close(ent.stopPump)  // pump does a final drain, then exits
+	if ent == nil {
+		return
+	}
+	if ent.cancel != nil {
+		ent.cancel() // stop run loops + timer (no new runs)
+	}
+	if ent.space != nil {
+		ent.space.Shutdown() // cancel agents + close store; trailing events still buffered
+	}
+	if ent.stopPump != nil {
+		close(ent.stopPump) // pump does a final drain, then exits
+	}
 }
 
 // Addr returns the address the service is bound to. Before Listen it is the
@@ -296,14 +325,29 @@ func (s *Service) Addr() string {
 }
 
 // Register reads <workdir>/evva-swarm.yml, builds its agents, and brings the
-// space up as a new isolated member of the registry. Returns the generated
-// space id. This is the production path the `evva swarm .` CLI (SPRD-1-9) calls.
-func (s *Service) Register(workdir string) (string, error) {
+// space up as a new isolated member of the registry. The space's handle name is
+// resolved Docker-style: an explicit name (CLI --name) wins, else the manifest's
+// `name:`, else a generated handle; it must be unique across all known spaces
+// (running or stopped). Returns the generated (UUID) space id. This is the
+// production path the `evva swarm .` CLI (SPRD-1-9) calls.
+func (s *Service) Register(workdir, name string) (string, error) {
 	m, loaded, cfg, err := s.loadSpace(workdir)
 	if err != nil {
 		return "", err
 	}
-	return s.register(common.GenUUID(), m, loaded, cfg)
+	eff := strings.TrimSpace(name)
+	if eff == "" {
+		eff = strings.TrimSpace(m.Name)
+	}
+	s.mu.Lock()
+	if eff == "" {
+		eff = s.genNameLocked()
+	} else if s.nameTakenLocked(eff) {
+		s.mu.Unlock()
+		return "", fmt.Errorf("swarm: name %q is already in use — pick another with --name", eff)
+	}
+	s.mu.Unlock()
+	return s.register(common.GenUUID(), eff, m, loaded, cfg)
 }
 
 // loadSpace resolves a workdir to its parsed manifest, built agent definitions,
@@ -334,8 +378,9 @@ func (s *Service) loadSpace(workdir string) (agentdef.Manifest, []agentdef.Loade
 
 // register is the shared bring-up core: assemble the space, start its
 // supervisor and event pump under a fresh child context, and add it to the
-// registry. Split out so tests can register a stub-LLM space without disk/env.
-func (s *Service) register(id string, m agentdef.Manifest, loaded []agentdef.Loaded, cfg *config.Config) (string, error) {
+// registry as a RUNNING entry under id+name. Split out so tests, Reconcile, and
+// RunSpace can bring a space up with a chosen id+name without re-resolving it.
+func (s *Service) register(id, name string, m agentdef.Manifest, loaded []agentdef.Loaded, cfg *config.Config) (string, error) {
 	sp, err := swarm.NewSpace(id, m, loaded, swarmtools.Set{}, cfg)
 	if err != nil {
 		return "", err
@@ -353,32 +398,108 @@ func (s *Service) register(id string, m agentdef.Manifest, loaded []agentdef.Loa
 
 	stopPump := make(chan struct{})
 	s.mu.Lock()
-	s.spaces[id] = &spaceEntry{space: sp, super: super, cancel: cancel, stopPump: stopPump, pending: newGateTracker()}
+	s.spaces[id] = &spaceEntry{
+		id: id, name: name, workdir: sp.Workdir, status: statusRunning,
+		space: sp, super: super, cancel: cancel, stopPump: stopPump, pending: newGateTracker(),
+	}
 	s.mu.Unlock()
 
 	go s.pump(sp, stopPump)
 	s.persistSpaces()
-	s.log.Info("swarm: space registered", "id", id, "name", m.Name, "members", len(loaded))
+	s.log.Info("swarm: space registered", "id", id, "name", name, "workdir", sp.Workdir, "members", len(loaded))
 	return id, nil
 }
 
-// StopSpace tears one space down without touching the others (AC#2 isolation):
-// stop its supervisor, shut its agents + store down, then drain and stop the
-// pump. An unknown id is an error.
-func (s *Service) StopSpace(id string) error {
+// StopSpace stops a running space but KEEPS its record as stopped (Docker-style):
+// the live supervisor/agents/store/pump are torn down, but id/name/workdir stay
+// in the registry so RunSpace can rebuild it and ls still shows it — only
+// RemoveSpace forgets it. ref is the space id or its name. AC#2 isolation:
+// siblings are untouched. Idempotent on an already-stopped space; unknown errors.
+func (s *Service) StopSpace(ref string) error {
 	s.mu.Lock()
-	ent, ok := s.spaces[id]
-	if ok {
-		delete(s.spaces, id)
+	ent := s.resolveLocked(ref)
+	if ent == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("swarm: unknown space %q", ref)
 	}
+	if ent.status != statusRunning {
+		s.mu.Unlock()
+		return nil // already stopped — nothing to tear down
+	}
+	// Flip to stopped and detach the live handles UNDER the lock, so a concurrent
+	// reader never observes a half-torn-down running space; tear them down after.
+	live := &spaceEntry{cancel: ent.cancel, space: ent.space, stopPump: ent.stopPump}
+	ent.status = statusStopped
+	ent.space, ent.super, ent.cancel, ent.stopPump, ent.pending = nil, nil, nil, nil, nil
+	id, name := ent.id, ent.name
 	s.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("swarm: unknown space %q", id)
+
+	teardownSpace(live)
+	s.persistSpaces() // record the stopped status so a restart restores it stopped
+	s.log.Info("swarm: space stopped", "id", id, "name", name)
+	return nil
+}
+
+// RunSpace (re)starts a stopped space, rebuilding it from its remembered workdir
+// under the SAME id and name so existing URLs keep working — the Docker `start`
+// to StopSpace's `stop`. ref is the id or name. Idempotent for an already-running
+// space; an unknown ref errors. Returns the (unchanged) space id.
+func (s *Service) RunSpace(ref string) (string, error) {
+	s.mu.RLock()
+	ent := s.resolveLocked(ref)
+	var id, name, workdir string
+	var running bool
+	if ent != nil {
+		id, name, workdir, running = ent.id, ent.name, ent.workdir, ent.status == statusRunning
+	}
+	s.mu.RUnlock()
+	if ent == nil {
+		return "", fmt.Errorf("swarm: unknown space %q", ref)
+	}
+	if running {
+		return id, nil // already up
 	}
 
-	teardownSpace(ent)
-	s.persistSpaces() // a deliberate stop drops it from the reconcile set
-	s.log.Info("swarm: space stopped", "id", id)
+	m, loaded, cfg, err := s.loadSpace(workdir)
+	if err != nil {
+		return "", fmt.Errorf("swarm: run %q: %w", ref, err)
+	}
+	// Drop the stopped placeholder and rebuild under the same id+name. On failure
+	// re-insert the placeholder so the space is never silently lost.
+	s.mu.Lock()
+	delete(s.spaces, id)
+	s.mu.Unlock()
+	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+		s.mu.Lock()
+		s.spaces[id] = &spaceEntry{id: id, name: name, workdir: workdir, status: statusStopped}
+		s.mu.Unlock()
+		s.persistSpaces()
+		return "", fmt.Errorf("swarm: run %q: rebuild failed: %w", ref, err)
+	}
+	s.log.Info("swarm: space started", "id", id, "name", name, "workdir", workdir)
+	return id, nil
+}
+
+// RemoveSpace forgets a space entirely (the Docker `rm`): a running space is torn
+// down first, then its record is dropped from the registry and the reconcile set
+// so a restart won't revive it. ref is the id or name; unknown errors. The
+// durable .vero ledger and agent transcripts on disk are left intact — rm forgets
+// the registration, not the workdir's data (use reset to wipe data).
+func (s *Service) RemoveSpace(ref string) error {
+	s.mu.Lock()
+	ent := s.resolveLocked(ref)
+	if ent == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("swarm: unknown space %q", ref)
+	}
+	delete(s.spaces, ent.id)
+	live := &spaceEntry{cancel: ent.cancel, space: ent.space, stopPump: ent.stopPump}
+	id, name := ent.id, ent.name
+	s.mu.Unlock()
+
+	teardownSpace(live) // no-op if it was already stopped
+	s.persistSpaces()
+	s.log.Info("swarm: space removed", "id", id, "name", name)
 	return nil
 }
 
@@ -391,26 +512,31 @@ func (s *Service) StopSpace(id string) error {
 // messages, and agent context for the space are gone. The manifest is re-read and
 // validated up front so a broken workdir fails the reset BEFORE the live space is
 // torn down — reset never leaves the operator with no space.
-func (s *Service) ResetSpace(id string) (string, error) {
+func (s *Service) ResetSpace(ref string) (string, error) {
 	s.mu.RLock()
-	ent, ok := s.spaces[id]
-	s.mu.RUnlock()
-	if !ok {
-		return "", fmt.Errorf("swarm: unknown space %q", id)
+	ent := s.resolveLocked(ref)
+	var id, name, workdir string
+	if ent != nil {
+		id, name, workdir = ent.id, ent.name, ent.workdir
 	}
-	workdir := ent.space.Workdir
+	s.mu.RUnlock()
+	if ent == nil {
+		return "", fmt.Errorf("swarm: unknown space %q", ref)
+	}
 
 	m, loaded, cfg, err := s.loadSpace(workdir)
 	if err != nil {
-		return "", fmt.Errorf("swarm: reset %q: %w", id, err)
+		return "", fmt.Errorf("swarm: reset %q: %w", ref, err)
 	}
 
-	// Tear the live space down (cancels in-flight runs, shuts agents, closes the
-	// DB so its files are free to delete) and drop it from the registry.
+	// Tear any live space down (cancels in-flight runs, shuts agents, closes the
+	// DB so its files are free to delete) and drop it from the registry. Detach
+	// the live handles under the lock; teardown is a no-op when already stopped.
 	s.mu.Lock()
+	live := &spaceEntry{cancel: ent.cancel, space: ent.space, stopPump: ent.stopPump}
 	delete(s.spaces, id)
 	s.mu.Unlock()
-	teardownSpace(ent)
+	teardownSpace(live)
 
 	// Wipe durable state so the rebuild is truly blank: the .vero ledger, then
 	// every member's transcript under <AppHome>/sessions/<workdir-slug>/ (via the
@@ -422,12 +548,12 @@ func (s *Service) ResetSpace(id string) (string, error) {
 		s.log.Warn("swarm: reset: clear sessions", "id", id, "err", err)
 	}
 
-	// Rebuild fresh under the same id (NewSpace re-opens a migrated db; Reload
-	// finds nothing to resume, so every member starts with empty context).
-	if _, err := s.register(id, m, loaded, cfg); err != nil {
-		return "", fmt.Errorf("swarm: reset %q: rebuild failed: %w", id, err)
+	// Rebuild fresh under the same id+name (NewSpace re-opens a migrated db;
+	// Reload finds nothing to resume, so every member starts with empty context).
+	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+		return "", fmt.Errorf("swarm: reset %q: rebuild failed: %w", ref, err)
 	}
-	s.log.Info("swarm: space reset", "id", id, "workdir", workdir)
+	s.log.Info("swarm: space reset", "id", id, "name", name, "workdir", workdir)
 	return id, nil
 }
 
@@ -440,32 +566,40 @@ func (s *Service) spacesFile() string {
 	return filepath.Join(s.stateDir, spacesFileName)
 }
 
-// persistedSpaces is the on-disk shape of spaces.json.
-type persistedSpaces struct {
-	Workdirs []string `json:"workdirs"`
+// persistedSpace is one space's durable record (SPRD-1-11): enough to rebuild it
+// (workdir) under its stable identity (id/name) and current lifecycle (status).
+type persistedSpace struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Workdir string `json:"workdir"`
+	Status  string `json:"status"`
 }
 
-// persistSpaces snapshots every live space's workdir to spaces.json so a later
-// Reconcile rebuilds exactly this set. Best-effort: a write failure costs the
-// post-restart auto-rebuild, never live correctness.
+// persistedSpaces is the on-disk shape of spaces.json. Workdirs is the legacy
+// pre-naming field — still READ on reconcile so an older state file upgrades
+// cleanly, but no longer written.
+type persistedSpaces struct {
+	Spaces   []persistedSpace `json:"spaces"`
+	Workdirs []string         `json:"workdirs,omitempty"`
+}
+
+// persistSpaces snapshots every known space (running AND stopped) to spaces.json
+// so a later Reconcile restores the exact set — running ones rebuilt, stopped
+// ones remembered as stopped. Best-effort: a write failure costs the post-restart
+// auto-restore, never live correctness.
 func (s *Service) persistSpaces() {
 	path := s.spacesFile()
 	if path == "" {
 		return
 	}
 	s.mu.RLock()
-	seen := map[string]bool{}
-	var dirs []string
+	recs := make([]persistedSpace, 0, len(s.spaces))
 	for _, ent := range s.spaces {
-		wd := ent.space.Workdir
-		if wd != "" && !seen[wd] {
-			seen[wd] = true
-			dirs = append(dirs, wd)
-		}
+		recs = append(recs, persistedSpace{ID: ent.id, Name: ent.name, Workdir: ent.workdir, Status: string(ent.status)})
 	}
 	s.mu.RUnlock()
 
-	data, err := json.MarshalIndent(persistedSpaces{Workdirs: dirs}, "", "  ")
+	data, err := json.MarshalIndent(persistedSpaces{Spaces: recs}, "", "  ")
 	if err != nil {
 		return
 	}
@@ -495,19 +629,72 @@ func (s *Service) Reconcile() error {
 		return fmt.Errorf("swarm: parse spaces.json: %w", err)
 	}
 
+	recs := ps.Spaces
+	// Legacy upgrade: an older state file only listed workdirs, all running.
+	if len(recs) == 0 {
+		for _, wd := range ps.Workdirs {
+			recs = append(recs, persistedSpace{Workdir: wd, Status: string(statusRunning)})
+		}
+	}
+
 	var firstErr error
-	for _, wd := range ps.Workdirs {
-		id, err := s.Register(wd)
+	for _, rec := range recs {
+		if spaceStatus(rec.Status) == statusStopped {
+			// A stopped space carries no live parts — restore the record only so
+			// it stays addressable (run/ls/rm) without spending tokens.
+			id := rec.ID
+			if id == "" {
+				id = common.GenUUID()
+			}
+			s.mu.Lock()
+			name := rec.Name
+			if name == "" || s.nameTakenLocked(name) {
+				name = s.genNameLocked()
+			}
+			s.spaces[id] = &spaceEntry{id: id, name: name, workdir: rec.Workdir, status: statusStopped}
+			s.mu.Unlock()
+			s.log.Info("swarm: reconciled space (stopped)", "id", id, "name", name, "workdir", rec.Workdir)
+			continue
+		}
+		id, name, err := s.rebuild(rec)
 		if err != nil {
-			s.log.Warn("swarm: reconcile space failed", "workdir", wd, "err", err)
+			s.log.Warn("swarm: reconcile space failed", "workdir", rec.Workdir, "err", err)
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		s.log.Info("swarm: reconciled space", "workdir", wd, "id", id)
+		s.log.Info("swarm: reconciled space", "workdir", rec.Workdir, "id", id, "name", name)
 	}
+	s.persistSpaces() // normalise the file to the current shape + any assigned ids/names
 	return firstErr
+}
+
+// rebuild brings a persisted RUNNING space back up under its stable id+name,
+// assigning either when the record predates them (legacy upgrade). Used only by
+// Reconcile, which runs single-threaded, so the name check needs no extra guard.
+func (s *Service) rebuild(rec persistedSpace) (string, string, error) {
+	m, loaded, cfg, err := s.loadSpace(rec.Workdir)
+	if err != nil {
+		return "", "", err
+	}
+	id := rec.ID
+	if id == "" {
+		id = common.GenUUID()
+	}
+	s.mu.Lock()
+	name := rec.Name
+	if name == "" {
+		name = strings.TrimSpace(m.Name)
+	}
+	if name == "" || s.nameTakenLocked(name) {
+		name = s.genNameLocked()
+	}
+	s.mu.Unlock()
+	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+		return "", "", err
+	}
+	return id, name, nil
 }
 
 // pump drains one space's event stream into the hub for the life of the space.
@@ -551,12 +738,33 @@ type wireEvent struct {
 	Event   any    `json:"event"`
 }
 
-
-func (s *Service) entry(id string) (*spaceEntry, bool) {
+// entry resolves a ref (space id or name) to its RUNNING entry — the common
+// runtime path, since every read snapshot and command needs a live space. A
+// stopped or unknown ref reports ok=false, which callers map to "unknown space"
+// / 404 (you interact with a stopped space only via run/rm/reset).
+func (s *Service) entry(ref string) (*spaceEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	ent, ok := s.spaces[id]
-	return ent, ok
+	e := s.resolveLocked(ref)
+	if !e.live() {
+		return nil, false
+	}
+	return e, true
+}
+
+// resolveLocked finds an entry by id first, then by name (any status); nil when
+// neither matches. Caller holds s.mu (R or W). ids are UUIDs and names are human
+// handles, so the two namespaces don't overlap — id-first is unambiguous.
+func (s *Service) resolveLocked(ref string) *spaceEntry {
+	if e, ok := s.spaces[ref]; ok {
+		return e
+	}
+	for _, e := range s.spaces {
+		if e.name == ref {
+			return e
+		}
+	}
+	return nil
 }
 
 // --- webapi.Backend implementation ---------------------------------------
@@ -567,17 +775,24 @@ func (s *Service) HasSpace(id string) bool {
 	return ok
 }
 
-// ListSpaces returns a snapshot of every registered space (GET /api/swarms).
+// ListSpaces returns a snapshot of every known space — running AND stopped
+// (GET /api/swarms), like `docker ps -a`. Member count is the live roster for a
+// running space, 0 for a stopped one (no live roster to count).
 func (s *Service) ListSpaces() []webapi.SpaceInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]webapi.SpaceInfo, 0, len(s.spaces))
-	for id, ent := range s.spaces {
+	for _, ent := range s.spaces {
+		members := 0
+		if ent.live() {
+			members = len(ent.space.Roster.Snapshot())
+		}
 		out = append(out, webapi.SpaceInfo{
-			ID:      id,
-			Name:    ent.space.Name,
-			Workdir: ent.space.Workdir,
-			Members: len(ent.space.Roster.Snapshot()),
+			ID:      ent.id,
+			Name:    ent.name,
+			Workdir: ent.workdir,
+			Status:  string(ent.status),
+			Members: members,
 		})
 	}
 	return out
@@ -650,7 +865,7 @@ func (s *Service) Messages(id string) ([]webapi.MessageInfo, bool) {
 	for _, m := range msgs {
 		out = append(out, webapi.MessageInfo{
 			ID: m.ID, Sender: m.Sender, Recipient: m.Recipient, Subject: m.Subject,
-			Body: m.Body, RefTask: m.RefTask, ReadAt: m.ReadAt, CreatedAt: m.CreatedAt,
+			Body: m.Body, RefTask: m.RefTask, ReadAt: m.ReadAt, ClaimedAt: m.ClaimedAt, CreatedAt: m.CreatedAt,
 		})
 	}
 	return out, true
@@ -761,10 +976,18 @@ func (s *Service) RespondQuestion(id, agent, reqID string, answers map[string]st
 	return ctl.RespondQuestion(reqID, ui.QuestionResponse{Answers: answers})
 }
 
-func (s *Service) Suspend(id, agent string) error  { return s.superCmd(id, agent, (*swarm.Supervisor).Suspend) }
-func (s *Service) Resume(id, agent string) error   { return s.superCmd(id, agent, (*swarm.Supervisor).Resume) }
-func (s *Service) Freeze(id, agent string) error   { return s.superCmd(id, agent, (*swarm.Supervisor).Freeze) }
-func (s *Service) Unfreeze(id, agent string) error { return s.superCmd(id, agent, (*swarm.Supervisor).Unfreeze) }
+func (s *Service) Suspend(id, agent string) error {
+	return s.superCmd(id, agent, (*swarm.Supervisor).Suspend)
+}
+func (s *Service) Resume(id, agent string) error {
+	return s.superCmd(id, agent, (*swarm.Supervisor).Resume)
+}
+func (s *Service) Freeze(id, agent string) error {
+	return s.superCmd(id, agent, (*swarm.Supervisor).Freeze)
+}
+func (s *Service) Unfreeze(id, agent string) error {
+	return s.superCmd(id, agent, (*swarm.Supervisor).Unfreeze)
+}
 
 func (s *Service) AddMember(id, agent string) error {
 	return s.superCmd(id, agent, (*swarm.Supervisor).AddMember)

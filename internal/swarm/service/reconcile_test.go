@@ -60,10 +60,10 @@ func TestReconcileRebuildsRegisteredSpaces(t *testing.T) {
 	svc1 := New("127.0.0.1:0")
 	svc1.SetStateDir(stateDir)
 	svc1.loadConfig = loadCfg
-	if _, err := svc1.Register(dirA); err != nil {
+	if _, err := svc1.Register(dirA, ""); err != nil {
 		t.Fatalf("register A: %v", err)
 	}
-	if _, err := svc1.Register(dirB); err != nil {
+	if _, err := svc1.Register(dirB, ""); err != nil {
 		t.Fatalf("register B: %v", err)
 	}
 	if got := len(svc1.ListSpaces()); got != 2 {
@@ -101,13 +101,31 @@ func TestReconcileRebuildsRegisteredSpaces(t *testing.T) {
 		t.Fatalf("reconciled spaces share an id: %v", ids)
 	}
 
-	// Stopping one drops it from spaces.json so a further restart won't revive it.
+	// Stopping one KEEPS it (as stopped) so it stays listed and can be restarted;
+	// only removing it drops it from spaces.json so a further restart won't revive.
 	first := spaces[0].ID
 	if err := svc2.StopSpace(first); err != nil {
 		t.Fatalf("stop space: %v", err)
 	}
+	if len(svc2.ListSpaces()) != 2 {
+		t.Fatalf("after stop: %d spaces, want 2 (a stopped space is still listed)", len(svc2.ListSpaces()))
+	}
+	if svc2.HasSpace(first) {
+		t.Fatal("a stopped space must not report as serving (HasSpace)")
+	}
+	// Restarting it brings it back up under the same id.
+	if _, err := svc2.RunSpace(first); err != nil {
+		t.Fatalf("run space: %v", err)
+	}
+	if !svc2.HasSpace(first) {
+		t.Fatal("space did not come back up after run")
+	}
+	// Removing it drops it for good.
+	if err := svc2.RemoveSpace(first); err != nil {
+		t.Fatalf("remove space: %v", err)
+	}
 	if len(svc2.ListSpaces()) != 1 {
-		t.Fatalf("after stop: %d spaces, want 1", len(svc2.ListSpaces()))
+		t.Fatalf("after rm: %d spaces, want 1", len(svc2.ListSpaces()))
 	}
 }
 

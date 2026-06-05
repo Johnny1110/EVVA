@@ -1,14 +1,18 @@
 <script setup>
+import { computed } from 'vue'
 import { agentColor } from '../colors.js'
-import { relTime } from '../events.js'
+import { relTime, mailState } from '../events.js'
 
-defineProps({
+const props = defineProps({
   agent: { type: String, default: '' },
   transcript: { type: Array, default: () => [] }, // [{role, text}]
-  messages: { type: Array, default: () => [] }, // mailbox: [{sender,recipient,subject,body,readAt,createdAt}]
+  messages: { type: Array, default: () => [] }, // mailbox: [{sender,recipient,subject,body,readAt,claimedAt,createdAt}]
   now: { type: Number, default: 0 },
 })
 const emit = defineEmits(['close'])
+
+// Each letter tagged with its unread→reading→read state (see events.mailState).
+const mail = computed(() => props.messages.map((m) => ({ ...m, state: mailState(m) })))
 </script>
 
 <template>
@@ -30,10 +34,10 @@ const emit = defineEmits(['close'])
     <div class="section">mailbox</div>
     <div class="mail">
       <div
-        v-for="(m, i) in messages"
+        v-for="(m, i) in mail"
         :key="i"
         class="letter"
-        :class="{ unread: !m.readAt }"
+        :class="m.state"
         :style="{ borderLeftColor: agentColor(m.sender) }"
       >
         <div class="lhead">
@@ -46,7 +50,7 @@ const emit = defineEmits(['close'])
               <span class="dot" :style="{ background: agentColor(m.recipient) }"></span>{{ m.recipient }}
             </span>
           </span>
-          <span v-if="!m.readAt" class="badge">unread</span>
+          <span v-if="m.state !== 'read'" class="badge" :class="m.state">{{ m.state === 'reading' ? 'reading…' : 'unread' }}</span>
           <span class="time">{{ relTime(m.createdAt, now) }}</span>
         </div>
         <div v-if="m.subject" class="subj">{{ m.subject }}</div>
@@ -113,6 +117,11 @@ const emit = defineEmits(['close'])
 .letter.unread {
   border-color: var(--accent); /* inline border-left-color keeps the sender stripe */
 }
+/* "reading" — folded into the recipient's in-flight run now. Sky blue, matching
+   the roster's "thinking" pill; the inline left-color keeps the sender stripe. */
+.letter.reading {
+  border-color: #38bdf8;
+}
 .lhead {
   display: flex;
   justify-content: space-between;
@@ -146,6 +155,9 @@ const emit = defineEmits(['close'])
 }
 .badge {
   color: var(--accent);
+}
+.badge.reading {
+  color: #38bdf8;
 }
 .time {
   margin-left: auto;

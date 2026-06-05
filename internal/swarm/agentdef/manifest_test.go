@@ -95,12 +95,18 @@ workers:
 	}
 }
 
-func TestLoadManifestMissingName(t *testing.T) {
+// A missing name is now ACCEPTED (Docker-style): the service assigns a handle
+// (--name > manifest name > generated), so the manifest no longer requires one.
+func TestLoadManifestMissingNameIsAllowed(t *testing.T) {
 	p := writeManifest(t, `
 leader:
   agent: leader
 `)
-	if _, err := LoadManifest(p); err == nil {
-		t.Fatal("want error when name is missing")
+	m, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("a nameless manifest should load, got %v", err)
+	}
+	if m.Name != "" {
+		t.Fatalf("Name = %q, want empty (service assigns the handle)", m.Name)
 	}
 }

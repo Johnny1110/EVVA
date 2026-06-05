@@ -210,7 +210,7 @@ func TestE2E_FullLoop(t *testing.T) {
 	svc.loadConfig = scriptedLoadConfig(appHome)
 	defer svc.Stop()
 
-	space, err := svc.Register(writeTeamFixture(t))
+	space, err := svc.Register(writeTeamFixture(t), "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestE2E_RestartContinuity(t *testing.T) {
 	svc1 := New("127.0.0.1:0")
 	svc1.SetStateDir(stateDir)
 	svc1.loadConfig = loadCfg
-	space, err := svc1.Register(dir)
+	space, err := svc1.Register(dir, "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -321,11 +321,11 @@ func TestE2E_MultiSpaceIsolation(t *testing.T) {
 	svc.loadConfig = scriptedLoadConfig(appHome)
 	defer svc.Stop()
 
-	a, err := svc.Register(writeTeamFixture(t))
+	a, err := svc.Register(writeTeamFixture(t), "team-a")
 	if err != nil {
 		t.Fatalf("register A: %v", err)
 	}
-	b, err := svc.Register(writeTeamFixture(t))
+	b, err := svc.Register(writeTeamFixture(t), "team-b")
 	if err != nil {
 		t.Fatalf("register B: %v", err)
 	}

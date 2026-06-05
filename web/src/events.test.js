@@ -10,6 +10,8 @@ import {
   consoleTurns,
   displayPhase,
   phaseClass,
+  reducePhase,
+  mailState,
   attentionKind,
   elapsed,
   attentionItems,
@@ -48,6 +50,34 @@ test('a different agent never appends to another agent open turn', () => {
   turns = reduceChat(turns, txt('worker', 'W'))
   assert.equal(turns.length, 2)
   assert.equal(turns[1].agentId, 'worker')
+})
+
+test('concurrent agents: interleaved deltas coalesce per agent, not by last turn', () => {
+  // Two members stream at once; their deltas arrive interleaved on one stream.
+  // Coalescing by the global "last" turn would make one block per delta (the
+  // streaming regression); per-agent coalescing keeps each member's stream whole.
+  const evs = [
+    { Kind: 'thinking_chunk', AgentID: 'lead', Thinking: { Text: 'a' } },
+    { Kind: 'thinking_chunk', AgentID: 'pm', Thinking: { Text: 'x' } },
+    { Kind: 'thinking_chunk', AgentID: 'lead', Thinking: { Text: 'b' } },
+    { Kind: 'thinking_chunk', AgentID: 'pm', Thinking: { Text: 'y' } },
+    { Kind: 'text_chunk', AgentID: 'lead', Text: { Text: 'Hi' } },
+    { Kind: 'text_chunk', AgentID: 'lead', Text: { Text: '!' } },
+  ]
+  let turns = []
+  for (const e of evs) turns = reduceChat(turns, e)
+  assert.equal(turns.length, 3) // lead thinking, pm thinking, lead assistant
+  assert.deepEqual(
+    consoleTurns(turns, 'lead', 'lead').map((t) => [t.type, t.text]),
+    [
+      ['thinking', 'ab'],
+      ['assistant', 'Hi!'],
+    ],
+  )
+  assert.deepEqual(
+    consoleTurns(turns, 'pm', 'pm').map((t) => [t.type, t.text]),
+    [['thinking', 'xy']],
+  )
 })
 
 test('tool start then result resolves by ToolID', () => {
@@ -167,6 +197,9 @@ test('displayPhase composes coarse run + fine phase (RP-3)', () => {
   assert.equal(displayPhase({ run: 'busy', phase: 'executing', tool: 'bash' }), 'executing:bash')
   assert.equal(displayPhase({ run: 'busy', phase: 'waiting-approval', tool: 'bash' }), 'waiting-approval:bash')
   assert.equal(displayPhase({ run: 'busy', phase: 'thinking' }), 'thinking')
+  // running / texting collapse into the prominent "thinking" label too.
+  assert.equal(displayPhase({ run: 'busy', phase: 'running' }), 'thinking')
+  assert.equal(displayPhase({ run: 'busy', phase: 'texting' }), 'thinking')
   assert.equal(displayPhase({ run: 'idle', phase: 'ready' }), 'ready')
   // coarse "suspended" wins even if the deriver moved the phase on after cancel.
   assert.equal(displayPhase({ run: 'suspended', phase: 'ready' }), 'suspended')
@@ -174,11 +207,58 @@ test('displayPhase composes coarse run + fine phase (RP-3)', () => {
   assert.equal(displayPhase({ run: 'busy', phase: '' }), 'busy')
 })
 
-test('phaseClass flags waiting-approval distinctly', () => {
+test('phaseClass flags waiting-approval distinctly and groups thinking', () => {
   assert.equal(phaseClass({ run: 'busy', phase: 'waiting-approval' }), 'waiting')
   assert.equal(phaseClass({ run: 'busy', phase: 'executing' }), 'busy')
+  // the LLM-generating phases share the sky-blue "thinking" class.
+  assert.equal(phaseClass({ run: 'busy', phase: 'thinking' }), 'thinking')
+  assert.equal(phaseClass({ run: 'busy', phase: 'running' }), 'thinking')
+  assert.equal(phaseClass({ run: 'busy', phase: 'texting' }), 'thinking')
   assert.equal(phaseClass({ run: 'suspended', phase: 'ready' }), 'suspended')
   assert.equal(phaseClass({ run: 'idle', phase: 'ready' }), 'idle')
+})
+
+test('reducePhase derives live per-agent phase from the event stream', () => {
+  let m = {}
+  m = reducePhase(m, { Kind: 'turn_start', AgentID: 'a1' }, 1000)
+  assert.deepEqual(m.a1, { phase: 'running', tool: '', since: 1000 })
+  m = reducePhase(m, { Kind: 'thinking_chunk', AgentID: 'a1', Thinking: { Text: '…' } }, 1500)
+  assert.deepEqual(m.a1, { phase: 'thinking', tool: '', since: 1500 })
+  m = reducePhase(m, { Kind: 'tool_use_start', AgentID: 'a1', ToolUseStart: { Name: 'bash' } }, 2000)
+  assert.deepEqual(m.a1, { phase: 'executing', tool: 'bash', since: 2000 })
+  m = reducePhase(m, { Kind: 'approval_needed', AgentID: 'a1', ApprovalNeeded: { ToolName: 'bash' } }, 2500)
+  assert.deepEqual(m.a1, { phase: 'waiting-approval', tool: 'bash', since: 2500 })
+})
+
+test('reducePhase ignores non-phase events and no-ops when unchanged', () => {
+  const base = reducePhase({}, { Kind: 'turn_start', AgentID: 'a1' }, 1000)
+  assert.equal(reducePhase(base, { Kind: 'usage', AgentID: 'a1' }, 2000), base)
+  assert.equal(reducePhase(base, { Kind: 'store_update', AgentID: 'a1' }, 2000), base)
+  assert.equal(reducePhase(base, { Kind: 'turn_start' }, 2000), base) // no AgentID
+  // same phase again → same object reference (no reactivity churn), clock kept.
+  assert.equal(reducePhase(base, { Kind: 'turn_end', AgentID: 'a1' }, 9000), base)
+})
+
+test('reducePhase keeps the clock on a tool-only change, resets on phase change', () => {
+  let m = reducePhase({}, { Kind: 'tool_use_start', AgentID: 'a1', ToolUseStart: { Name: 'bash' } }, 1000)
+  m = reducePhase(m, { Kind: 'tool_use_start', AgentID: 'a1', ToolUseStart: { Name: 'read' } }, 5000)
+  assert.deepEqual(m.a1, { phase: 'executing', tool: 'read', since: 1000 })
+})
+
+test('reducePhase isolates agents', () => {
+  let m = {}
+  m = reducePhase(m, { Kind: 'thinking', AgentID: 'a1' }, 1000)
+  m = reducePhase(m, { Kind: 'tool_use_start', AgentID: 'a2', ToolUseStart: { Name: 'bash' } }, 1000)
+  assert.equal(m.a1.phase, 'thinking')
+  assert.equal(m.a2.phase, 'executing')
+})
+
+test('mailState classifies the unread→reading→read lifecycle', () => {
+  assert.equal(mailState({ readAt: 123 }), 'read')
+  assert.equal(mailState({ readAt: 123, claimedAt: 100 }), 'read') // read wins
+  assert.equal(mailState({ claimedAt: 100 }), 'reading')
+  assert.equal(mailState({}), 'unread')
+  assert.equal(mailState(null), 'unread')
 })
 
 test('attentionKind: blocked = act, errored/paused = warn (RP-4)', () => {

@@ -29,10 +29,22 @@ type fakeBackend struct {
 	suspends [][2]string
 }
 
-func (f *fakeBackend) Token() string           { return f.token }
-func (f *fakeBackend) HasSpace(id string) bool  { _, ok := f.spaces[id]; return ok }
-func (f *fakeBackend) Register(string) (string, error) { return "sp-new", nil }
+func (f *fakeBackend) Token() string                           { return f.token }
+func (f *fakeBackend) HasSpace(id string) bool                 { _, ok := f.spaces[id]; return ok }
+func (f *fakeBackend) Register(string, string) (string, error) { return "sp-new", nil }
 func (f *fakeBackend) StopSpace(id string) error {
+	if !f.HasSpace(id) {
+		return errUnknownSpace
+	}
+	return nil // stop keeps the record (Docker-style)
+}
+func (f *fakeBackend) RunSpace(id string) (string, error) {
+	if !f.HasSpace(id) {
+		return "", errUnknownSpace
+	}
+	return id, nil
+}
+func (f *fakeBackend) RemoveSpace(id string) error {
 	if !f.HasSpace(id) {
 		return errUnknownSpace
 	}
@@ -49,7 +61,7 @@ func (f *fakeBackend) ResetSpace(id string) (string, error) {
 func (f *fakeBackend) Spaces() []SpaceInfo {
 	out := make([]SpaceInfo, 0, len(f.spaces))
 	for id, r := range f.spaces {
-		out = append(out, SpaceInfo{ID: id, Name: id, Members: len(r)})
+		out = append(out, SpaceInfo{ID: id, Name: id, Status: "running", Members: len(r)})
 	}
 	return out
 }

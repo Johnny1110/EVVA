@@ -23,13 +23,19 @@ type Backend interface {
 	// HasSpace reports whether a space id is registered (the WS subscribe guard).
 	HasSpace(spaceID string) bool
 
-	// Lifecycle. Register brings a space up from a workdir (POST /api/swarms);
-	// StopSpace tears one down (DELETE /api/swarm/:id); ResetSpace wipes it back
+	// Lifecycle (Docker-style). Register brings a NEW space up from a workdir
+	// with an optional explicit name (POST /api/swarms). StopSpace stops a running
+	// space but KEEPS it as "stopped" (POST /api/swarm/:ref/stop); RunSpace
+	// rebuilds a stopped one under its same id/name (POST /api/swarm/:ref/run);
+	// RemoveSpace forgets it entirely (DELETE /api/swarm/:ref). ResetSpace wipes it
 	// to a blank slate — fresh ledger + cleared agent context — under the SAME id
-	// (POST /api/swarm/:id/reset). ResetSpace returns the (unchanged) space id.
-	Register(workdir string) (string, error)
-	StopSpace(spaceID string) error
-	ResetSpace(spaceID string) (string, error)
+	// (POST /api/swarm/:ref/reset). For all of the above except Register, ref is a
+	// space id OR its name. Register/Run/Reset return the (stable) space id.
+	Register(workdir, name string) (string, error)
+	StopSpace(ref string) error
+	RunSpace(ref string) (string, error)
+	RemoveSpace(ref string) error
+	ResetSpace(ref string) (string, error)
 
 	// Read snapshots. The bool is false when the space id is unknown.
 	Spaces() []SpaceInfo
@@ -65,11 +71,13 @@ type Backend interface {
 	HaltAll(spaceID string) error
 }
 
-// SpaceInfo is one row of GET /api/swarms.
+// SpaceInfo is one row of GET /api/swarms. Status is "running" | "stopped"
+// (the list is like `docker ps -a` — stopped spaces are shown too).
 type SpaceInfo struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Workdir string `json:"workdir"`
+	Status  string `json:"status"`
 	Members int    `json:"members"`
 }
 
@@ -81,9 +89,9 @@ type MemberInfo struct {
 	AgentID     string `json:"agentId"`
 	Role        string `json:"role"`
 	Membership  string `json:"membership"`
-	Run         string `json:"run"`                 // coarse lifecycle: idle | busy | suspended
-	Phase       string `json:"phase,omitempty"`     // fine, event-derived sub-phase (RP-3)
-	Tool        string `json:"tool,omitempty"`      // tool name for executing / waiting-approval
+	Run         string `json:"run"`                  // coarse lifecycle: idle | busy | suspended
+	Phase       string `json:"phase,omitempty"`      // fine, event-derived sub-phase (RP-3)
+	Tool        string `json:"tool,omitempty"`       // tool name for executing / waiting-approval
 	PhaseSince  int64  `json:"phaseSince,omitempty"` // unix millis the phase was entered (RP-4 timing)
 	CurrentTask int64  `json:"currentTask"`
 	WhenToUse   string `json:"whenToUse,omitempty"`
@@ -112,7 +120,14 @@ type MessageInfo struct {
 	Subject   string `json:"subject,omitempty"`
 	Body      string `json:"body"`
 	RefTask   *int64 `json:"refTask,omitempty"`
+	// ReadAt / ClaimedAt expose the unread→claimed→read lifecycle (store
+	// migration 0002). ReadAt is stamped only when a member's run ends cleanly
+	// (SettleClaimed); ClaimedAt marks a message currently folded into an
+	// in-flight run. Surfacing Claimed lets the UI show "reading…" for mail the
+	// agent is actively processing, instead of it looking plain-unread until the
+	// whole run settles.
 	ReadAt    *int64 `json:"readAt,omitempty"`
+	ClaimedAt *int64 `json:"claimedAt,omitempty"`
 	CreatedAt int64  `json:"createdAt"`
 }
 
@@ -147,20 +162,35 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 	mux.Handle("POST /api/swarms", guard(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Workdir string `json:"workdir"`
+			Name    string `json:"name"`
 		}
 		if !decode(w, r, &body) {
 			return
 		}
-		id, err := b.Register(body.Workdir)
+		id, err := b.Register(body.Workdir, body.Name)
 		if err != nil {
-			// Register failures (missing manifest, bad workdir) are client errors.
+			// Register failures (missing manifest, bad workdir, name clash) are
+			// client errors.
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]string{"id": id})
 	}))
+	// DELETE removes a space (Docker rm); the lifecycle stop/run pair below KEEPS
+	// the record so a stopped space can be restarted by id or name.
 	mux.Handle("DELETE /api/swarm/{id}", guard(func(w http.ResponseWriter, r *http.Request) {
+		respondErr(w, b.RemoveSpace(r.PathValue("id")))
+	}))
+	mux.Handle("POST /api/swarm/{id}/stop", guard(func(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, b.StopSpace(r.PathValue("id")))
+	}))
+	mux.Handle("POST /api/swarm/{id}/run", guard(func(w http.ResponseWriter, r *http.Request) {
+		id, err := b.RunSpace(r.PathValue("id"))
+		if err != nil {
+			respondErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"id": id})
 	}))
 	mux.Handle("POST /api/swarm/{id}/reset", guard(func(w http.ResponseWriter, r *http.Request) {
 		id, err := b.ResetSpace(r.PathValue("id"))

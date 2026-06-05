@@ -72,12 +72,11 @@ func LoadManifest(path string) (Manifest, error) {
 	return m, nil
 }
 
-// validate enforces: a name, a leader, and unique non-empty member names
-// (leader + workers) — no replicas (design decision ⑦).
+// validate enforces a leader and unique non-empty member names (leader +
+// workers) — no replicas (design decision ⑦). The space name is OPTIONAL
+// (Docker-style): when the manifest omits it, the service assigns one (an
+// explicit `--name`, else a generated handle). So name is NOT validated here.
 func (m Manifest) validate() error {
-	if strings.TrimSpace(m.Name) == "" {
-		return fmt.Errorf("agentdef: manifest: name is required")
-	}
 	if strings.TrimSpace(m.Leader.Agent) == "" {
 		return fmt.Errorf("agentdef: manifest: leader.agent is required")
 	}

@@ -28,7 +28,7 @@ func TestExampleSwarmConstructs(t *testing.T) {
 	svc.loadConfig = scriptedLoadConfig(t.TempDir())
 	defer svc.Stop()
 
-	id, err := svc.Register(dst)
+	id, err := svc.Register(dst, "")
 	if err != nil {
 		t.Fatalf("register example swarm: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestVeroTechSwarmConstructs(t *testing.T) {
 	svc.loadConfig = scriptedLoadConfig(t.TempDir())
 	defer svc.Stop()
 
-	id, err := svc.Register(dst)
+	id, err := svc.Register(dst, "")
 	if err != nil {
 		t.Fatalf("register vero-tech-swarm: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestResetSpace(t *testing.T) {
 	svc.loadConfig = scriptedLoadConfig(t.TempDir())
 	defer svc.Stop()
 
-	id, err := svc.Register(dst)
+	id, err := svc.Register(dst, "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}

@@ -46,7 +46,11 @@ export function createApi(getToken) {
     unfreeze: (id, agent) => req('POST', `/api/agents/${enc(agent)}/unfreeze?space=${enc(id)}`),
     addMember: (id, agent) => req('POST', `/api/members?space=${enc(id)}`, { agent }),
     halt: (id) => req('POST', `/api/halt?space=${enc(id)}`),
-    stopSpace: (id) => req('DELETE', `/api/swarm/${enc(id)}`),
+    // Lifecycle (ref = id or name): stop KEEPS the space (run restarts it);
+    // removeSpace forgets it entirely.
+    stopSpace: (ref) => req('POST', `/api/swarm/${enc(ref)}/stop`),
+    runSpace: (ref) => req('POST', `/api/swarm/${enc(ref)}/run`),
+    removeSpace: (ref) => req('DELETE', `/api/swarm/${enc(ref)}`),
     // Wipe the space (ledger + every agent's context) and rebuild it under the
     // same id; returns { id }. Destructive — the caller should confirm first.
     reset: (id) => req('POST', `/api/swarm/${enc(id)}/reset`),

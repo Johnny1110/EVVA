@@ -182,7 +182,7 @@ func TestSwarmRegisterClient(t *testing.T) {
 	t.Chdir(wd)
 
 	var buf bytes.Buffer
-	if err := swarmRegister(&buf); err != nil {
+	if err := swarmRegister(&buf, ""); err != nil {
 		t.Fatalf("swarmRegister: %v", err)
 	}
 	if !strings.Contains(buf.String(), "sp-xyz") {
@@ -195,7 +195,7 @@ func TestSwarmRegisterClient(t *testing.T) {
 func TestSwarmRegisterNoManifest(t *testing.T) {
 	useServiceHome(t)
 	t.Chdir(t.TempDir())
-	if err := swarmRegister(&bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "no evva-swarm.yml") {
+	if err := swarmRegister(&bytes.Buffer{}, ""); err == nil || !strings.Contains(err.Error(), "no evva-swarm.yml") {
 		t.Fatalf("want a no-manifest error, got %v", err)
 	}
 }

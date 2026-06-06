@@ -100,6 +100,12 @@ func newListMembers(mc swarm.MemberContext) pubtools.Tool {
 				if m.WhenToUse != "" {
 					fmt.Fprintf(&b, " — %s", m.WhenToUse)
 				}
+				// Always surface the member's crontab (RP-7 §3.5): read live from
+				// the space (the schedule's owner) so a leader whose context was
+				// compacted re-learns who it put on duty every time it lists.
+				if sch, ok := mc.Space.ScheduleFor(m.Name); ok {
+					fmt.Fprintf(&b, "  ⏰ %s", formatSchedule(sch))
+				}
 				b.WriteByte('\n')
 			}
 			return pubtools.Result{Content: b.String(), Metadata: members}, nil

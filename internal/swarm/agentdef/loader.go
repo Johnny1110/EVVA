@@ -54,15 +54,12 @@ func NewLoader() *Loader { return &Loader{} }
 // profileYml is the on-disk schema for <agent>/profile.yml. Every field is
 // optional.
 type profileYml struct {
-	Model           string `yaml:"model"`
-	Effort          string `yaml:"effort"`
-	WhenToUse       string `yaml:"when_to_use"`
-	InjectMemory    bool   `yaml:"inject_memory"`
-	AdvertiseSkills bool   `yaml:"advertise_skills"`
-	Schedule        *struct {
-		Cron  string `yaml:"cron"`
-		Every string `yaml:"every"`
-	} `yaml:"schedule"`
+	Model           string       `yaml:"model"`
+	Effort          string       `yaml:"effort"`
+	WhenToUse       string       `yaml:"when_to_use"`
+	InjectMemory    bool         `yaml:"inject_memory"`
+	AdvertiseSkills bool         `yaml:"advertise_skills"`
+	Schedule        *scheduleYml `yaml:"schedule"`
 }
 
 // Build reads ONE agent directory (agents/{main,sub}/{name}/) and returns a
@@ -97,13 +94,9 @@ func (l *Loader) Build(dir string, role Role) (Loaded, error) {
 		return Loaded{}, fmt.Errorf("agentdef: %s: %w", name, err)
 	}
 
-	var sched *Schedule
-	if prof.Schedule != nil {
-		s, err := parseSchedule(prof.Schedule.Cron, prof.Schedule.Every)
-		if err != nil {
-			return Loaded{}, fmt.Errorf("agentdef: %s: %w", name, err)
-		}
-		sched = &s
+	sched, err := parseScheduleYml(prof.Schedule)
+	if err != nil {
+		return Loaded{}, fmt.Errorf("agentdef: %s: %w", name, err)
 	}
 
 	// LoadRegistry never errors (a missing skills/ dir is the normal state);
@@ -131,10 +124,15 @@ func (l *Loader) BuildAll(workdir string, m Manifest) ([]Loaded, []Warning, erro
 	loaded := make([]Loaded, 0, 1+len(m.Workers))
 	var warnings []Warning
 
-	add := func(dir string, role Role) error {
+	add := func(dir string, role Role, manifestSched *Schedule) error {
 		one, err := l.Build(dir, role)
 		if err != nil {
 			return err
+		}
+		// Manifest schedule is authoritative over the agent's profile.yml (RP-7
+		// §3.7) — the whole team's cadence is declared in one versioned file.
+		if manifestSched != nil {
+			one.Schedule = manifestSched
 		}
 		for _, w := range one.Skills.Warnings {
 			warnings = append(warnings, Warning{Agent: one.Def.Name, Msg: w})
@@ -143,11 +141,11 @@ func (l *Loader) BuildAll(workdir string, m Manifest) ([]Loaded, []Warning, erro
 		return nil
 	}
 
-	if err := add(filepath.Join(workdir, "agents", "main", m.Leader.Agent), RoleLeader); err != nil {
+	if err := add(filepath.Join(workdir, "agents", "main", m.Leader.Agent), RoleLeader, m.Leader.Schedule); err != nil {
 		return nil, nil, err
 	}
 	for _, wk := range m.Workers {
-		if err := add(filepath.Join(workdir, "agents", "sub", wk.Agent), RoleWorker); err != nil {
+		if err := add(filepath.Join(workdir, "agents", "sub", wk.Agent), RoleWorker, wk.Schedule); err != nil {
 			return nil, nil, err
 		}
 	}

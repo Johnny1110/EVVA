@@ -60,7 +60,7 @@ const defaultRescanInterval = 8 * time.Second
 // NewSupervisor builds a supervisor over an assembled space. Call Start to bring
 // the run loops up.
 func NewSupervisor(sp *SwarmSpace) *Supervisor {
-	return &Supervisor{
+	s := &Supervisor{
 		sp:    sp,
 		bus:   sp.Bus,
 		store: sp.Store,
@@ -73,6 +73,13 @@ func NewSupervisor(sp *SwarmSpace) *Supervisor {
 		rescanInterval: defaultRescanInterval,
 		members:        make(map[string]*memberRun),
 	}
+	// Back-reference so the leader's schedule tools (which hold only the space)
+	// can reach this run engine via sp.SetMemberSchedule. One supervisor per
+	// space; set before Start, before any tool can fire.
+	sp.mu.Lock()
+	sp.super = s
+	sp.mu.Unlock()
+	return s
 }
 
 // SetLogger swaps the supervisor's logger. The service wires its own logger in
@@ -159,6 +166,57 @@ func (s *Supervisor) Unfreeze(name string) error {
 	if m := s.memberOf(name); m != nil {
 		s.poke(m, wakeMessage)
 	}
+	return nil
+}
+
+// SetSchedule puts a member on (or replaces) a recurring timer schedule and
+// applies it to the running loop immediately (fixing the old "seeded once at
+// startMemberLoop" gap, RP-7 §3.4). It updates two representations in separate
+// critical sections to preserve the package lock order s.mu → sp.mu (never
+// nested): the live memberRun (read by the tick under s.mu) and sp.schedules
+// (the declared/persist source under sp.mu), then persists so a leader-set cron
+// survives a service restart. A bad cron or empty spec is rejected up front.
+func (s *Supervisor) SetSchedule(name string, sch agentdef.Schedule) error {
+	if err := sch.Validate(); err != nil {
+		return err
+	}
+	due, err := sch.Next(time.Now())
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if m, ok := s.members[name]; ok {
+		cp := sch
+		m.schedule = &cp
+		m.nextDue = due
+	}
+	s.mu.Unlock()
+
+	s.sp.mu.Lock()
+	s.sp.schedules[name] = sch
+	s.sp.mu.Unlock()
+
+	s.sp.persistRuntime()
+	return nil
+}
+
+// ClearSchedule removes a member's recurring schedule from both the running loop
+// and the declared/persist source, then persists (so the removal survives a
+// restart — a manifest-declared schedule the leader cleared stays cleared). A
+// member with no schedule is a no-op.
+func (s *Supervisor) ClearSchedule(name string) error {
+	s.mu.Lock()
+	if m, ok := s.members[name]; ok {
+		m.schedule = nil
+		m.nextDue = time.Time{}
+	}
+	s.mu.Unlock()
+
+	s.sp.mu.Lock()
+	delete(s.sp.schedules, name)
+	s.sp.mu.Unlock()
+
+	s.sp.persistRuntime()
 	return nil
 }
 

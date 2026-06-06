@@ -57,6 +57,12 @@ type SwarmSpace struct {
 	agents    map[string]agent.Agent
 	schedules map[string]agentdef.Schedule
 
+	// super is the run engine driving this space, set once by NewSupervisor
+	// (before Start, before any tool can fire). It is the seam the leader's
+	// schedule tools reach the live run loops through — see SetMemberSchedule.
+	// nil for a lite space constructed without a supervisor.
+	super *Supervisor
+
 	// Construction state retained so AddMember can hot-load a new member through
 	// the exact same path NewSpace used (loader.Build -> agent.New -> wire in).
 	reg      *agent.AgentRegistry
@@ -226,12 +232,39 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 	return nil
 }
 
-// scheduleFor returns a member's declared timer schedule, if any.
-func (sp *SwarmSpace) scheduleFor(name string) (agentdef.Schedule, bool) {
+// ScheduleFor returns a member's declared timer schedule, if any. Exported so
+// list_members (internal/swarm/tools) can render each member's crontab.
+func (sp *SwarmSpace) ScheduleFor(name string) (agentdef.Schedule, bool) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	s, ok := sp.schedules[name]
 	return s, ok
+}
+
+// SetMemberSchedule / ClearMemberSchedule are the tool-facing seam onto the run
+// engine: the leader's schedule_set/schedule_clear tools hold only the space, so
+// they go through here. We read super under sp.mu and release BEFORE delegating —
+// the supervisor methods take s.mu then sp.mu, and holding sp.mu across the call
+// would invert that order and risk deadlock.
+func (sp *SwarmSpace) SetMemberSchedule(name string, sch agentdef.Schedule) error {
+	sp.mu.Lock()
+	s := sp.super
+	sp.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("swarm: scheduling unavailable (space has no running supervisor)")
+	}
+	return s.SetSchedule(name, sch)
+}
+
+// ClearMemberSchedule removes a member's timer schedule via the run engine.
+func (sp *SwarmSpace) ClearMemberSchedule(name string) error {
+	sp.mu.Lock()
+	s := sp.super
+	sp.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("swarm: scheduling unavailable (space has no running supervisor)")
+	}
+	return s.ClearSchedule(name)
 }
 
 // Events is the space's outbound event stream — every member's events, each

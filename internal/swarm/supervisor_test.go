@@ -219,8 +219,10 @@ func TestTimerWakeAndIdleBurnsNoTokens(t *testing.T) {
 	if got := ctls["lazy"].runs.Load(); got != 0 {
 		t.Fatalf("idle unscheduled agent ran %d times, want 0", got)
 	}
-	if p := ctls["patrol"].lastPrompt(); !strings.Contains(p, "Scheduled duty") {
-		t.Errorf("timer prompt = %q, want a standing-duty prompt", p)
+	// The wake injects the trigger time (RP-7) and, with no custom Prompt, falls
+	// back to the standing-duty body — both wrapped in a <system-reminder>.
+	if p := ctls["patrol"].lastPrompt(); !strings.Contains(p, "<system-reminder>currenttime: ") || !strings.Contains(p, "Scheduled duty") {
+		t.Errorf("timer prompt = %q, want a time-stamped standing-duty wake", p)
 	}
 }
 

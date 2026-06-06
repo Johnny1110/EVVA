@@ -24,6 +24,8 @@ const (
 	toolTaskList         = "task_list"
 	toolMyTasks          = "my_tasks"
 	toolTaskGet          = "task_get"
+	toolScheduleSet      = "schedule_set"
+	toolScheduleClear    = "schedule_clear"
 )
 
 // init classifies the swarm's coordination tools as auto-allow in
@@ -40,6 +42,7 @@ func init() {
 	for _, n := range []string{
 		toolSendMessage, toolListMembers, toolTaskList, toolMyTasks, toolTaskGet,
 		toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify,
+		toolScheduleSet, toolScheduleClear,
 	} {
 		permission.ReadOnlyOrSelfTools[n] = true
 	}
@@ -69,7 +72,8 @@ func (Set) For(_ string, role agentdef.Role, _ *swarm.SwarmSpace) []agent.Option
 func toolNamesForRole(role agentdef.Role) []string {
 	common := []string{toolSendMessage, toolListMembers}
 	if role == agentdef.RoleLeader {
-		return append(common, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList)
+		return append(common, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList,
+			toolScheduleSet, toolScheduleClear)
 	}
 	return append(common, toolMyTasks, toolTaskGet)
 }
@@ -86,6 +90,8 @@ var factories = map[string]func(pubtools.State) (pubtools.Tool, error){
 	toolTaskList:         bind(newTaskList),
 	toolMyTasks:          bind(newMyTasks),
 	toolTaskGet:          bind(newTaskGet),
+	toolScheduleSet:      bind(newScheduleSet),
+	toolScheduleClear:    bind(newScheduleClear),
 }
 
 // bind adapts a MemberContext tool constructor into a pkg/toolset factory: it

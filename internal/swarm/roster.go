@@ -264,6 +264,19 @@ func (r *Roster) membership(name string) (Membership, bool) {
 	return "", false
 }
 
+// runOf returns a member's coarse run status and whether the member exists. The
+// scheduler reads it to skip a timer tick for a member that is already running
+// (RP-7 §3.6): a scheduled wake is a recurring patrol, not a queued job, so a
+// busy member's tick is dropped rather than buffered to catch up later.
+func (r *Roster) runOf(name string) (RunStatus, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if e, ok := r.entries[name]; ok {
+		return e.run, true
+	}
+	return "", false
+}
+
 // setRun updates a member's coarse run status (supervisor lifecycle). It also
 // keeps the fine phase coherent for event-less callers and at run boundaries:
 // going busy seeds PhaseRunning (the event deriver then refines it), going idle

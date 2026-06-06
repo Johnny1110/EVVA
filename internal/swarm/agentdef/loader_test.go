@@ -73,6 +73,9 @@ func TestBuildWorkerCronSchedule(t *testing.T) {
 	if got.Schedule == nil || got.Schedule.Cron != "*/5 * * * *" {
 		t.Fatalf("Schedule = %+v, want cron */5 * * * *", got.Schedule)
 	}
+	if got.Schedule.Prompt != "scan the backend for failing health checks" {
+		t.Errorf("Schedule.Prompt = %q, want the profile's wake prompt (RP-7)", got.Schedule.Prompt)
+	}
 	if got.Def.Model != "claude-sonnet-4-6" || got.Effort != "medium" {
 		t.Errorf("model/effort = %q/%q", got.Def.Model, got.Effort)
 	}
@@ -154,6 +157,41 @@ func TestBuildAll(t *testing.T) {
 	}
 	if len(warnings) != 0 {
 		t.Errorf("warnings = %v, want none (fixtures are clean)", warnings)
+	}
+}
+
+// TestBuildAllManifestScheduleOverridesProfile: a schedule declared on a member
+// in the manifest is authoritative over that agent's profile.yml schedule, while
+// a member without a manifest schedule keeps its profile one (RP-7 §3.7).
+func TestBuildAllManifestScheduleOverridesProfile(t *testing.T) {
+	m := Manifest{
+		Name:   "team",
+		Leader: Member{Agent: "leader"},
+		Workers: []Member{
+			// backend-dev's profile declares cron "*/5 * * * *"; the manifest overrides it.
+			{Agent: "backend-dev", Schedule: &Schedule{Cron: "0 0 * * *", Prompt: "nightly sweep"}},
+			// frontend-dev has no manifest schedule → its profile "every 30s" stands.
+			{Agent: "frontend-dev"},
+		},
+	}
+	loaded, _, err := (&Loader{}).BuildAll("testdata", m)
+	if err != nil {
+		t.Fatalf("BuildAll: %v", err)
+	}
+	find := func(name string) Loaded {
+		for _, l := range loaded {
+			if l.Def.Name == name {
+				return l
+			}
+		}
+		t.Fatalf("loaded missing %q", name)
+		return Loaded{}
+	}
+	if be := find("backend-dev").Schedule; be == nil || be.Cron != "0 0 * * *" || be.Prompt != "nightly sweep" {
+		t.Errorf("backend-dev schedule = %+v, want manifest cron 0 0 * * * / nightly sweep (override)", be)
+	}
+	if fe := find("frontend-dev").Schedule; fe == nil || fe.Every != 30*time.Second {
+		t.Errorf("frontend-dev schedule = %+v, want profile every 30s (no manifest override)", fe)
 	}
 }
 

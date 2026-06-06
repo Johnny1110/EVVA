@@ -47,7 +47,7 @@ func (s *Supervisor) startMemberLoop(ctx context.Context, name string) {
 		return
 	}
 	m := &memberRun{wake: make(chan wakeReason, 1)}
-	if sch, ok := s.sp.scheduleFor(name); ok {
+	if sch, ok := s.sp.ScheduleFor(name); ok {
 		if due, err := sch.Next(time.Now()); err == nil {
 			m.schedule = &sch
 			m.nextDue = due
@@ -95,8 +95,18 @@ func (s *Supervisor) serve(ctx context.Context, name string, m *memberRun, reaso
 	if reason == wakeTimer {
 		// A standing-duty tick. runOnce still settles/unclaims any mail drain B
 		// folded during it, so even a timer run can't strand a mid-run message.
+		// schedule/Prompt are s.mu-guarded; grab the custom prompt under the lock.
+		s.mu.Lock()
+		var dutyPrompt string
+		if m.schedule != nil {
+			dutyPrompt = m.schedule.Prompt
+		}
+		s.mu.Unlock()
+		// now = wake-execution time (RP-7 §3.2 divergence: the duty runs ~sub-tick
+		// after fireDue poked, so "the time the duty actually runs" is the right
+		// value to hand a long-running agent whose static prompt holds no date — RP-5).
 		s.log.Debug("swarm serve: timer duty", "member", name)
-		if !s.runOnce(ctx, name, m, scheduledDutyPrompt) {
+		if !s.runOnce(ctx, name, m, scheduledWakePrompt(time.Now(), dutyPrompt)) {
 			return // suspended/errored — stop here
 		}
 	}
@@ -214,6 +224,21 @@ func composeMailPrompt(batch []store.Message) string {
 
 const scheduledDutyPrompt = "[Scheduled duty] Your recurring schedule fired. Carry out your standing responsibilities now: check the state you are responsible for and take any action it requires. If everything is in order, report that briefly and stand down — do not invent work."
 
+// scheduledWakePrompt builds the run-start prompt for a timer wake. It is the
+// ONE place a wall-clock time enters the conversation (the static system prompt
+// deliberately carries none — RP-5/RP-7): the agent learns "what time is it"
+// from the wake itself. A member's custom schedule Prompt becomes the body; an
+// empty one falls back to the generic standing-duty sentence. The whole thing is
+// wrapped in a <system-reminder> so the model reads it as harness context, not a
+// teammate's request.
+func scheduledWakePrompt(now time.Time, prompt string) string {
+	body := strings.TrimSpace(prompt)
+	if body == "" {
+		body = scheduledDutyPrompt
+	}
+	return fmt.Sprintf("<system-reminder>currenttime: %s, %s</system-reminder>", now.Format("2006-01-02 15:04:05"), body)
+}
+
 // poke signals a member's non-message wake (timer or resume). Non-blocking: if a
 // poke is already pending, the loop is guaranteed to run, so dropping this one
 // loses nothing.
@@ -299,8 +324,18 @@ func (s *Supervisor) fireDue(now time.Time) {
 	s.mu.Unlock()
 
 	for _, d := range fire {
-		if s.isActive(d.name) {
-			s.poke(d.m, wakeTimer)
+		if !s.isActive(d.name) {
+			continue // frozen — never scheduled
 		}
+		// Skip, don't queue: a scheduled wake is a recurring patrol, not a job
+		// that must catch up. If the member is mid-run, drop this tick (nextDue
+		// already advanced above) rather than buffering a poke that would fire a
+		// late duty when the current run ends (RP-7 §3.6). rescanUnread uses the
+		// same idle gate.
+		if rs, ok := s.sp.Roster.runOf(d.name); ok && rs != RunIdle {
+			s.log.Debug("swarm timer: member busy, skipping this tick", "member", d.name, "run", rs)
+			continue
+		}
+		s.poke(d.m, wakeTimer)
 	}
 }

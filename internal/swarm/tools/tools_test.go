@@ -19,7 +19,7 @@ import (
 // read-only task views plus the common send_message/list_members.
 func TestToolNamesForRole(t *testing.T) {
 	leader := toolNamesForRole(agentdef.RoleLeader)
-	wantLeader := []string{toolSendMessage, toolListMembers, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList}
+	wantLeader := []string{toolSendMessage, toolListMembers, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList, toolScheduleSet, toolScheduleClear}
 	if !reflect.DeepEqual(leader, wantLeader) {
 		t.Fatalf("leader tools = %v\nwant %v", leader, wantLeader)
 	}
@@ -39,8 +39,8 @@ func TestToolNamesForRole(t *testing.T) {
 }
 
 func TestSetForReturnsOptionPerTool(t *testing.T) {
-	if got := len(Set{}.For("leader", agentdef.RoleLeader, nil)); got != 7 {
-		t.Errorf("leader options = %d, want 7", got)
+	if got := len(Set{}.For("leader", agentdef.RoleLeader, nil)); got != 9 {
+		t.Errorf("leader options = %d, want 9", got)
 	}
 	if got := len(Set{}.For("w", agentdef.RoleWorker, nil)); got != 4 {
 		t.Errorf("worker options = %d, want 4", got)
@@ -59,6 +59,7 @@ func TestPermissionClassification(t *testing.T) {
 	autoAllow := []string{
 		toolSendMessage, toolListMembers, toolTaskList, toolMyTasks, toolTaskGet,
 		toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify,
+		toolScheduleSet, toolScheduleClear,
 	}
 	for _, n := range autoAllow {
 		if b := decide(n); b != permission.BehaviorAllow {
@@ -379,4 +380,91 @@ func TestToolsAttachThroughNewSpace(t *testing.T) {
 		t.Fatalf("NewSpace with Set{} (member-context binding broken?): %v", err)
 	}
 	sp.Shutdown()
+}
+
+// --- schedule_set / schedule_clear (RP-7) ----------------------------------
+
+// schedule_set/clear apply through the space→supervisor seam. NewSupervisor wires
+// sp.super (no Start needed: with no run loops, SetSchedule just updates the
+// declared schedule map, which is what ScheduleFor reads).
+func TestScheduleSetAndClearTool(t *testing.T) {
+	sp := realSpace(t)
+	_ = swarm.NewSupervisor(sp) // wire sp.super
+
+	set := newScheduleSet(leaderMC(sp))
+	if r := exec(t, set, `{"member":"worker-a","cron":"*/30 * * * *","prompt":"patrol the API"}`); r.IsError {
+		t.Fatalf("schedule_set: %s", r.Content)
+	}
+	got, ok := sp.ScheduleFor("worker-a")
+	if !ok || got.Cron != "*/30 * * * *" || got.Prompt != "patrol the API" {
+		t.Fatalf("ScheduleFor(worker-a) = %+v ok=%v, want the set schedule", got, ok)
+	}
+
+	clear := newScheduleClear(leaderMC(sp))
+	if r := exec(t, clear, `{"member":"worker-a"}`); r.IsError {
+		t.Fatalf("schedule_clear: %s", r.Content)
+	}
+	if _, ok := sp.ScheduleFor("worker-a"); ok {
+		t.Error("ScheduleFor(worker-a) still set after schedule_clear")
+	}
+}
+
+// The leader cannot schedule (or clear) ITSELF — that cadence is the operator's
+// (RP-7 §3.3). The error points at the web, and nothing is written.
+func TestScheduleToolSelfGuard(t *testing.T) {
+	sp := realSpace(t)
+	_ = swarm.NewSupervisor(sp)
+
+	set := newScheduleSet(leaderMC(sp)) // leaderMC.Name == "leader"
+	r := exec(t, set, `{"member":"leader","cron":"* * * * *","prompt":"x"}`)
+	if !r.IsError || !strings.Contains(r.Content, "web") {
+		t.Errorf("schedule_set on self = %+v, want an error pointing at the web", r)
+	}
+	if _, ok := sp.ScheduleFor("leader"); ok {
+		t.Error("self schedule_set should not have written a schedule")
+	}
+
+	clear := newScheduleClear(leaderMC(sp))
+	if r := exec(t, clear, `{"member":"leader"}`); !r.IsError {
+		t.Errorf("schedule_clear on self = %+v, want an error", r)
+	}
+}
+
+// schedule_set rejects an unknown member (correctable, with valid names) and an
+// invalid cron (at call time, not at the first tick — AC#7); neither persists.
+func TestScheduleSetRejectsUnknownMemberAndBadCron(t *testing.T) {
+	sp := realSpace(t)
+	_ = swarm.NewSupervisor(sp)
+	set := newScheduleSet(leaderMC(sp))
+
+	r := exec(t, set, `{"member":"ghost","cron":"* * * * *","prompt":"x"}`)
+	if !r.IsError || !strings.Contains(r.Content, "worker-a") {
+		t.Errorf("schedule_set unknown member = %+v, want correctable error listing members", r)
+	}
+
+	r = exec(t, set, `{"member":"worker-a","cron":"nonsense","prompt":"x"}`)
+	if !r.IsError {
+		t.Errorf("schedule_set bad cron = %+v, want a validation error", r)
+	}
+	if _, ok := sp.ScheduleFor("worker-a"); ok {
+		t.Error("a rejected schedule_set must not write a schedule")
+	}
+}
+
+// list_members surfaces each member's crontab inline (RP-7 §3.5) — pinned to a
+// re-queryable place so a compacted leader never loses who it scheduled.
+func TestListMembersShowsCrontab(t *testing.T) {
+	sp := realSpace(t)
+	_ = swarm.NewSupervisor(sp)
+	if err := sp.SetMemberSchedule("worker-a", agentdef.Schedule{Cron: "*/15 * * * *", Prompt: "health check"}); err != nil {
+		t.Fatalf("SetMemberSchedule: %v", err)
+	}
+
+	res := exec(t, newListMembers(leaderMC(sp)), `{}`)
+	if res.IsError {
+		t.Fatalf("list_members: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, `⏰ cron "*/15 * * * *": "health check"`) {
+		t.Errorf("list_members missing worker-a's crontab line, got:\n%s", res.Content)
+	}
 }

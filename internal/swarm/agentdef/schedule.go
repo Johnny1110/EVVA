@@ -17,8 +17,9 @@ import (
 // from the same dir compares equal (SPRD-1-3 re-callability), and so the
 // scheduler can cache its own parsed form once.
 type Schedule struct {
-	Cron  string        // raw 5-field cron ("*/5 * * * *"); "" for the interval form
-	Every time.Duration // fixed interval; 0 for the cron form
+	Cron   string        // raw 5-field cron ("*/5 * * * *"); "" for the interval form
+	Every  time.Duration // fixed interval; 0 for the cron form
+	Prompt string        // custom wake text injected at fire time (RP-7); "" → standing-duty fallback
 }
 
 var errEmptySchedule = errors.New("schedule: neither cron nor every is set")

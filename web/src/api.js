@@ -66,6 +66,12 @@ export function createApi(getToken) {
     setSchedule: (id, agent, { cron, prompt }) =>
       req('POST', `/api/agents/${enc(agent)}/schedule?space=${enc(id)}`, { cron, prompt }),
     clearSchedule: (id, agent) => req('DELETE', `/api/agents/${enc(agent)}/schedule?space=${enc(id)}`),
+    // Agent skills (RP-10). User-only view/add/delete of one member's skills; an
+    // add/delete hot-reloads that member's prompt. Agents load skills, never author.
+    memberSkills: (id, agent) => req('GET', `/api/agents/${enc(agent)}/skills?space=${enc(id)}`),
+    addSkill: (id, agent, spec) => req('POST', `/api/agents/${enc(agent)}/skills?space=${enc(id)}`, spec),
+    deleteSkill: (id, agent, skill) =>
+      req('DELETE', `/api/agents/${enc(agent)}/skills/${enc(skill)}?space=${enc(id)}`),
     halt: (id) => req('POST', `/api/halt?space=${enc(id)}`),
     // Lifecycle (ref = id or name): stop KEEPS the space (run restarts it);
     // removeSpace forgets it entirely.

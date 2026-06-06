@@ -13,6 +13,7 @@ import ApprovalTray from './ApprovalTray.vue'
 import AttentionBar from './AttentionBar.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import NewAgentForm from './NewAgentForm.vue'
+import SkillsPanel from './SkillsPanel.vue'
 
 const props = defineProps({
   api: { type: Object, required: true },
@@ -120,6 +121,53 @@ async function clearSchedule(name) {
   } catch (e) {
     err.value = String(e.message || e)
   }
+}
+
+// Agent skills dialog (RP-10): view/add/delete one member's skills. skillsFor is the
+// member whose dialog is open ('' = closed); skillList is its current catalog. An
+// add/delete reloads that member's prompt server-side, then we refetch the list.
+const skillsFor = ref('')
+const skillList = ref([])
+async function openSkills(name) {
+  try {
+    skillList.value = (await props.api.memberSkills(props.space.id, name)) || []
+    skillsFor.value = name
+  } catch (e) {
+    err.value = String(e.message || e)
+  }
+}
+async function refetchSkills() {
+  if (!skillsFor.value) return
+  try {
+    skillList.value = (await props.api.memberSkills(props.space.id, skillsFor.value)) || []
+  } catch (e) {
+    err.value = String(e.message || e)
+  }
+}
+async function addSkill(spec) {
+  try {
+    await props.api.addSkill(props.space.id, skillsFor.value, spec)
+    await refetchSkills()
+  } catch (e) {
+    err.value = String(e.message || e)
+  }
+}
+function confirmDeleteSkill(skillName) {
+  const member = skillsFor.value
+  askConfirm({
+    title: `Delete skill "${skillName}"?`,
+    message: `${member} will no longer see or be able to load "${skillName}". Its prompt reloads on the next run.`,
+    confirmLabel: 'Delete',
+    danger: true,
+    action: async () => {
+      try {
+        await props.api.deleteSkill(props.space.id, member, skillName)
+        await refetchSkills()
+      } catch (e) {
+        err.value = String(e.message || e)
+      }
+    },
+  })
 }
 
 let sock = null
@@ -409,6 +457,7 @@ onBeforeUnmount(() => {
           @remove="removeMember"
           @set-schedule="setSchedule"
           @clear-schedule="clearSchedule"
+          @open-skills="openSkills"
         />
       </aside>
 
@@ -494,6 +543,15 @@ onBeforeUnmount(() => {
       :tools="toolCatalog"
       @create="createMember"
       @cancel="showForm = false"
+    />
+
+    <SkillsPanel
+      v-if="skillsFor"
+      :member="skillsFor"
+      :skills="skillList"
+      @add="addSkill"
+      @delete="confirmDeleteSkill"
+      @close="skillsFor = ''"
     />
   </div>
 </template>

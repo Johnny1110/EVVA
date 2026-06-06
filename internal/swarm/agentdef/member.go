@@ -52,6 +52,25 @@ func memberDir(workdir, name string) string {
 	return filepath.Join(workdir, "agents", "sub", name)
 }
 
+// agentDir is the on-disk home of any member: the leader under agents/main/, a
+// worker under agents/sub/ — matching the loader's BuildAll layout. memberDir is the
+// worker-only RP-8 variant (create/remove only ever target workers); skills exist
+// for the leader too, so the skill helpers are role-aware (RP-10).
+func agentDir(workdir string, role Role, name string) string {
+	tier := "sub"
+	if role == RoleLeader {
+		tier = "main"
+	}
+	return filepath.Join(workdir, "agents", tier, name)
+}
+
+// SkillsDir is a member's on-disk skills directory (<agentDir>/skills/). The
+// supervisor reloads a member's catalog by re-scanning it via skill.LoadRegistry
+// (RP-10-4); WriteSkill / RemoveSkill add and remove skill subfolders under it.
+func SkillsDir(workdir string, role Role, name string) string {
+	return filepath.Join(agentDir(workdir, role, name), "skills")
+}
+
 // MemberDirExists reports whether a worker's on-disk definition already exists.
 // CreateMember uses it to tell "author a new member" (no dir) from "mount an
 // existing dir by name" (the CLI add-member path).
@@ -121,6 +140,60 @@ func RemoveMemberDir(workdir, name string) error {
 		return err
 	}
 	return os.RemoveAll(memberDir(workdir, name))
+}
+
+// validSkillName guards a skill folder name the same way validMemberName guards a
+// member: no path separators, "..", leading dot, or emptiness — it becomes a
+// directory under <member>/skills/.
+func validSkillName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("agentdef: skill name is required")
+	}
+	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") || strings.HasPrefix(name, ".") {
+		return fmt.Errorf("agentdef: illegal skill name %q (no path separators, '..', or leading dot)", name)
+	}
+	return nil
+}
+
+// WriteSkill authors a skill at <member>/skills/<name>/SKILL.md in the
+// `# <name> <description>` + body shape the loader parses (skill.ParseTitleLine — the
+// first token must equal the folder name, which it does). It refuses an unsafe name,
+// an empty body, or clobbering an existing skill; the caller reloads the member after
+// (RP-10-4) so the new skill enters the prompt + skill tool. Skills are User-authored
+// only — no agent-facing tool writes here (RP-10 discipline).
+func WriteSkill(workdir string, role Role, member, name, description, body string) error {
+	if err := validSkillName(name); err != nil {
+		return err
+	}
+	if strings.TrimSpace(body) == "" {
+		return errors.New("agentdef: skill body is required")
+	}
+	dir := filepath.Join(SkillsDir(workdir, role, member), name)
+	if _, err := os.Stat(dir); err == nil {
+		return fmt.Errorf("agentdef: skill %q already exists", name)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("agentdef: create skill dir: %w", err)
+	}
+	title := "# " + name
+	if d := strings.TrimSpace(description); d != "" {
+		title += " " + d
+	}
+	content := title + "\n\n" + strings.TrimRight(body, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		return fmt.Errorf("agentdef: write SKILL.md: %w", err)
+	}
+	return nil
+}
+
+// RemoveSkill deletes a skill folder under a member's skills/ dir (the web remove
+// path). Safe on a missing dir (RemoveAll); the name is validated to stay inside
+// skills/. The caller reloads the member afterwards.
+func RemoveSkill(workdir string, role Role, member, name string) error {
+	if err := validSkillName(name); err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(SkillsDir(workdir, role, member), name))
 }
 
 // writeToolList serialises a flat tool-name list (the shape readToolList parses).

@@ -1100,6 +1100,43 @@ func (s *Service) ClearSchedule(id, agent string) error {
 	return ent.super.ClearSchedule(agent)
 }
 
+// MemberSkills / AddSkill / DeleteSkill are the operator's agent-skills controls
+// (RP-10): list a member's authored skills, author a new one (writes SKILL.md +
+// reloads that member's prompt), or remove one. The author path is User/web only —
+// there is no agent-facing skill-authoring tool. The space owns the disk layout +
+// reload; the service is a thin adapter.
+func (s *Service) MemberSkills(id, agent string) ([]webapi.SkillInfo, bool) {
+	ent, ok := s.entry(id)
+	if !ok {
+		return nil, false
+	}
+	skills, err := ent.space.MemberSkills(agent)
+	if err != nil {
+		return nil, false // unknown member within a known space → 404
+	}
+	out := make([]webapi.SkillInfo, 0, len(skills))
+	for _, sk := range skills {
+		out = append(out, webapi.SkillInfo{Name: sk.Name, Description: sk.Description})
+	}
+	return out, true
+}
+
+func (s *Service) AddSkill(id, agent string, spec webapi.SkillSpec) error {
+	ent, ok := s.entry(id)
+	if !ok {
+		return fmt.Errorf("swarm: unknown space %q", id)
+	}
+	return ent.space.AddMemberSkill(agent, spec.Name, spec.Description, spec.Body)
+}
+
+func (s *Service) DeleteSkill(id, agent, skill string) error {
+	ent, ok := s.entry(id)
+	if !ok {
+		return fmt.Errorf("swarm: unknown space %q", id)
+	}
+	return ent.space.RemoveMemberSkill(agent, skill)
+}
+
 // CreateMember authors a new worker from the web form (RP-8): hot-load it live,
 // record it in the manifest so it survives a restart, then tell the leader (only
 // the when_to_use) so its team model updates immediately.

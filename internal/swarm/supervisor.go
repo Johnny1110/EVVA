@@ -12,6 +12,8 @@ import (
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
 	"github.com/johnny1110/evva/internal/swarm/bus"
 	"github.com/johnny1110/evva/internal/swarm/store"
+	"github.com/johnny1110/evva/pkg/agent"
+	"github.com/johnny1110/evva/pkg/skill"
 )
 
 // Supervisor owns one space's lifecycle and run engine: it launches a
@@ -291,6 +293,51 @@ func (s *Supervisor) ClearSchedule(name string) error {
 
 	s.sp.persistRuntime()
 	return nil
+}
+
+// ReloadMemberSkills re-scans a member's on-disk skills directory and re-renders its
+// system prompt to match (RP-10-4) — the seam the web add/remove-skill path drives
+// after writing or deleting a SKILL.md. It rebuilds the registry from disk (sidestep-
+// ping pkg/skill's lack of a Remove: a full re-scan is the source of truth, exactly
+// how the member was first constructed), then applies it at the member's next RUN
+// BOUNDARY: an idle member is poked and applies on the spot; a busy one stashes the
+// new catalog and the run loop swaps it in once the current run ends (serve), so an
+// in-flight conversation never sees its prompt change underfoot.
+func (s *Supervisor) ReloadMemberSkills(name string) error {
+	role, ok := s.sp.Roster.roleOf(name)
+	if !ok {
+		return fmt.Errorf("swarm: reload skills: unknown member %q", name)
+	}
+	m := s.memberOf(name)
+	if m == nil {
+		return fmt.Errorf("swarm: reload skills: unknown member %q", name)
+	}
+	// skill.LoadRegistry never errors (a missing dir is the empty registry) and reads
+	// ONLY the member's own dir — no bundled/global overlay — matching construction.
+	reg, _ := skill.LoadRegistry(agentdef.SkillsDir(s.sp.Workdir, role, name), "")
+	m.mu.Lock()
+	m.pendingSkills = reg
+	m.mu.Unlock()
+	s.poke(m, wakeMessage)
+	return nil
+}
+
+// applyMemberSkills installs a rebuilt catalog on a member's live agent through the
+// public reload seam. Called ONLY from serve (the run-loop goroutine, at a run
+// boundary), so the prompt swap never races the member's own run.
+func (s *Supervisor) applyMemberSkills(name string, reg *skill.Registry) {
+	ag, ok := s.sp.agentOf(name)
+	if !ok {
+		return
+	}
+	r, ok := ag.(agent.SkillReloader)
+	if !ok {
+		s.log.Warn("swarm: agent does not support skill reload", "member", name)
+		return
+	}
+	if err := r.ReloadSkills(reg); err != nil {
+		s.log.Warn("swarm: reload member skills", "member", name, "err", err)
+	}
 }
 
 // Suspend stops a member's current run (cancel its ctx) and parks it: further

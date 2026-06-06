@@ -11,6 +11,8 @@ import (
 	"github.com/johnny1110/evva/pkg/agent"
 	"github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/pkg/event"
+	"github.com/johnny1110/evva/pkg/skill"
+	"github.com/johnny1110/evva/pkg/tools"
 )
 
 // SpacedEvent tags an agent event with the space it came from. AgentID is
@@ -153,6 +155,14 @@ func (sp *SwarmSpace) registerDef(ld agentdef.Loaded) {
 	// swarm reuses one cached prompt prefix. Consumed via PromptContext.OmitDate
 	// in mainProfileFromDiskAgent (RP-5).
 	def.LongRunning = true
+	// Every swarm member advertises its own skill catalog (name+desc) in its system
+	// prompt AND carries the built-in skill tool to load them — both forced at the
+	// swarm layer (RP-10-1), not a per-agent profile.yml opt-in: the operator asked
+	// that EVERY agent be skill-capable. The prompt's skill list comes from the
+	// member's own registry (WithSkillRegistry in constructMember), kept in lockstep
+	// with the tool by the internal/agent skillRefs fix (RP-10-2).
+	def.AdvertiseSkills = true
+	def.ActiveTools = ensureTool(def.ActiveTools, tools.SKILL)
 	// Auto-inject the swarm collaboration protocol for this member's role so the
 	// operator never has to hand-write the mechanics (see teamprompt.go). Pairs
 	// with the role-based tool injection (ToolSet) — both keyed off ld.Role. The
@@ -267,6 +277,63 @@ func (sp *SwarmSpace) ClearMemberSchedule(name string) error {
 	return s.ClearSchedule(name)
 }
 
+// MemberSkills lists a member's authored skills (RP-10) by re-scanning its on-disk
+// skills/ dir — the source of truth POST/DELETE write, so a GET right after an add
+// reflects it immediately (the live agent registry lags until the boundary reload).
+// A member with no skills dir yields an empty list, not an error.
+func (sp *SwarmSpace) MemberSkills(member string) ([]agent.Skill, error) {
+	role, ok := sp.Roster.roleOf(member)
+	if !ok {
+		return nil, fmt.Errorf("swarm: unknown member %q", member)
+	}
+	reg, _ := skill.LoadRegistry(agentdef.SkillsDir(sp.Workdir, role, member), "")
+	list := reg.List()
+	out := make([]agent.Skill, 0, len(list))
+	for _, m := range list {
+		out = append(out, agent.Skill{Name: m.Name, Description: m.Description})
+	}
+	return out, nil
+}
+
+// AddMemberSkill authors a skill on a member (User-only, via the web) and reloads it
+// so the new skill enters the member's prompt + skill tool at its next run boundary
+// (RP-10). RemoveMemberSkill is the mirror. Both reject an unknown member up front.
+func (sp *SwarmSpace) AddMemberSkill(member, name, description, body string) error {
+	role, ok := sp.Roster.roleOf(member)
+	if !ok {
+		return fmt.Errorf("swarm: unknown member %q", member)
+	}
+	if err := agentdef.WriteSkill(sp.Workdir, role, member, name, description, body); err != nil {
+		return err
+	}
+	return sp.reloadSkills(member)
+}
+
+// RemoveMemberSkill deletes a member's skill and reloads it (RP-10).
+func (sp *SwarmSpace) RemoveMemberSkill(member, name string) error {
+	role, ok := sp.Roster.roleOf(member)
+	if !ok {
+		return fmt.Errorf("swarm: unknown member %q", member)
+	}
+	if err := agentdef.RemoveSkill(sp.Workdir, role, member, name); err != nil {
+		return err
+	}
+	return sp.reloadSkills(member)
+}
+
+// reloadSkills routes a member skill change to the run engine, which re-scans the
+// dir and re-renders the prompt at the next run boundary. Read super under sp.mu and
+// release before delegating (super takes s.mu) — the schedule-forwarder pattern.
+func (sp *SwarmSpace) reloadSkills(member string) error {
+	sp.mu.Lock()
+	s := sp.super
+	sp.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("swarm: skill reload unavailable (space has no running supervisor)")
+	}
+	return s.ReloadMemberSkills(member)
+}
+
 // removeAgent tears down one member's live agent and drops it from the space's
 // maps (RP-8 remove): shut the agent's background workers, forget its handle and
 // any schedule. The roster entry, mailbox, and run loop are handled by the
@@ -281,6 +348,16 @@ func (sp *SwarmSpace) removeAgent(name string) {
 	if ag != nil {
 		ag.Shutdown()
 	}
+}
+
+// agentOf returns a member's live agent handle. The run engine uses it to reach the
+// public skill-reload seam (RP-10-4); unexported since only the supervisor (same
+// package) needs the concrete agent.Agent.
+func (sp *SwarmSpace) agentOf(name string) (agent.Agent, bool) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	ag, ok := sp.agents[name]
+	return ag, ok
 }
 
 // Events is the space's outbound event stream — every member's events, each
@@ -341,4 +418,16 @@ func ensureMain(as []string) []string {
 	out := make([]string, len(as), len(as)+1)
 	copy(out, as)
 	return append(out, "main")
+}
+
+// ensureTool appends a tool to a member's active list if absent, returning a fresh
+// slice so the swarm-forced skill tool (RP-10-1) never mutates the loaded def's
+// backing array or duplicates a tool the member's active.yml already declares.
+func ensureTool(list []tools.ToolName, name tools.ToolName) []tools.ToolName {
+	for _, t := range list {
+		if t == name {
+			return list
+		}
+	}
+	return append(append([]tools.ToolName{}, list...), name)
 }

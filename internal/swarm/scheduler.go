@@ -9,6 +9,7 @@ import (
 
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
 	"github.com/johnny1110/evva/internal/swarm/store"
+	"github.com/johnny1110/evva/pkg/skill"
 )
 
 // wakeReason identifies why a member's run loop fired. The two mechanical wake
@@ -40,6 +41,11 @@ type memberRun struct {
 
 	schedule *agentdef.Schedule // nil when the member declared no schedule
 	nextDue  time.Time
+
+	// pendingSkills holds a rebuilt skill catalog requested mid-run (RP-10-4); the
+	// run loop installs it at the next boundary (serve) so a busy member's prompt is
+	// never swapped during an in-flight run. nil when no reload is pending.
+	pendingSkills *skill.Registry
 }
 
 // startMemberLoop registers a member's run control (idempotent) and launches its
@@ -96,6 +102,18 @@ func (s *Supervisor) runLoop(ctx context.Context, name string, m *memberRun) {
 // liveness as well as content (§6.2). Roster bookkeeping + the message lifecycle
 // (claim → settle/unclaim) live in runOnce.
 func (s *Supervisor) serve(ctx context.Context, name string, m *memberRun, reason wakeReason) {
+	// Install any skill reload requested while this member was busy (RP-10-4). Done
+	// first — on the run-loop goroutine, before any runOnce in this serve, and even
+	// for a frozen member — so the prompt swap lands at a clean boundary and a reload
+	// is never stranded.
+	m.mu.Lock()
+	pending := m.pendingSkills
+	m.pendingSkills = nil
+	m.mu.Unlock()
+	if pending != nil {
+		s.applyMemberSkills(name, pending)
+	}
+
 	if !s.isActive(name) {
 		return // frozen: never scheduled
 	}

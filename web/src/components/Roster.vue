@@ -18,6 +18,7 @@ const emit = defineEmits([
   'remove', // retire a worker (RP-8)
   'set-schedule', // { name, cron, prompt } (RP-8)
   'clear-schedule', // name (RP-8)
+  'open-skills', // open the view/add/delete-skills dialog for a member (RP-10)
 ])
 
 // Per-member inline schedule editor: which member's editor is open + its fields.
@@ -81,6 +82,7 @@ function clearSchedule(name) {
           <button v-if="m.run === 'busy'" @click="emit('suspend', m.name)">suspend</button>
           <button v-else-if="m.run === 'suspended'" @click="emit('resume', m.name)">resume</button>
           <button @click="openSchedule(m)">schedule</button>
+          <button @click="emit('open-skills', m.name)">skills</button>
           <!-- The leader is unique — never removable (RP-8 §3.E). -->
           <button v-if="m.role !== 'leader'" class="rm" @click="emit('remove', m.name)">remove</button>
         </div>

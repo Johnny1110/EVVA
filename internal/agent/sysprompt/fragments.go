@@ -213,7 +213,7 @@ func summarizeToolResultsSection() string {
 // Skills are listed in the order the caller provides — the sysprompt
 // package does not re-sort, since the registry already returns a stable
 // order. An empty slice produces an empty string and the caller skips it.
-func skillsSection(skills []SkillRef) string {
+func skillsSection(skills []SkillRef, omitAuthoring bool) string {
 	if len(skills) == 0 {
 		return ""
 	}
@@ -232,8 +232,15 @@ func skillsSection(skills []SkillRef) string {
 			fmt.Fprintf(&b, "- %s: %s\n", name, desc)
 		}
 	}
-	b.WriteString("You can load skills if you think you may need them to help you process current work better.\n")
-	b.WriteString("How to create a skill: locate EvvaHome dir (global skills) or workdir/.evva (workdir skills), create skills/{skill-name}/SKILL.md, the first line in SKILL.md is description (e.g # commit ...), other line is body.")
+	b.WriteString("You can load skills if you think you may need them to help you process current work better.")
+	// omitAuthoring drops the "how to create a skill" guidance for long-running
+	// swarm members (RP-10-3): they have write/bash, so that line would invite them
+	// to author SKILL.md mid-run and erode a stable swarm's quality. Skills are
+	// User-authored via the web; the skill tool is load-only. evva (omitAuthoring
+	// false) keeps the guidance.
+	if !omitAuthoring {
+		b.WriteString("\nHow to create a skill: locate EvvaHome dir (global skills) or workdir/.evva (workdir skills), create skills/{skill-name}/SKILL.md, the first line in SKILL.md is description (e.g # commit ...), other line is body.")
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -273,7 +280,9 @@ func ComposeDiskMainPrompt(body string, ctx PromptContext, def AgentDefinition) 
 		memIndex = memoryIndexSection(ctx)
 	}
 	if def.AdvertiseSkills {
-		skillsList = skillsSection(ctx.Skills)
+		// Long-running swarm members get the slim skills section (no authoring
+		// guidance, RP-10-3); ordinary disk personas keep the full one.
+		skillsList = skillsSection(ctx.Skills, def.LongRunning)
 	}
 	return joinSections(
 		identitySection(ctx),

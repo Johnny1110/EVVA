@@ -25,6 +25,7 @@ import (
 	"github.com/johnny1110/evva/pkg/hooks"
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/permission"
+	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/lsp"
@@ -318,7 +319,12 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	// agent.New runs; passing an empty registry disables auto-load. Done
 	// here (not in cmd/evva/main.go) so every host — bundled CLI, SDK
 	// consumers, examples — gets disk skills for free.
-	if a.toolState.SkillRegistry() == nil {
+	// A registry installed via WithSkillRegistry (swarm members, SDK hosts) is the
+	// explicit, authoritative catalog for THIS agent; its absence means "auto-load
+	// from disk". Capture which case we're in before the auto-load so the skillRefs
+	// wiring below can tell an explicit injection from the default path.
+	injectedSkills := a.toolState.SkillRegistry() != nil
+	if !injectedSkills {
 		reg := loadDiskSkillRegistry(a.cfg)
 		for _, w := range reg.Warnings {
 			lgr.Warn("skill: load", "msg", w)
@@ -327,6 +333,20 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 		if a.skillRefs == nil {
 			a.skillRefs = refsFromRegistry(reg)
 		}
+	}
+	// An explicitly injected registry must drive BOTH the skill tool AND the prompt's
+	// # Skills section. WithSkillRegistry only sets the tool side, leaving a.skillRefs
+	// nil — which makes resolveMainProfileWithExtra fall back to the cfg-GLOBAL catalog
+	// (a different source than the tool). Derive the prompt refs from the injected
+	// registry instead, coercing an empty one to a non-nil empty slice so it advertises
+	// "no skills" rather than inheriting the global set (RP-10-2). Scoped to explicit
+	// injection so evva's auto-load path stays bit-identical.
+	if injectedSkills && a.skillRefs == nil {
+		refs := refsFromRegistry(a.toolState.SkillRegistry())
+		if refs == nil {
+			refs = []sysprompt.SkillRef{}
+		}
+		a.skillRefs = refs
 	}
 
 	// Auto-load the LSP config and install the Manager on ToolState.
@@ -366,6 +386,25 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	// catalog and the allowlist before the LLM client is built below.
 	a.autoLoadMcp(lgr)
 	a.foldMcpIntoProfile()
+
+	// An explicitly injected skill registry (WithSkillRegistry — swarm members) must
+	// also drive the INITIAL prompt's # Skills section, not just later re-resolves.
+	// pkg/agent.New resolved the profile BEFORE this option was applied (skills=nil →
+	// cfg-global fallback), so re-render now with the injected refs (RP-10-2). When
+	// MCP was discovered, foldMcpIntoProfile already re-rendered with a.skillRefs, so
+	// skip the duplicate. Scoped to explicit injection so evva's path is untouched.
+	if injectedSkills && a.profile.Type == MAIN && len(a.mcpDiscoveredNames()) == 0 {
+		persona := a.activePersona
+		if persona == "" {
+			persona = "evva"
+		}
+		if aug, perr := resolveMainProfileWithExtra(a.cfg, a.agentRegistry, persona, a.skillRefs, a.memSnap, baseLLMOptions(a.profile.LLMOptions), a.profile.LLMProvider, a.profile.LLMModel, nil); perr == nil {
+			a.profile.SystemPrompt = aug.SystemPrompt
+			a.profile.LLMOptions = aug.LLMOptions
+		} else {
+			lgr.Warn("agent: re-render prompt for injected skills", "err", perr)
+		}
+	}
 
 	// Register any custom tools the caller staged via WithCustomTool, and
 	// extend the profile's active list so they show up to the LLM. Duplicate
@@ -1183,6 +1222,39 @@ func (a *Agent) SwitchWorkdir(path string) error {
 	}
 
 	a.logger.Info("agent: workdir switched", "prev", prev, "new", path)
+	return nil
+}
+
+// ReloadSkills swaps the agent's skill catalog and re-renders the system prompt to
+// match — the runtime analogue of WithSkillRegistry. The new registry drives BOTH
+// the skill tool (SetSkillRegistry) and the prompt's # Skills section (skillRefs +
+// re-resolve); an empty registry advertises "no skills" rather than inheriting the
+// cfg-global catalog (same coercion as construction, RP-10-2). The prompt swap is a
+// KV-cache miss on the next turn — acceptable for an explicit, infrequent reload.
+//
+// MUST be called while no Run is in flight; the swarm applies it at a run boundary
+// (RP-10-4). Satisfies pkg/agent.SkillReloader.
+func (a *Agent) ReloadSkills(reg *skill.Registry) error {
+	if reg == nil {
+		reg = skill.NewRegistry()
+	}
+	a.toolState.SetSkillRegistry(reg)
+	refs := refsFromRegistry(reg)
+	if refs == nil {
+		refs = []sysprompt.SkillRef{}
+	}
+	a.skillRefs = refs
+
+	if a.cfg == nil || a.activePersona == "" {
+		return nil
+	}
+	newProfile, err := resolveMainProfileWithExtra(a.cfg, a.agentRegistry, a.activePersona, a.skillRefs, a.memSnap, baseLLMOptions(a.profile.LLMOptions), a.cfg.DefaultProvider, a.cfg.DefaultModel, a.mcpDiscoveredNames())
+	if err != nil {
+		return fmt.Errorf("agent: reload skills: re-resolve prompt: %w", err)
+	}
+	a.profile.SystemPrompt = newProfile.SystemPrompt
+	a.profile.LLMOptions = newProfile.LLMOptions
+	a.llm.Apply(llm.WithSystem(newProfile.SystemPrompt))
 	return nil
 }
 

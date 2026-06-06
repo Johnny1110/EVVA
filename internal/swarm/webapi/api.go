@@ -99,6 +99,16 @@ type Backend interface {
 	// "stopped" so the handler can map 404 / 409. This rides an UNAUTHENTICATED
 	// route (loopback-only trust boundary — see NewRouter).
 	IngestEvent(ref string, evt EventIn) (messageID string, duplicate bool, err error)
+
+	// Agent skills (RP-10). MemberSkills lists a member's authored skills (bool false
+	// when the space/member is unknown); AddSkill writes a new SKILL.md and hot-reloads
+	// that member's prompt; DeleteSkill removes one. Author path is User/web ONLY —
+	// agents never author skills, only load them. Add/Delete errors carry "unknown" for
+	// a missing space/member (→ 404); bad input (illegal/duplicate name, empty body) is
+	// 400.
+	MemberSkills(spaceID, agent string) ([]SkillInfo, bool)
+	AddSkill(spaceID, agent string, spec SkillSpec) error
+	DeleteSkill(spaceID, agent, skill string) error
 }
 
 // SpaceInfo is one row of GET /api/swarms. Status is "running" | "stopped"
@@ -143,6 +153,22 @@ type MemberSpec struct {
 	Deferred     []string `json:"deferred"`
 	Cron         string   `json:"cron"`
 	Prompt       string   `json:"prompt"`
+}
+
+// SkillInfo is one row of GET /api/agents/{name}/skills (RP-10): a member's authored
+// skill — name + description, the same pair the prompt's # Skills section lists.
+type SkillInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// SkillSpec is the body of POST /api/agents/{name}/skills (RP-10): the operator
+// authors a skill. The first line of the written SKILL.md becomes `# <name>
+// <description>`; Body is the rest (the instructions the skill tool loads).
+type SkillSpec struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Body        string `json:"body"`
 }
 
 // TaskInfo mirrors store.Task on the wire (GET /api/tasks).
@@ -411,6 +437,26 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 	}))
 	mux.Handle("DELETE /api/agents/{name}/schedule", guard(func(w http.ResponseWriter, r *http.Request) {
 		respondInputErr(w, b.ClearSchedule(r.URL.Query().Get("space"), r.PathValue("name")))
+	}))
+	// Agent skills CRUD (RP-10). User-only — guarded; agents never author skills. An
+	// add/delete reloads ONLY that member's prompt (KV-cache miss accepted).
+	mux.Handle("GET /api/agents/{name}/skills", guard(func(w http.ResponseWriter, r *http.Request) {
+		skills, ok := b.MemberSkills(r.URL.Query().Get("space"), r.PathValue("name"))
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, skills)
+	}))
+	mux.Handle("POST /api/agents/{name}/skills", guard(func(w http.ResponseWriter, r *http.Request) {
+		var spec SkillSpec
+		if !decode(w, r, &spec) {
+			return
+		}
+		respondInputErr(w, b.AddSkill(r.URL.Query().Get("space"), r.PathValue("name"), spec))
+	}))
+	mux.Handle("DELETE /api/agents/{name}/skills/{skill}", guard(func(w http.ResponseWriter, r *http.Request) {
+		respondInputErr(w, b.DeleteSkill(r.URL.Query().Get("space"), r.PathValue("name"), r.PathValue("skill")))
 	}))
 	// The tool catalog the add-agent form offers (collaboration tools excluded).
 	mux.Handle("GET /api/tools", guard(func(w http.ResponseWriter, r *http.Request) {

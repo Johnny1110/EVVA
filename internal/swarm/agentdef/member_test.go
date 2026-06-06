@@ -2,10 +2,60 @@ package agentdef
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
 )
+
+// TestWriteRemoveSkillRoundTrip (RP-10-5): WriteSkill authors a SKILL.md the skill
+// loader reads back (name + description + body) under the role-correct dir, and
+// RemoveSkill deletes it. Illegal names, duplicates, and empty bodies are rejected.
+func TestWriteRemoveSkillRoundTrip(t *testing.T) {
+	wd := t.TempDir()
+
+	// Worker skills live under agents/sub/<name>/skills/; the leader under agents/main/.
+	if got := SkillsDir(wd, RoleWorker, "qa"); got != filepath.Join(wd, "agents", "sub", "qa", "skills") {
+		t.Errorf("worker SkillsDir = %q", got)
+	}
+	if got := SkillsDir(wd, RoleLeader, "lead"); got != filepath.Join(wd, "agents", "main", "lead", "skills") {
+		t.Errorf("leader SkillsDir = %q", got)
+	}
+
+	if err := WriteSkill(wd, RoleWorker, "qa", "pnl-report", "summarise the PnL", "Step 1...\nStep 2..."); err != nil {
+		t.Fatalf("WriteSkill: %v", err)
+	}
+	reg, _ := skill.LoadRegistry(SkillsDir(wd, RoleWorker, "qa"), "")
+	m, ok := reg.Get("pnl-report")
+	if !ok {
+		t.Fatalf("skill not loaded back; have %v", reg.Names())
+	}
+	if m.Description != "summarise the PnL" {
+		t.Errorf("description = %q, want %q", m.Description, "summarise the PnL")
+	}
+	if body, _ := reg.LoadBody("pnl-report"); !strings.Contains(body, "Step 1") {
+		t.Errorf("body = %q", body)
+	}
+
+	if err := WriteSkill(wd, RoleWorker, "qa", "pnl-report", "x", "y"); err == nil {
+		t.Error("writing a duplicate skill should fail")
+	}
+	if err := WriteSkill(wd, RoleWorker, "qa", "../escape", "x", "y"); err == nil {
+		t.Error("illegal skill name should be rejected")
+	}
+	if err := WriteSkill(wd, RoleWorker, "qa", "blank", "x", "   "); err == nil {
+		t.Error("empty body should be rejected")
+	}
+
+	if err := RemoveSkill(wd, RoleWorker, "qa", "pnl-report"); err != nil {
+		t.Fatalf("RemoveSkill: %v", err)
+	}
+	reg2, _ := skill.LoadRegistry(SkillsDir(wd, RoleWorker, "qa"), "")
+	if _, ok := reg2.Get("pnl-report"); ok {
+		t.Error("skill still present after RemoveSkill")
+	}
+}
 
 // TestWriteMemberDirRoundTrip: an operator spec serialised by WriteMemberDir is
 // read back faithfully by the loader (RP-8) — system prompt, when_to_use, the

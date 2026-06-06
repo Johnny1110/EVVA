@@ -20,6 +20,7 @@ var errBadName = errors.New("illegal member name")
 var errLeaderProtected = errors.New("the leader cannot be removed")
 var errSpaceStopped = errors.New("space is stopped")
 var errBadBody = errors.New("event body is required")
+var errBadSkill = errors.New("skill name is required")
 
 // fakeBackend is a Backend stub that records inbound commands and returns canned
 // snapshots, so the HTTP/WS layer can be exercised without a live swarm.
@@ -27,16 +28,18 @@ type fakeBackend struct {
 	token  string
 	spaces map[string][]MemberInfo // id -> roster
 
-	mu        sync.Mutex
-	runs      [][3]string // {space, agent, prompt}
-	msgs      [][3]string // {space, to, body}
-	perms     [][6]string // {space, agent, reqId, behavior, reason, ruleTool}
-	suspends  [][2]string
-	schedules [][4]string       // {space, agent, cron, prompt}  (cron="" => clear)
-	creates   []MemberSpec      // CreateMember calls
-	removes   [][3]string       // {space, agent, deleteDir}
-	events    []EventIn         // IngestEvent calls
-	eventKeys map[string]string // idempotency_key -> message id
+	mu            sync.Mutex
+	runs          [][3]string // {space, agent, prompt}
+	msgs          [][3]string // {space, to, body}
+	perms         [][6]string // {space, agent, reqId, behavior, reason, ruleTool}
+	suspends      [][2]string
+	schedules     [][4]string       // {space, agent, cron, prompt}  (cron="" => clear)
+	creates       []MemberSpec      // CreateMember calls
+	removes       [][3]string       // {space, agent, deleteDir}
+	events        []EventIn         // IngestEvent calls
+	eventKeys     map[string]string // idempotency_key -> message id
+	skillsAdded   []SkillSpec       // AddSkill calls
+	skillsDeleted [][2]string       // {agent, skill}
 }
 
 func (f *fakeBackend) Token() string                           { return f.token }
@@ -182,6 +185,34 @@ func (f *fakeBackend) RemoveMember(space, agent string, deleteDir bool) error {
 	return nil
 }
 func (f *fakeBackend) SelectableTools() []string { return []string{"read", "write", "bash"} }
+
+func (f *fakeBackend) MemberSkills(space, agent string) ([]SkillInfo, bool) {
+	if !f.HasSpace(space) {
+		return nil, false
+	}
+	return []SkillInfo{{Name: "demo", Description: "a demo skill"}}, true
+}
+func (f *fakeBackend) AddSkill(space, agent string, spec SkillSpec) error {
+	if !f.HasSpace(space) {
+		return errUnknownSpace
+	}
+	if strings.TrimSpace(spec.Name) == "" {
+		return errBadSkill
+	}
+	f.mu.Lock()
+	f.skillsAdded = append(f.skillsAdded, spec)
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeBackend) DeleteSkill(space, agent, skill string) error {
+	if !f.HasSpace(space) {
+		return errUnknownSpace
+	}
+	f.mu.Lock()
+	f.skillsDeleted = append(f.skillsDeleted, [2]string{agent, skill})
+	f.mu.Unlock()
+	return nil
+}
 func (f *fakeBackend) IngestEvent(ref string, evt EventIn) (string, bool, error) {
 	if ref == "sp-stopped" {
 		return "", false, errSpaceStopped
@@ -498,6 +529,64 @@ func TestRESTMemberAndScheduleRoutes(t *testing.T) {
 	}
 	if s := del(t, srv.URL+"/api/agents/leader"+q); s != http.StatusBadRequest {
 		t.Fatalf("remove leader = %d, want 400", s)
+	}
+}
+
+// RP-10 routes: agent-skills CRUD — list (GET), author (POST), delete (DELETE) — all
+// guarded (User-only), with the 404/400 input-error mapping and a 401 without token.
+func TestRESTSkillRoutes(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+	q := "?space=sp-a&token=secret"
+
+	getCode := func(url string) int {
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// list → 200 + the fake's canned skill; unknown space → 404.
+	var skills []SkillInfo
+	getJSON(t, srv.URL+"/api/agents/leader/skills"+q, &skills)
+	if len(skills) != 1 || skills[0].Name != "demo" {
+		t.Fatalf("skills = %+v", skills)
+	}
+	if s := getCode(srv.URL + "/api/agents/leader/skills?space=ghost&token=secret"); s != http.StatusNotFound {
+		t.Fatalf("list unknown space = %d, want 404", s)
+	}
+
+	// add → 204 + recorded; empty name → 400; unknown space → 404.
+	if s := post(t, srv.URL+"/api/agents/leader/skills"+q, bytes.NewBufferString(`{"name":"pnl","description":"d","body":"b"}`)); s != http.StatusNoContent {
+		t.Fatalf("add skill = %d, want 204", s)
+	}
+	if len(fake.skillsAdded) != 1 || fake.skillsAdded[0].Name != "pnl" {
+		t.Fatalf("add not recorded: %+v", fake.skillsAdded)
+	}
+	if s := post(t, srv.URL+"/api/agents/leader/skills"+q, bytes.NewBufferString(`{"name":"","body":"b"}`)); s != http.StatusBadRequest {
+		t.Fatalf("empty name = %d, want 400", s)
+	}
+	if s := post(t, srv.URL+"/api/agents/leader/skills?space=ghost&token=secret", bytes.NewBufferString(`{"name":"x","body":"b"}`)); s != http.StatusNotFound {
+		t.Fatalf("add unknown space = %d, want 404", s)
+	}
+
+	// delete → 204 + recorded; unknown space → 404.
+	if s := del(t, srv.URL+"/api/agents/leader/skills/pnl"+q); s != http.StatusNoContent {
+		t.Fatalf("delete skill = %d, want 204", s)
+	}
+	if len(fake.skillsDeleted) != 1 || fake.skillsDeleted[0] != [2]string{"leader", "pnl"} {
+		t.Fatalf("delete not recorded: %+v", fake.skillsDeleted)
+	}
+	if s := del(t, srv.URL+"/api/agents/leader/skills/x?space=ghost&token=secret"); s != http.StatusNotFound {
+		t.Fatalf("delete unknown space = %d, want 404", s)
+	}
+
+	// guarded: no token → 401.
+	if s := getCode(srv.URL + "/api/agents/leader/skills?space=sp-a"); s != http.StatusUnauthorized {
+		t.Fatalf("skills list without token = %d, want 401", s)
 	}
 }
 

@@ -12,6 +12,14 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+## [v1.4.0-beta.1] — 2026-06-07
+
+Second beta since v1.1.0. This release ships the typed memory directory
+(rewriting evva's persistent memory model), a pluggable inbox-drainer
+seam for multi-agent hosts, the bundled `build-agent` skill, and the
+Veronica swarm subsystem (multi-agent orchestration with a Vue.js web
+workstation).
+
 ### Inbox drainer — pluggable mid-run message folding (`pkg/agent`)
 
 New **additive, Experimental** seam on `pkg/agent`: `WithInboxDrainer(Drainer)`,
@@ -914,7 +922,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `CLAUDE.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.3.0-beta.1...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.4.0-beta.1...HEAD
+[v1.4.0-beta.1]: https://github.com/johnny1110/evva/compare/v1.3.0-beta.1...v1.4.0-beta.1
 [v1.3.0-beta.1]: https://github.com/johnny1110/evva/compare/v1.1.0...v1.3.0-beta.1
 [v1.1.0]: https://github.com/johnny1110/evva/compare/v1.0.0...v1.1.0
 [v1.0.0]: https://github.com/johnny1110/evva/compare/v0.2.8-alpha.6...v1.0.0

@@ -19,7 +19,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   permission: [d: { agent: string; reqId: string; behavior: string; reason?: string; ruleTool?: string }]
-  question: [d: { agent: string; reqId: string; answers: Record<string, string> }]
+  question: [d: { agent: string; reqId: string; answers: Record<string, string[]> }]
 }>()
 
 // Per-question selection sets + "other" text.
@@ -61,14 +61,14 @@ const allAnswered = computed(() => {
   )
 })
 
-function buildAnswers(): Record<string, string> {
-  const out: Record<string, string> = {}
+function buildAnswers(): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
   if (!props.question) return out
   for (const q of props.question.questions) {
     const labels = [...(sel.value[q.Question] || [])]
     const o = (other.value[q.Question] || '').trim()
     if (o) labels.push(o)
-    out[q.Question] = labels.join(', ')
+    out[q.Question] = labels
   }
   return out
 }

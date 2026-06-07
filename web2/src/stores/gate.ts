@@ -11,14 +11,13 @@ export interface PermissionReply {
   reason?: string
   ruleTool?: string
 }
-// answers is map[question]→answer string to match the backend wire shape
-// (webapi wsCommand.Answers map[string]string, service RespondQuestion). For a
-// multi-select question the UI joins the chosen labels into one string; native
-// []string would require a backend change (flagged in FE-6).
+// answers is map[question]→chosen labels, matching the backend wire shape
+// (webapi wsCommand.Answers map[string][]string). Single-select is a one-element
+// array; multi-select carries each chosen label; "Other" carries the typed text.
 export interface QuestionReply {
   agent: string
   reqId: string
-  answers: Record<string, string>
+  answers: Record<string, string[]>
 }
 
 // gate holds the pending approval/question QUEUES (not single slots — several

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch, nextTick, onMounted } from 'vue'
 import { useMailStore } from '@/stores/mail'
 import { useSpaceStore } from '@/stores/space'
 import { relTime, mailState } from '@/lib/events'
@@ -8,16 +8,48 @@ import { agentColor } from '@/lib/colors'
 const props = defineProps<{ member: string }>()
 const mail = useMailStore()
 const space = useSpaceStore()
+// Chronological (newest at the bottom, chat-log order) — same convention as
+// the timeline and the streams.
 const items = computed(() =>
-  mail.messages
-    .filter((m) => m.recipient === props.member || m.sender === props.member || m.recipient === 'all')
-    .slice()
-    .reverse(),
+  mail.messages.filter((m) => m.recipient === props.member || m.sender === props.member || m.recipient === 'all'),
+)
+
+// Follow-tail against the nearest scrollable ancestor (the inspector pane owns
+// the scroll, not this list): pinned to the latest on entry and on new mail,
+// but don't yank the user back while they're reading history.
+const list = ref<HTMLElement | null>(null)
+function scroller(): HTMLElement | null {
+  let el: HTMLElement | null = list.value?.parentElement ?? null
+  while (el) {
+    if (/(auto|scroll)/.test(getComputedStyle(el).overflowY)) return el
+    el = el.parentElement
+  }
+  return null
+}
+function atBottom(): boolean {
+  const el = scroller()
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 40
+}
+function scrollToEnd() {
+  const el = scroller()
+  if (el) el.scrollTop = el.scrollHeight
+}
+onMounted(() => {
+  void nextTick(scrollToEnd)
+})
+watch(
+  () => [items.value.length, props.member] as const,
+  async ([, member], [, prevMember]) => {
+    const stick = member !== prevMember || atBottom()
+    await nextTick()
+    if (stick) scrollToEnd()
+  },
 )
 </script>
 
 <template>
-  <ul class="mbox">
+  <ul ref="list" class="mbox">
     <li v-for="m in items" :key="m.id" :class="mailState(m)">
       <div class="route">
         <span class="dot" :style="{ background: agentColor(m.sender) }" />{{ m.sender }}
@@ -81,5 +113,11 @@ const items = computed(() =>
 .dim {
   color: var(--color-text-muted);
   border: none !important;
+}
+.capped {
+  border: none !important;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--color-text-faint);
 }
 </style>

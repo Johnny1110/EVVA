@@ -15,6 +15,20 @@ test('buildTimeline merges messages + task lifecycle, newest first', () => {
   assert.ok(kinds.has('task'))
 })
 
+test('buildTimeline limit: positive caps to newest N, <= 0 returns everything', () => {
+  const msgs = Array.from({ length: 5 }, (_, i) => ({
+    id: String(i),
+    sender: 'a',
+    recipient: 'b',
+    body: 'm' + i,
+    createdAt: i,
+  }))
+  assert.equal(buildTimeline(msgs, [], 3).length, 3)
+  assert.equal(buildTimeline(msgs, [], 3)[0].time, 4) // newest kept
+  assert.equal(buildTimeline(msgs, [], 0).length, 5)
+  assert.equal(buildTimeline(msgs, [], -1).length, 5)
+})
+
 test('buildTimeline omits a no-op transition (updatedAt === createdAt)', () => {
   const tasks = [
     { id: 2, title: 'x', spec: '', status: 'pending', assignee: '', createdBy: 'lead', createdAt: 10, updatedAt: 10 },

@@ -19,6 +19,7 @@ export interface TimelineItem {
   refTask?: number
 }
 
+// limit <= 0 disables the cap (the caller renders/windows the full history).
 export function buildTimeline(messages: MessageInfo[], tasks: TaskInfo[], limit = 80): TimelineItem[] {
   const items: TimelineItem[] = []
   for (const m of messages || []) {
@@ -55,5 +56,5 @@ export function buildTimeline(messages: MessageInfo[], tasks: TaskInfo[], limit 
     }
   }
   items.sort((a, b) => b.time - a.time)
-  return items.slice(0, limit)
+  return limit > 0 ? items.slice(0, limit) : items
 }

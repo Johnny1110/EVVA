@@ -9,15 +9,10 @@ const props = defineProps<{ member: string }>()
 const mail = useMailStore()
 const space = useSpaceStore()
 // Chronological (newest at the bottom, chat-log order) — same convention as
-// the timeline and the streams. Full history; only the DOM is windowed.
+// the timeline and the streams.
 const items = computed(() =>
   mail.messages.filter((m) => m.recipient === props.member || m.sender === props.member || m.recipient === 'all'),
 )
-
-// Render cap (perf-lite, same approach as TurnList): the tail is what
-// follow-tail pins to anyway.
-const CAP = 400
-const visible = computed(() => (items.value.length > CAP ? items.value.slice(-CAP) : items.value))
 
 // Follow-tail against the nearest scrollable ancestor (the inspector pane owns
 // the scroll, not this list): pinned to the latest on entry and on new mail,
@@ -55,8 +50,7 @@ watch(
 
 <template>
   <ul ref="list" class="mbox">
-    <li v-if="items.length > visible.length" class="capped">showing last {{ visible.length }} of {{ items.length }}</li>
-    <li v-for="m in visible" :key="m.id" :class="mailState(m)">
+    <li v-for="m in items" :key="m.id" :class="mailState(m)">
       <div class="route">
         <span class="dot" :style="{ background: agentColor(m.sender) }" />{{ m.sender }}
         <span class="arrow">→</span>

@@ -125,10 +125,10 @@ Run a team of collaborating agents with `evva service` + `evva swarm`. A 0→her
 walkthrough — concepts, building a swarm from scratch, the web workstation,
 day-2 ops, restart-resume:
 
-- [English](docs/veronica/user-guide-en.md)
-- [简体中文](docs/veronica/user-guide-zh.md)
+- [English](docs/roadmap/veronica/user-guide-en.md)
+- [简体中文](docs/roadmap/veronica/user-guide-zh.md)
 
-Or just try the ready-to-run [example swarm](docs/veronica/example-swarm/) — copy
+Or just try the ready-to-run [example swarm](docs/roadmap/veronica/example-swarm/) — copy
 it out, `evva swarm .`, and watch a 3-agent team build a small site.
 
 **CLI quick reference** (`evva swarm help` for the full list). Spaces are

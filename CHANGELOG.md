@@ -12,6 +12,28 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+## [v1.4.5-beta.1] — 2026-06-10
+
+### Added
+
+- **Alarm tool family — one-shot absolute-time self-wake.** New
+  `pkg/tools/alarm` package: a non-blocking, durable `Scheduler` plus the
+  `alarm_create` / `alarm_list` / `alarm_cancel` tools. Unlike `schedule_wakeup`
+  (a blocking relative sleep capped at one hour), an alarm fires at an absolute
+  wall-clock instant (second precision, e.g. `2026-09-11 12:31:50`), arbitrarily
+  far in the future, and survives restarts. On fire it re-enters the
+  conversation with a supplied prompt as a fresh user message — waking an idle
+  agent via the existing `WakeupQueue` + a new `SignalAlarm` wake. Deferred on
+  the `evva` profile (loaded via `tool_search`) and taught in the system prompt.
+- **Swarm alarms (`alarm_set` / `alarm_clear`).** Every swarm member can set a
+  one-shot alarm for itself; the leader can target a specific teammate ("wake the
+  analyst at 09:00 to review the overnight run"). A fired alarm is delivered as a
+  durable bus message to the target, waking its run loop through the same mailbox
+  path as a teammate message. Pending alarms surface inline in `list_members`.
+  The space owns one shared scheduler (persisted beside its store, re-armed on
+  supervisor start). Distinct from `schedule_set`, which remains recurring-cron,
+  leader-only, and cannot target the caller.
+
 ## [v1.4.4-beta.1] — 2026-06-09
 
 Swarm HTTP tooling and comms refinements, plus a reworked self-update flow and
@@ -1020,7 +1042,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `EVVA.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.4.4-beta.1...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.4.5-beta.1...HEAD
+[v1.4.5-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.4...v1.4.5-beta.1
 [v1.4.4-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.3...v1.4.4-beta.1
 [v1.4.3]: https://github.com/johnny1110/evva/compare/v1.4.2-beta.1...v1.4.3
 [v1.4.3-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.2-beta.1...v1.4.3-beta.1

@@ -12,6 +12,26 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Alarm tool family — one-shot absolute-time self-wake.** New
+  `pkg/tools/alarm` package: a non-blocking, durable `Scheduler` plus the
+  `alarm_create` / `alarm_list` / `alarm_cancel` tools. Unlike `schedule_wakeup`
+  (a blocking relative sleep capped at one hour), an alarm fires at an absolute
+  wall-clock instant (second precision, e.g. `2026-09-11 12:31:50`), arbitrarily
+  far in the future, and survives restarts. On fire it re-enters the
+  conversation with a supplied prompt as a fresh user message — waking an idle
+  agent via the existing `WakeupQueue` + a new `SignalAlarm` wake. Deferred on
+  the `evva` profile (loaded via `tool_search`) and taught in the system prompt.
+- **Swarm alarms (`alarm_set` / `alarm_clear`).** Every swarm member can set a
+  one-shot alarm for itself; the leader can target a specific teammate ("wake the
+  analyst at 09:00 to review the overnight run"). A fired alarm is delivered as a
+  durable bus message to the target, waking its run loop through the same mailbox
+  path as a teammate message. Pending alarms surface inline in `list_members`.
+  The space owns one shared scheduler (persisted beside its store, re-armed on
+  supervisor start). Distinct from `schedule_set`, which remains recurring-cron,
+  leader-only, and cannot target the caller.
+
 ## [v1.4.3] — 2026-06-07
 
 First stable release since v0.2.0. Swarm web workstation context-aware UI

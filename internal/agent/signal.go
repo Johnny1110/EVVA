@@ -19,6 +19,13 @@ const (
 	// authoritative source — this signal carries no payload; the drain
 	// at iter start re-reads from DaemonState.DrainSignals.
 	SignalDaemon SignalKind = "daemon"
+
+	// SignalAlarm wakes the loop when an alarm fires. Like SignalDaemon it is
+	// wake-only: the alarm scheduler has already Enqueue'd its prompt on the
+	// WakeupQueue, so the next-iter drainWakeupPrompts folds it in. A distinct
+	// kind (rather than reusing SignalDaemon) keeps alarm fires legible in
+	// telemetry and leaves room for an alarm-specific wire event later.
+	SignalAlarm SignalKind = "alarm"
 )
 
 // AgentSignal is the unit the agent's signal channel carries. Today
@@ -116,6 +123,9 @@ func (a *Agent) emitSignalEvent(sig AgentSignal) {
 	switch sig.Kind {
 	case SignalDaemon:
 		// Wake-only — no wire event.
+	case SignalAlarm:
+		// Wake-only — the alarm's prompt lands via the WakeupQueue drain and
+		// is visible in the transcript as a fresh user message.
 	}
 }
 

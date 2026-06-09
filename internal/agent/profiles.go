@@ -26,6 +26,7 @@ import (
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/alarm"
 	"github.com/johnny1110/evva/pkg/tools/cron"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
@@ -174,6 +175,7 @@ func mainProfile(cfg *config.Config, provider constant.LLMProvider, model consta
 		notebook.Names(),
 		ux.Names(),
 		cron.Names(),
+		alarm.Names(),
 		web.Names(),
 		util.Names(),
 		repl.Names(),
@@ -336,6 +338,15 @@ func modeDeferredNames() []tools.ToolName {
 		out = append(out, n)
 	}
 	return out
+}
+
+// profileAllowsAlarm reports whether a profile admits the alarm tools in
+// either tier. The root agent uses this to decide whether to re-arm durable
+// alarms at boot — re-arm must not depend on the model first loading the
+// (deferred) tool, or a durable alarm set last session would never fire.
+func profileAllowsAlarm(p Profile) bool {
+	return slices.Contains(p.ActiveTools, tools.ALARM_CREATE) ||
+		slices.Contains(p.DeferredTools, tools.ALARM_CREATE)
 }
 
 // deferredToolSpecs converts a list of deferred tool names into the prompt

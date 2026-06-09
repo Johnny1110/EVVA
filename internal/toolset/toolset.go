@@ -21,6 +21,7 @@ package toolset
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/johnny1110/evva/pkg/observable"
 	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/alarm"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/lsp"
@@ -105,6 +107,13 @@ type ToolState struct {
 	// internal/agent (no cycle). Filled by SetSignalSender; consumed by
 	// the DaemonHost methods below.
 	signalSender SignalSender
+
+	// alarmScheduler backs the alarm_create / alarm_list / alarm_cancel tools.
+	// Lazy-allocated on first AlarmScheduler() access; its fire callback
+	// Enqueue's the alarm prompt on the WakeupQueue and pokes the loop via
+	// NotifyAlarm (the SignalAlarm idle-wake). Single-agent only — swarm
+	// members get their own bus-delivering scheduler owned by the space.
+	alarmScheduler *alarm.Scheduler
 	// Future: cronService, ...
 
 	// TaskGroup registry — every observable.Store registered here fans its
@@ -253,6 +262,46 @@ func (s *ToolState) WakeupQueue() *meta.WakeupQueue {
 	return s.wakeupQueue
 }
 
+// HasAlarmScheduler reports whether an alarm scheduler has been allocated. The
+// agent uses this to skip Stop()/LoadAndRearm on runs that never built the
+// alarm tools, and to avoid forcing the lazy allocation just to peek.
+func (s *ToolState) HasAlarmScheduler() bool { return s.alarmScheduler != nil }
+
+// AlarmScheduler returns the single-agent alarm scheduler, allocating one on
+// first use. Its fire callback Enqueue's the alarm prompt on the WakeupQueue
+// (so the loop's drainWakeupPrompts folds it in) and pokes the loop via
+// NotifyAlarm (the SignalAlarm idle-wake). Durable alarms persist to
+// <AppHome>/alarms.json when a config is installed; otherwise the scheduler is
+// session-only. Allocating here also forces the WakeupQueue into existence so
+// HasWakeupQueue() is true and the drain runs.
+func (s *ToolState) AlarmScheduler() *alarm.Scheduler {
+	if s.alarmScheduler == nil {
+		wq := s.WakeupQueue()
+		path := ""
+		if s.cfg != nil && s.cfg.AppHome != "" {
+			path = filepath.Join(s.cfg.AppHome, "alarms.json")
+		}
+		s.alarmScheduler = alarm.New(alarm.Config{
+			StorePath: path,
+			OnFire: func(f alarm.Fired) {
+				wq.Enqueue(f.Message())
+				s.NotifyAlarm()
+			},
+		})
+	}
+	return s.alarmScheduler
+}
+
+// NotifyAlarm fires the agent's alarm wake-up signal, indirecting through the
+// installed SignalSender at call time (matching DaemonState's notify closure,
+// so it tolerates the build-before-SetSignalSender init order). No-op until the
+// agent installs a sender (tests).
+func (s *ToolState) NotifyAlarm() {
+	if s.signalSender.NotifyAlarm != nil {
+		s.signalSender.NotifyAlarm()
+	}
+}
+
 // SkillRegistry returns the currently-installed skill catalog, or nil if
 // none. The SKILL tool reads through this lookup at Execute time so the
 // host can SetSkillRegistry any time before the model invokes it.
@@ -322,6 +371,12 @@ type SignalSender struct {
 	NotifyDaemon func()
 	RootCtx      func() context.Context
 	AgentID      func() string
+
+	// NotifyAlarm wakes the agent loop when an alarm fires. Like NotifyDaemon
+	// it is no-arg: the alarm scheduler has already Enqueue'd its prompt on the
+	// WakeupQueue, so the wake only needs to fire the CAS+runLoop entry. nil-safe
+	// in tests.
+	NotifyAlarm func()
 }
 
 // SetSignalSender installs the signal-delivery callbacks. Called once

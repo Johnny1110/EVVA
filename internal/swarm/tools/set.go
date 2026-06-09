@@ -26,6 +26,8 @@ const (
 	toolTaskGet          = "task_get"
 	toolScheduleSet      = "schedule_set"
 	toolScheduleClear    = "schedule_clear"
+	toolAlarmSet         = "alarm_set"
+	toolAlarmClear       = "alarm_clear"
 )
 
 // init classifies the swarm's coordination tools as auto-allow in
@@ -43,6 +45,7 @@ func init() {
 		toolSendMessage, toolListMembers, toolTaskList, toolMyTasks, toolTaskGet,
 		toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify,
 		toolScheduleSet, toolScheduleClear,
+		toolAlarmSet, toolAlarmClear,
 	} {
 		permission.ReadOnlyOrSelfTools[n] = true
 	}
@@ -70,7 +73,10 @@ func (Set) For(_ string, role agentdef.Role, _ *swarm.SwarmSpace) []agent.Option
 // tool boundary. Every agent gets send_message + list_members; the Leader adds
 // the task-ledger writes, a Worker the read-only task views.
 func toolNamesForRole(role agentdef.Role) []string {
-	common := []string{toolSendMessage, toolListMembers}
+	// Every member gets one-shot alarms: a worker may wake itself, the leader
+	// may also target a teammate (gated inside alarm_set). schedule_set (below)
+	// stays leader-only because it is recurring cross-member duty.
+	common := []string{toolSendMessage, toolListMembers, toolAlarmSet, toolAlarmClear}
 	if role == agentdef.RoleLeader {
 		return append(common, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList,
 			toolScheduleSet, toolScheduleClear)
@@ -92,6 +98,8 @@ var factories = map[string]func(pubtools.State) (pubtools.Tool, error){
 	toolTaskGet:          bind(newTaskGet),
 	toolScheduleSet:      bind(newScheduleSet),
 	toolScheduleClear:    bind(newScheduleClear),
+	toolAlarmSet:         bind(newAlarmSet),
+	toolAlarmClear:       bind(newAlarmClear),
 }
 
 // bind adapts a MemberContext tool constructor into a pkg/toolset factory: it

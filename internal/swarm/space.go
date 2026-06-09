@@ -3,6 +3,7 @@ package swarm
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/johnny1110/evva/pkg/permission"
 	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/alarm"
 )
 
 // SpacedEvent tags an agent event with the space it came from. AgentID is
@@ -62,6 +64,11 @@ type SwarmSpace struct {
 	mu        sync.Mutex
 	agents    map[string]agent.Agent
 	schedules map[string]agentdef.Schedule
+
+	// alarmSched is the space's shared one-shot alarm scheduler (alarm_set /
+	// alarm_clear). Lazy-allocated under mu on first AlarmScheduler() access; a
+	// fired alarm is delivered as a durable bus message to its target member.
+	alarmSched *alarm.Scheduler
 
 	// super is the run engine driving this space, set once by NewSupervisor
 	// (before Start, before any tool can fire). It is the seam the leader's
@@ -317,6 +324,67 @@ func (sp *SwarmSpace) ClearMemberSchedule(name string) error {
 	return s.ClearSchedule(name)
 }
 
+// AlarmScheduler returns the space's shared one-shot alarm scheduler, allocating
+// it on first use. A fired alarm is delivered by deliverAlarm as a durable bus
+// message to its Target (the member to wake) — so it flows through the same
+// mailbox path as a teammate message: the target's run loop wakes and drains it.
+// Durable alarms persist beside the space store and are re-armed by the
+// supervisor on Start.
+func (sp *SwarmSpace) AlarmScheduler() *alarm.Scheduler {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.alarmSched == nil {
+		sp.alarmSched = alarm.New(alarm.Config{
+			StorePath: filepath.Join(sp.Workdir, "alarms.json"),
+			OnFire:    sp.deliverAlarm,
+		})
+	}
+	return sp.alarmSched
+}
+
+// deliverAlarm is the alarm scheduler's fire callback (runs on a timer
+// goroutine): route a fired one-shot alarm to its target member as a durable
+// bus message, sent on behalf of the member that set it. A self-alarm (no
+// target) goes back to its origin. A target that left the team between arming
+// and firing is dropped rather than dead-lettered to a mailbox no loop drains.
+func (sp *SwarmSpace) deliverAlarm(f alarm.Fired) {
+	target := f.Target
+	if target == "" {
+		target = f.Origin
+	}
+	if target == "" {
+		return
+	}
+	if _, ok := sp.Roster.membership(target); !ok {
+		return
+	}
+	sender := f.Origin
+	if sender == "" {
+		sender = target
+	}
+	subject := "⏰ alarm"
+	if f.Label != "" {
+		subject = "⏰ alarm: " + f.Label
+	}
+	_, _ = sp.Bus.Send(store.Message{
+		Sender:    sender,
+		Recipient: target,
+		Subject:   subject,
+		Body:      f.Message(),
+	})
+}
+
+// stopAlarms halts pending alarm timers at teardown. Durable alarms stay on disk
+// and are re-armed next start. No-op when no scheduler was allocated.
+func (sp *SwarmSpace) stopAlarms() {
+	sp.mu.Lock()
+	s := sp.alarmSched
+	sp.mu.Unlock()
+	if s != nil {
+		s.Stop()
+	}
+}
+
 // MemberSkills lists a member's authored skills (RP-10) by re-scanning its on-disk
 // skills/ dir — the source of truth POST/DELETE write, so a GET right after an add
 // reflects it immediately (the live agent registry lags until the boundary reload).
@@ -420,6 +488,7 @@ func (sp *SwarmSpace) Shutdown() {
 	for _, ag := range ags {
 		ag.Shutdown()
 	}
+	sp.stopAlarms()
 	if sp.Store != nil {
 		_ = sp.Store.Close()
 	}

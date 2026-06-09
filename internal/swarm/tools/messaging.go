@@ -87,6 +87,7 @@ func newListMembers(mc swarm.MemberContext) pubtools.Tool {
 		schema: `{"type":"object","properties":{}}`,
 		exec: func(_ context.Context, _ json.RawMessage) (pubtools.Result, error) {
 			members := mc.Space.Roster.Snapshot()
+			pendingAlarms := mc.Space.AlarmScheduler().List()
 			var b strings.Builder
 			fmt.Fprintf(&b, "Swarm members (%d):\n", len(members))
 			for _, m := range members {
@@ -107,6 +108,18 @@ func newListMembers(mc swarm.MemberContext) pubtools.Tool {
 					fmt.Fprintf(&b, "  ⏰ %s", formatSchedule(sch))
 				}
 				b.WriteByte('\n')
+				// One-shot alarms aimed at this member (RP-7 sibling): surface them
+				// so the leader re-learns pending wakes after a context compaction,
+				// and so alarm_clear has an id source.
+				for _, a := range pendingAlarms {
+					if a.Target == m.Name {
+						label := ""
+						if a.Label != "" {
+							label = " " + a.Label
+						}
+						fmt.Fprintf(&b, "    ⏰ %s at %s%s\n", a.ID, a.FireAt.Local().Format("2006-01-02 15:04:05"), label)
+					}
+				}
 			}
 			return pubtools.Result{Content: b.String(), Metadata: members}, nil
 		},

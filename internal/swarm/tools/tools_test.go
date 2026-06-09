@@ -19,13 +19,13 @@ import (
 // read-only task views plus the common send_message/list_members.
 func TestToolNamesForRole(t *testing.T) {
 	leader := toolNamesForRole(agentdef.RoleLeader)
-	wantLeader := []string{toolSendMessage, toolListMembers, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList, toolScheduleSet, toolScheduleClear}
+	wantLeader := []string{toolSendMessage, toolListMembers, toolAlarmSet, toolAlarmClear, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList, toolScheduleSet, toolScheduleClear}
 	if !reflect.DeepEqual(leader, wantLeader) {
 		t.Fatalf("leader tools = %v\nwant %v", leader, wantLeader)
 	}
 
 	worker := toolNamesForRole(agentdef.RoleWorker)
-	wantWorker := []string{toolSendMessage, toolListMembers, toolMyTasks, toolTaskGet}
+	wantWorker := []string{toolSendMessage, toolListMembers, toolAlarmSet, toolAlarmClear, toolMyTasks, toolTaskGet}
 	if !reflect.DeepEqual(worker, wantWorker) {
 		t.Fatalf("worker tools = %v\nwant %v", worker, wantWorker)
 	}
@@ -39,11 +39,11 @@ func TestToolNamesForRole(t *testing.T) {
 }
 
 func TestSetForReturnsOptionPerTool(t *testing.T) {
-	if got := len(Set{}.For("leader", agentdef.RoleLeader, nil)); got != 9 {
-		t.Errorf("leader options = %d, want 9", got)
+	if got := len(Set{}.For("leader", agentdef.RoleLeader, nil)); got != 11 {
+		t.Errorf("leader options = %d, want 11", got)
 	}
-	if got := len(Set{}.For("w", agentdef.RoleWorker, nil)); got != 4 {
-		t.Errorf("worker options = %d, want 4", got)
+	if got := len(Set{}.For("w", agentdef.RoleWorker, nil)); got != 6 {
+		t.Errorf("worker options = %d, want 6", got)
 	}
 }
 
@@ -60,6 +60,7 @@ func TestPermissionClassification(t *testing.T) {
 		toolSendMessage, toolListMembers, toolTaskList, toolMyTasks, toolTaskGet,
 		toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify,
 		toolScheduleSet, toolScheduleClear,
+		toolAlarmSet, toolAlarmClear,
 	}
 	for _, n := range autoAllow {
 		if b := decide(n); b != permission.BehaviorAllow {

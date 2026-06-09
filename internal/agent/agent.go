@@ -451,6 +451,7 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	// as a narrow callback set; the agent owns the chan.
 	a.toolState.SetSignalSender(toolset.SignalSender{
 		NotifyDaemon: func() { a.SendSignal(AgentSignal{Kind: SignalDaemon}) },
+		NotifyAlarm:  func() { a.SendSignal(AgentSignal{Kind: SignalAlarm}) },
 		RootCtx:      func() context.Context { return a.rootCtx },
 		AgentID:      func() string { return a.ID },
 	})
@@ -459,6 +460,26 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	// lifetime; cancelled via Shutdown() or by the caller cancelling
 	// the ctx threaded via WithRootContext.
 	go a.signalPump()
+
+	// Re-arm durable alarms from a previous session (root agent only, and only
+	// when this profile admits the alarm tools). Future alarms get fresh timers;
+	// alarms missed while the process was down are Enqueue'd on the WakeupQueue
+	// so they surface on the NEXT run rather than autonomously starting one
+	// before the host's UI is live. Done here — after the signal pump is up, so
+	// a future alarm that fires can wake the loop. Errors are non-fatal.
+	if !a.IsSubagent() && profileAllowsAlarm(a.profile) {
+		sched := a.toolState.AlarmScheduler()
+		if pastDue, err := sched.Rearm(); err != nil {
+			a.logger.Warn("alarm.rearm", "err", err)
+		} else {
+			for _, f := range pastDue {
+				a.toolState.WakeupQueue().Enqueue(f.Message())
+			}
+			if len(pastDue) > 0 {
+				a.logger.Info("alarm.rearm.pastdue", "count", len(pastDue))
+			}
+		}
+	}
 
 	// Install ourselves as the subagent spawner and the deferred-tool
 	// lookup. Only the root agent does this — subagents leave the slots
@@ -538,6 +559,11 @@ func (a *Agent) Shutdown() {
 		if mgr := a.toolState.McpManager(); mgr != nil {
 			mgr.Shutdown()
 		}
+	}
+	// Stop pending alarm timers so none fires mid-teardown. Durable alarms stay
+	// on disk and are re-armed next start; only allocated when alarms were used.
+	if a.toolState.HasAlarmScheduler() {
+		a.toolState.AlarmScheduler().Stop()
 	}
 	if a.rootCancel != nil {
 		a.rootCancel()

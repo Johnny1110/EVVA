@@ -112,6 +112,14 @@ func (s *Supervisor) Start(ctx context.Context) {
 	s.wg.Add(2)
 	go func() { defer s.wg.Done(); s.timerTick(ctx) }()
 	go func() { defer s.wg.Done(); s.rescanTick(ctx) }()
+
+	// Re-arm durable one-shot alarms from a prior run: future ones get fresh
+	// timers; any that came due while the process was down fire now as durable
+	// bus mail, which the target drains when its loop runs. Safe at start
+	// (unlike the solo TUI) precisely because delivery is durable mail.
+	if err := s.sp.AlarmScheduler().LoadAndRearm(); err != nil {
+		s.log.Warn("swarm: alarm rearm failed", "err", err)
+	}
 }
 
 // Wait blocks until every run loop and tick goroutine started under the

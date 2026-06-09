@@ -87,7 +87,14 @@ it and act on it — do what it asks, or reply/report with ` + "`send_message`" 
 
 Communicate deliberately: hand off context when a teammate needs it, ask when you
 are blocked or unsure, and report progress and results. Don't go silent during
-long work, and don't start a task a teammate already owns — check first.`
+long work, and don't start a task a teammate already owns — check first.
+
+**Wake yourself later.** To resume at a specific future moment, set a one-shot
+alarm: ` + "`alarm_set { at, prompt }`" + ` wakes you once at an absolute time (e.g.
+"2026-09-11 12:31:50", your local zone) with a self-contained prompt — useful for
+a timed follow-up ("re-check the run in 30 minutes"). ` + "`alarm_clear { id }`" + `
+cancels one, and pending ⏰ alarms show in ` + "`list_members`" + `. An alarm fires
+once; for a repeating cadence that is the leader's ` + "`schedule_set`" + `.`
 
 const leaderProtocol = `## Your role: the leader
 
@@ -117,7 +124,13 @@ action.
 
 The state machine is enforced (illegal moves are rejected): ` + "`pending → running`" + `;
 ` + "`running → suspended | verifying`" + `; ` + "`suspended → running`" + `;
-` + "`verifying → completed | running`" + `. Use ` + "`task_update_status`" + ` to suspend/resume.`
+` + "`verifying → completed | running`" + `. Use ` + "`task_update_status`" + ` to suspend/resume.
+
+**Time-based duties.** For a *recurring* cadence (standing patrols, periodic
+reviews) put a member on a cron schedule with ` + "`schedule_set`" + `. To wake a
+specific member ONCE at an exact instant, use ` + "`alarm_set { at, prompt, member }`" + `
+— e.g. "wake the analyst at 2026-09-11 09:00 to review the overnight run". You are
+the only member who may target someone else's alarm; workers can still set their own.`
 
 const workerProtocol = `## Your role: a worker
 

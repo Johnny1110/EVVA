@@ -109,6 +109,14 @@ const (
 	REMOTE_TRIGGER ToolName = "remote_trigger"
 )
 
+// Alarm — one-shot, absolute-time wake. Wakes the caller (single-agent) or a
+// named swarm member (leader-scheduled) at an exact instant with a prompt.
+const (
+	ALARM_CREATE ToolName = "alarm_create"
+	ALARM_LIST   ToolName = "alarm_list"
+	ALARM_CANCEL ToolName = "alarm_cancel"
+)
+
 // Web.
 const (
 	WEB_FETCH    ToolName = "web_fetch"

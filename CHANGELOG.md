@@ -5,12 +5,58 @@ here. Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
 Stability tiers are defined in [`docs/sdk-stability.md`](docs/sdk-stability.md).
 
-Only beta releases on `main` get changelog entries; alpha releases on
-`pre-release` are staging-only and do not get separate entries (see
-CLAUDE.md). The v1.2.0–v1.6.0 work that was documented ahead of release
+Each release gets one entry: it is written when the beta is cut on `pre-release`
+(`[vX.Y.Z-beta.N]`) and renamed to `[vX.Y.Z]` when promoted to stable on `main`
+(see CLAUDE.md). The v1.2.0–v1.6.0 work that was documented ahead of release
 was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
+
+## [v1.4.3] — 2026-06-07
+
+First stable release since v0.2.0. Swarm web workstation context-aware UI
+(EvContextBar, event/timeline/color libraries), MCP server config fix, and
+bubbletea/lp UI context propagation.
+
+### Added
+
+- **Swarm FE v2 — EvContextBar.** New situational-awareness bar component
+  showing agent context across the workstation views.
+- **Swarm FE v2 — events, timeline, and colors libraries.** TypeScript utility
+  libs with tests for event routing, timeline state, and theme-aware color
+  generation.
+- **`pkg/mcp` config fix.** `pkg/mcp/config.go` gains proper config loading
+  with tests, fixing MCP server configuration that was silently dropped.
+
+### Changed
+
+- **bubbletea and lp UIs** propagate context through the component tree.
+- **CLI `cmd/evva/main.go`** updated for the new UI context wiring.
+- **Swarm `internal/swarm/service` and `webapi`** updated for the
+  context-aware FE.
+- **FE v2 web2 dist rebuilt** with EvContextBar, updated MailboxList,
+  and member stream context.
+
+## [v1.4.2-beta.1] — 2026-06-07
+
+Patch beta on v1.4.1. Swarm per-member model pinning, Node 24 web2 rebuild,
+and FE v2 workstation UX updates (inspector panels, timeline, multi-select).
+
+### Added
+
+- **Swarm per-member model pinning.** Each swarm member can now carry its own
+  model preference via `meta.yml`, overriding the cluster default. Added
+  `Constant.GPT_5_4_MINI` model entry.
+- **`internal/agent/workdir_prompt_test.go`** — test coverage for working
+  directory injection in system prompts.
+
+### Changed
+
+- **FE v2 web2 dist rebuilt** with Node 24, inspector component updates
+  (MemberInspector, TaskInspector, MailboxList), timeline improvements,
+  and AddAgentDialog enhancements.
+- **Swarm `internal/swarm/service` and `webapi`** updated for the
+  per-member model pinning and FE v2 rebuild.
 
 ## [v1.4.1-beta.1] — 2026-06-07
 
@@ -945,10 +991,13 @@ needed one-line call-site updates when they bumped to alpha.2 (see
 ## [v0.2.4-alpha.1] — 2026-05-22
 
 Initial published tag — Phase 13 SDK split + Phase 14 session storage +
-Phase 15 friday proof of concept. See `CLAUDE.md` for the per-phase
+Phase 15 friday proof of concept. See `EVVA.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.4.1-beta.1...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.4.3...HEAD
+[v1.4.3]: https://github.com/johnny1110/evva/compare/v1.4.2-beta.1...v1.4.3
+[v1.4.3-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.2-beta.1...v1.4.3-beta.1
+[v1.4.2-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.1-beta.1...v1.4.2-beta.1
 [v1.4.1-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.0-beta.1...v1.4.1-beta.1
 [v1.4.0-beta.1]: https://github.com/johnny1110/evva/compare/v1.3.0-beta.1...v1.4.0-beta.1
 [v1.3.0-beta.1]: https://github.com/johnny1110/evva/compare/v1.1.0...v1.3.0-beta.1

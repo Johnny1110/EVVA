@@ -14,6 +14,7 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,13 +52,23 @@ import (
 // be reachable off-box by default.
 const DefaultAddr = "127.0.0.1:8888"
 
-// DefaultToken is the fixed session token while the project is pre-1.0 and the
-// service is loopback-only: a memorable "root" the operator types once, instead
-// of copy-pasting a freshly minted UUID every restart. This is a deliberate
-// test-convenience tradeoff, safe because the host binds 127.0.0.1 (DefaultAddr).
-// TODO(security): before any non-loopback exposure, replace with a minted
-// per-start secret (or real auth) — see docs/roadmap/veronica/veronica-design-v1.md §8.3.
-const DefaultToken = "root"
+// IsLoopbackAddr reports whether a bind/peer address stays on this machine:
+// the host part must be a loopback IP or "localhost". An empty or wildcard
+// host (":8888", "0.0.0.0:8888", "[::]:8888") binds every interface and is
+// NOT loopback — exposing it requires the explicit --allow-remote opt-in
+// (RP-15), because a reachable service token is operator power over a host
+// whose agents run shell.
+func IsLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr // no port part — classify the whole string as the host
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 // manifestFile is the per-workdir swarm declaration `evva swarm .` reads.
 const manifestFile = "evva-swarm.yml"
@@ -66,7 +77,11 @@ const manifestFile = "evva-swarm.yml"
 type Service struct {
 	addr  string
 	token string
-	log   *slog.Logger
+	// allowRemote permits a non-loopback bind AND switches the loopback-trust
+	// conveniences off (no FE token bootstrap, no secretless webhooks) — see
+	// SetAllowRemote (RP-15).
+	allowRemote bool
+	log         *slog.Logger
 
 	hub *webapi.Hub
 	srv *http.Server
@@ -189,8 +204,11 @@ func (g *gateTracker) snapshot() []event.Event {
 }
 
 // New builds the host bound (logically) to addr. An empty addr uses
-// DefaultAddr. A session token is minted now and required on every /api + /ws
-// request. Call Listen then Serve (Serve calls Listen if you skip it).
+// DefaultAddr. A session token is minted now — a fresh UUID per start (RP-15;
+// the fixed pre-1.0 "root" is gone) — and required on every /api + /ws
+// request. The daemon persists it to <stateDir>/token (0600) for the CLI;
+// loopback browsers fetch it via GET /api/auth/bootstrap; rotation = restart.
+// Call Listen then Serve (Serve calls Listen if you skip it).
 func New(addr string) *Service {
 	if addr == "" {
 		addr = DefaultAddr
@@ -198,7 +216,7 @@ func New(addr string) *Service {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	s := &Service{
 		addr:       addr,
-		token:      DefaultToken,
+		token:      common.GenUUID(),
 		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		hub:        webapi.NewHub(),
 		rootCtx:    rootCtx,
@@ -223,9 +241,21 @@ func defaultLoadConfig(workdir string) (*config.Config, error) {
 	return config.Load(config.LoadOptions{WorkDir: workdir})
 }
 
-// Token is the session token clients must present. Printed to the terminal on
-// start so a local user can authenticate the browser.
+// Token is the session token clients must present. The daemon writes it to
+// the token file on start; local clients (CLI, FE bootstrap) read it from
+// there, remote ones get it from the operator out of band.
 func (s *Service) Token() string { return s.token }
+
+// SetAllowRemote opts the host into non-loopback binds (RP-15). Without it,
+// Listen refuses any addr whose host is not loopback. With it, the loopback
+// trust conveniences shut off — the FE token bootstrap endpoint disappears and
+// webhooks from non-loopback peers demand the space's webhook_secret — so
+// every remote caller must authenticate. Call before Listen.
+func (s *Service) SetAllowRemote(v bool) { s.allowRemote = v }
+
+// AllowRemote satisfies webapi.Backend: the router uses it to gate the
+// loopback-only token bootstrap endpoint off in remote mode.
+func (s *Service) AllowRemote() bool { return s.allowRemote }
 
 // SetLogger swaps the host's structured logger (SPRD-1-9 wires the daemon log).
 func (s *Service) SetLogger(l *slog.Logger) {
@@ -247,6 +277,9 @@ func (s *Service) Listen() error {
 	defer s.mu.Unlock()
 	if s.ln != nil {
 		return nil
+	}
+	if !s.allowRemote && !IsLoopbackAddr(s.srv.Addr) {
+		return fmt.Errorf("swarm: refusing non-loopback bind %q — the service token is operator power over a host whose agents run shell (invariant #6); pass --allow-remote to expose it anyway", s.srv.Addr)
 	}
 	ln, err := net.Listen("tcp", s.srv.Addr)
 	if err != nil {
@@ -1313,9 +1346,14 @@ const maxEventDataChars = 4000
 // wake/fold drives the leader (idle → drain A, busy → drain B). `to` defaults to
 // the leader; the message is sender "webhook" and time-stamped so the leader sees
 // it as an external trigger. An idempotency key collapses retries (duplicate ==
-// true, same id, no second wake). Errors carry "unknown space" / "stopped" so the
-// (unauthenticated) handler can map 404 / 409; anything else is 400.
-func (s *Service) IngestEvent(ref string, evt webapi.EventIn) (messageID string, duplicate bool, err error) {
+// true, same id, no second wake). Errors carry "unauthorized" / "unknown space" /
+// "stopped" so the handler can map 401 / 404 / 409; anything else is 400.
+//
+// Auth (RP-15): a space with settings.webhook_secret demands a matching secret
+// from EVERY caller; without one, loopback peers keep the RP-9 trust and
+// non-loopback peers are rejected — so --allow-remote can't silently expose an
+// unauthenticated wake-the-leader endpoint to the network.
+func (s *Service) IngestEvent(ref string, evt webapi.EventIn, auth webapi.EventAuth) (messageID string, duplicate bool, err error) {
 	ent, ok := s.entry(ref)
 	if !ok {
 		s.mu.RLock()
@@ -1325,6 +1363,13 @@ func (s *Service) IngestEvent(ref string, evt webapi.EventIn) (messageID string,
 			return "", false, fmt.Errorf("swarm: space %q is stopped", ref)
 		}
 		return "", false, fmt.Errorf("swarm: unknown space %q", ref)
+	}
+	if secret := ent.space.WebhookSecret(); secret != "" {
+		if subtle.ConstantTimeCompare([]byte(secret), []byte(auth.Secret)) != 1 {
+			return "", false, fmt.Errorf("swarm: unauthorized: webhook secret mismatch (header %s)", webapi.WebhookSecretHeader)
+		}
+	} else if !auth.Loopback {
+		return "", false, fmt.Errorf("swarm: unauthorized: remote event POST requires settings.webhook_secret on this space")
 	}
 	if strings.TrimSpace(evt.Body) == "" {
 		return "", false, fmt.Errorf("swarm: event body is required")

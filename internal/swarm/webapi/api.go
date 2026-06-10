@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io/fs"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,13 @@ import (
 type Backend interface {
 	// Token is the session token every /api and /ws request must present.
 	Token() string
+
+	// AllowRemote reports whether the host was started with the non-loopback
+	// opt-in (RP-15). When true the loopback-trust conveniences are off: the
+	// router hides the GET /api/auth/bootstrap endpoint entirely (behind a
+	// reverse proxy every caller LOOKS loopback, so the endpoint would leak
+	// the token to the world).
+	AllowRemote() bool
 
 	// HasSpace reports whether a space id is registered (the WS subscribe guard).
 	HasSpace(spaceID string) bool
@@ -98,10 +106,12 @@ type Backend interface {
 	// IngestEvent delivers an external webhook event (RP-9) onto a member's
 	// mailbox (default the leader), waking it through the ordinary bus path — a
 	// webhook is just a message. duplicate is true when the idempotency key was
-	// already seen (no second delivery/wake). Errors carry "unknown space" /
-	// "stopped" so the handler can map 404 / 409. This rides an UNAUTHENTICATED
-	// route (loopback-only trust boundary — see NewRouter).
-	IngestEvent(ref string, evt EventIn) (messageID string, duplicate bool, err error)
+	// already seen (no second delivery/wake). Errors carry "unauthorized" /
+	// "unknown space" / "stopped" so the handler can map 401 / 404 / 409. The
+	// route skips the session-token guard; instead the backend authorizes from
+	// auth (RP-15): a space-configured webhook_secret must match for everyone,
+	// and without one only loopback peers pass (the RP-9 trust boundary).
+	IngestEvent(ref string, evt EventIn, auth EventAuth) (messageID string, duplicate bool, err error)
 
 	// Agent skills (RP-10). MemberSkills lists a member's authored skills (bool false
 	// when the space/member is unknown); AddSkill writes a new SKILL.md and hot-reloads
@@ -231,9 +241,21 @@ type EventIn struct {
 	IdempotencyKey string          `json:"idempotency_key"`
 }
 
-// maxEventBytes bounds a webhook request body — the endpoint is unauthenticated
-// (loopback-only, RP-9), so cap the read defensively.
+// maxEventBytes bounds a webhook request body — the endpoint skips the session
+// token (RP-9 loopback trust / RP-15 webhook secret), so cap the read defensively.
 const maxEventBytes = 64 << 10
+
+// WebhookSecretHeader carries a space's shared webhook secret on event POSTs
+// (RP-15). Only consulted for spaces that set settings.webhook_secret.
+const WebhookSecretHeader = "X-Evva-Webhook-Secret"
+
+// EventAuth is what the transport observed about an event POST's caller: the
+// presented shared secret (may be empty) and whether the TCP peer was a
+// loopback address. The router only reports; the backend decides (RP-15).
+type EventAuth struct {
+	Secret   string
+	Loopback bool
+}
 
 // MessageInfo mirrors store.Message on the wire (GET /api/messages).
 type MessageInfo struct {
@@ -275,6 +297,21 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 	})
 
 	guard := tokenGuard(b)
+
+	// Session bootstrap (RP-15): hands the minted token to LOCAL callers so the
+	// embedded FE logs in without the operator copying anything — the same
+	// loopback trust the whole service relied on pre-RP-15, now scoped to this
+	// one endpoint. Two hard gates: it vanishes entirely in --allow-remote mode
+	// (behind a reverse proxy every caller's TCP peer IS loopback, so it would
+	// otherwise hand the token to the world), and the peer must be loopback.
+	// 404 — not 401 — when gated, so its existence isn't advertised.
+	mux.HandleFunc("GET /api/auth/bootstrap", func(w http.ResponseWriter, r *http.Request) {
+		if b.AllowRemote() || !peerIsLoopback(r.RemoteAddr) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"token": b.Token()})
+	})
 
 	// Read snapshots.
 	mux.Handle("GET /api/swarms", guard(func(w http.ResponseWriter, r *http.Request) {
@@ -323,21 +360,26 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"id": id})
 	}))
-	// External-event webhook (RP-9). DELIBERATELY un-guarded (HandleFunc, not
-	// guard): an external app drops a signal here without the root token — the
-	// trust boundary is the loopback bind, not a token (RP-9; §6 future = a
-	// per-space narrow webhook token). The body is size-capped since it's
-	// unauthenticated. new → 202, duplicate idempotency_key → 200, missing body →
-	// 400, unknown space → 404, stopped → 409.
+	// External-event webhook (RP-9/RP-15). DELIBERATELY outside the session-token
+	// guard (HandleFunc, not guard): an external app should never hold the
+	// operator token. Instead the backend authorizes per space: a configured
+	// settings.webhook_secret (header X-Evva-Webhook-Secret) must match for
+	// every caller; without one, loopback peers keep the RP-9 trust and remote
+	// peers are refused. The body is size-capped since the route is reachable
+	// pre-auth. new → 202, duplicate idempotency_key → 200, bad secret → 401,
+	// missing body → 400, unknown space → 404, stopped → 409.
 	mux.HandleFunc("POST /api/swarm/{id}/event", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxEventBytes)
 		var evt EventIn
 		if !decode(w, r, &evt) {
 			return
 		}
-		id, dup, err := b.IngestEvent(r.PathValue("id"), evt)
+		auth := EventAuth{Secret: r.Header.Get(WebhookSecretHeader), Loopback: peerIsLoopback(r.RemoteAddr)}
+		id, dup, err := b.IngestEvent(r.PathValue("id"), evt, auth)
 		if err != nil {
 			switch {
+			case strings.Contains(err.Error(), "unauthorized"):
+				http.Error(w, err.Error(), http.StatusUnauthorized)
 			case strings.Contains(err.Error(), "unknown space"):
 				http.Error(w, err.Error(), http.StatusNotFound)
 			case strings.Contains(err.Error(), "stopped"):
@@ -532,6 +574,20 @@ func tokenGuard(b Backend) func(http.HandlerFunc) http.Handler {
 			next(w, r)
 		})
 	}
+}
+
+// peerIsLoopback reports whether a request's TCP peer is a loopback address.
+// RemoteAddr is kernel-reported (never a header), so a remote caller cannot
+// spoof it; behind a reverse proxy it is the PROXY's address — which is exactly
+// why remote-facing deployments must run --allow-remote (killing the loopback
+// trust paths) rather than proxying a default loopback-trusting instance.
+func peerIsLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // bearer extracts the presented token from the Authorization header or the

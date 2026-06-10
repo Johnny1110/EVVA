@@ -296,6 +296,12 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 	return nil
 }
 
+// WebhookSecret returns the space's external-event shared secret ("" = unset,
+// RP-9 loopback trust). Exported for the service's webhook auth check (RP-15).
+func (sp *SwarmSpace) WebhookSecret() string {
+	return sp.settings.WebhookSecret // set once at construction, never mutated
+}
+
 // ScheduleFor returns a member's declared timer schedule, if any. Exported so
 // list_members (internal/swarm/tools) can render each member's crontab.
 func (sp *SwarmSpace) ScheduleFor(name string) (agentdef.Schedule, bool) {

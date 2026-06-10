@@ -161,6 +161,7 @@ settings:
   # budget_stay_frozen: false     # true = a budget freeze survives the day rollover
   # stall_threshold: 10m          # alert when a member is busy longer; "0" off (omit = 10m)
   # stall_hard_timeout: 30m       # auto-cancel a run busy longer; 0/omit = off
+  # webhook_secret: "hunter2"     # require X-Evva-Webhook-Secret on event POSTs (see §10)
 ```
 
 - **Member names are unique** within a space (no replicas — give each a distinct
@@ -466,11 +467,59 @@ Stopping one never affects the other.
 - The service binds **`127.0.0.1` only** by default — it is not reachable from
   other machines. (Agents run shell and edit files, so the workstation is
   effectively remote-code-execution; keep it on loopback.)
-- Every web/API request needs the **session token** (printed on start, stored at
-  `~/.evva/service/token`). The browser asks you to paste it once.
+- Every web/API request needs the **session token**. Since v1.5 it is a random
+  secret minted on every `evva service start` (the fixed dev token `root` is
+  gone), stored at `~/.evva/service/token` (0600). You normally never see it:
+  a browser on the same machine logs in by itself (a loopback-only bootstrap
+  endpoint hands it over), and the CLI reads the file. Rotation = restart.
 - In `permission_mode: default`, write/shell-class tools route through the
   approval overlay — you stay in the loop. Use `bypass` only when you trust the
   task and the workdir.
+
+### Exposing the workstation beyond this machine (`--allow-remote`)
+
+By default a non-loopback bind **refuses to start**. To reach the workstation
+from another device (LAN or behind a reverse proxy), opt in explicitly:
+
+```bash
+evva service start --addr 0.0.0.0:8888 --allow-remote
+```
+
+Know the threat model before you do: **whoever presents the session token is
+the operator** — they can approve tool calls, message members, and therefore
+run shell on this machine. In remote mode the loopback conveniences shut off:
+
+- The FE auto-login bootstrap endpoint disappears (behind a proxy every caller
+  would look local). Paste the token from `~/.evva/service/token` once per
+  device, per service start.
+- Webhook POSTs from other hosts are rejected unless the target space sets
+  `settings.webhook_secret` (below).
+
+Put TLS termination and any IP filtering in your reverse proxy — the service
+itself stays plain HTTP and single-operator (no accounts, no RBAC).
+
+### External-event webhook + `webhook_secret`
+
+External apps can wake a member (default: the leader) by POSTing an event —
+no session token involved:
+
+```bash
+curl -X POST http://127.0.0.1:8888/api/swarm/<space-id>/event \
+  -H 'Content-Type: application/json' \
+  -H 'X-Evva-Webhook-Secret: hunter2' \
+  -d '{"title":"BTC spike","body":"vol>3sigma","source":"trader-engine",
+       "idempotency_key":"evt-123"}'
+```
+
+Auth rules (RP-15):
+
+| Space setting | Local caller (same machine) | Remote caller |
+| --- | --- | --- |
+| no `webhook_secret` | accepted (legacy loopback trust) | **401** |
+| `webhook_secret` set | needs the matching header | needs the matching header |
+
+Replies: new → 202, duplicate `idempotency_key` → 200, bad/missing secret →
+401, unknown space → 404, stopped → 409. Bodies are capped at 64 KB.
 
 ---
 
@@ -480,7 +529,7 @@ Stopping one never affects the other.
 
 | Command | What it does |
 | --- | --- |
-| `evva service start` | Start the `:8888` host as a background daemon (prints the token). |
+| `evva service start` | Start the `:8888` host as a background daemon (mints + stores the token). Flags: `--addr <host:port>`, `--allow-remote` (required for any non-loopback addr). |
 | `evva service status` | Report running/stopped, pid, address, token location. |
 | `evva service stop` | Stop the daemon (spaces are preserved for the next start). |
 | `evva swarm .` | Register the current directory's `evva-swarm.yml` as a new space. |
@@ -494,6 +543,7 @@ Stopping one never affects the other.
 | --- | --- |
 | `EVVA_SERVICE_ADDR` | Override the listen/target address (default `127.0.0.1:8888`). |
 | `EVVA_SERVICE_HOME` | Override the runtime dir (default `<AppHome>/service/`: pidfile, token, addr, log). |
+| `EVVA_SERVICE_ALLOW_REMOTE` | `1` = allow a non-loopback bind (what `--allow-remote` sets for the daemon child). |
 
 ### Runtime files (`~/.evva/service/`)
 

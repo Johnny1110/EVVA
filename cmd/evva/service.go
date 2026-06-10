@@ -36,11 +36,14 @@ func parseLogLevel(s string) slog.Level {
 //
 //   - start  — daemonize the :8888 host (detached child), write a pidfile + token
 //     + addr + log under <AppHome>/service/. Refuses if already running.
+//     Flags: --addr <host:port> overrides the bind (else $EVVA_SERVICE_ADDR,
+//     else 127.0.0.1:8888); --allow-remote opts into a non-loopback bind
+//     (RP-15) — without it a non-loopback --addr refuses to start.
 //   - stop   — signal the daemon and clean the pidfile (stale pid → just clean).
 //   - status — report running/stopped, pid, addr, healthz, and the token file.
 //
 // The backgrounded child re-enters this same path with EVVA_SERVICE_DAEMON=1 and
-// runs the blocking server (serviceRun).
+// runs the blocking server (serviceRun); the flags reach it as env vars.
 func runService(args []string) {
 	if os.Getenv(daemonEnv) == "1" {
 		serviceRun()
@@ -50,31 +53,68 @@ func runService(args []string) {
 	sub := "start"
 	if len(args) > 0 {
 		sub = args[0]
+		args = args[1:]
+	}
+	addr, allowRemote, rest := extractServiceFlags(args)
+	if len(rest) > 0 {
+		exitf(2, "evva service %s: unexpected argument %q", sub, rest[0])
 	}
 
 	var err error
 	switch sub {
 	case "start":
-		err = serviceStart(os.Stdout)
+		err = serviceStart(os.Stdout, addr, allowRemote)
 	case "stop":
 		err = serviceStop(os.Stdout)
 	case "status":
 		err = serviceStatus(os.Stdout)
 	default:
-		exitf(2, "evva service: unknown subcommand %q (want start|stop|status)", sub)
+		exitf(2, "evva service: unknown subcommand %q (want start|stop|status; start takes --addr <host:port> and --allow-remote)", sub)
 	}
 	if err != nil {
 		exitf(1, "evva service %s: %v", sub, err)
 	}
 }
 
+// extractServiceFlags pulls `--addr <v>` (or `--addr=v`) and `--allow-remote`
+// out of args from any position, returning the leftovers.
+func extractServiceFlags(args []string) (addr string, allowRemote bool, rest []string) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--addr" && i+1 < len(args):
+			addr = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--addr="):
+			addr = strings.TrimPrefix(a, "--addr=")
+		case a == "--allow-remote":
+			allowRemote = true
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return addr, allowRemote, rest
+}
+
 // serviceStart backgrounds a detached copy of this binary running the host, then
-// records its pid. Idempotent: a live daemon makes it refuse.
-func serviceStart(out io.Writer) error {
+// records its pid. Idempotent: a live daemon makes it refuse. addrFlag is the
+// --addr override ("" = env/default); allowRemote is the explicit non-loopback
+// opt-in, validated here too so a bad combination fails in the caller's
+// terminal instead of only in the daemon log.
+func serviceStart(out io.Writer, addrFlag string, allowRemote bool) error {
 	if pid, ok := readPid(); ok && processAlive(pid) {
 		return fmt.Errorf("already running (pid %d) at %s", pid, targetAddr())
 	}
 	// A stale pidfile (process gone) is fine to overwrite.
+
+	addr := addrFlag
+	if addr == "" {
+		addr = listenAddr()
+	}
+	if !allowRemote && !service.IsLoopbackAddr(addr) {
+		return fmt.Errorf("refusing non-loopback bind %q — anyone who reaches the service holds operator power over this machine (the agents run shell). Pass --allow-remote to expose it anyway; every endpoint then requires the session token (%s)", addr, tokenPath())
+	}
 
 	if err := os.MkdirAll(serviceDir(), 0o755); err != nil {
 		return err
@@ -89,9 +129,11 @@ func serviceStart(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	addr := listenAddr()
 	cmd := exec.Command(exe, "service", "start")
 	cmd.Env = append(os.Environ(), daemonEnv+"=1", addrEnv+"="+addr)
+	if allowRemote {
+		cmd.Env = append(cmd.Env, allowRemoteEnv+"=1")
+	}
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	cmd.Stdin = nil
@@ -107,6 +149,9 @@ func serviceStart(out io.Writer) error {
 	fmt.Fprintf(out, "evva service started (pid %d) on http://%s\n", cmd.Process.Pid, addr)
 	fmt.Fprintf(out, "  logs:  %s\n", logPath())
 	fmt.Fprintf(out, "  token: %s\n", tokenPath())
+	if allowRemote {
+		fmt.Fprintf(out, "  REMOTE MODE: all endpoints require the token above; webhook POSTs from other hosts need each space's settings.webhook_secret.\n")
+	}
 	return nil
 }
 
@@ -114,7 +159,8 @@ func serviceStart(out io.Writer) error {
 // and serve until SIGTERM/SIGINT. It removes the runtime files on a clean exit.
 func serviceRun() {
 	svc := service.New(listenAddr())
-	svc.SetStateDir(serviceDir()) // persist + reconcile registered spaces across restarts
+	svc.SetAllowRemote(os.Getenv(allowRemoteEnv) == "1") // before Listen — it gates non-loopback binds
+	svc.SetStateDir(serviceDir())                        // persist + reconcile registered spaces across restarts
 	if err := svc.Listen(); err != nil {
 		fmt.Fprintf(os.Stderr, "evva service: %v\n", err)
 		os.Exit(1)

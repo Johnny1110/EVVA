@@ -20,13 +20,15 @@ var errBadName = errors.New("illegal member name")
 var errLeaderProtected = errors.New("the leader cannot be removed")
 var errSpaceStopped = errors.New("space is stopped")
 var errBadBody = errors.New("event body is required")
+var errUnauthorized = errors.New("unauthorized: webhook secret mismatch")
 var errBadSkill = errors.New("skill name is required")
 
 // fakeBackend is a Backend stub that records inbound commands and returns canned
 // snapshots, so the HTTP/WS layer can be exercised without a live swarm.
 type fakeBackend struct {
-	token  string
-	spaces map[string][]MemberInfo // id -> roster
+	token       string
+	allowRemote bool
+	spaces      map[string][]MemberInfo // id -> roster
 
 	mu            sync.Mutex
 	runs          [][3]string // {space, agent, prompt}
@@ -37,12 +39,14 @@ type fakeBackend struct {
 	creates       []MemberSpec      // CreateMember calls
 	removes       [][3]string       // {space, agent, deleteDir}
 	events        []EventIn         // IngestEvent calls
+	eventAuths    []EventAuth       // what the router reported per event POST (RP-15)
 	eventKeys     map[string]string // idempotency_key -> message id
 	skillsAdded   []SkillSpec       // AddSkill calls
 	skillsDeleted [][2]string       // {agent, skill}
 }
 
 func (f *fakeBackend) Token() string                           { return f.token }
+func (f *fakeBackend) AllowRemote() bool                       { return f.allowRemote }
 func (f *fakeBackend) HasSpace(id string) bool                 { _, ok := f.spaces[id]; return ok }
 func (f *fakeBackend) Register(string, string) (string, error) { return "sp-new", nil }
 func (f *fakeBackend) StopSpace(id string) error {
@@ -214,11 +218,15 @@ func (f *fakeBackend) DeleteSkill(space, agent, skill string) error {
 	f.mu.Unlock()
 	return nil
 }
-func (f *fakeBackend) IngestEvent(ref string, evt EventIn) (string, bool, error) {
+func (f *fakeBackend) IngestEvent(ref string, evt EventIn, auth EventAuth) (string, bool, error) {
 	if ref == "sp-stopped" {
 		return "", false, errSpaceStopped
 	}
-	if !f.HasSpace(ref) {
+	// "sp-secret" models an RP-15 space with settings.webhook_secret = "s3cret".
+	if ref == "sp-secret" && auth.Secret != "s3cret" {
+		return "", false, errUnauthorized
+	}
+	if ref != "sp-secret" && !f.HasSpace(ref) {
 		return "", false, errUnknownSpace
 	}
 	if strings.TrimSpace(evt.Body) == "" {
@@ -226,6 +234,7 @@ func (f *fakeBackend) IngestEvent(ref string, evt EventIn) (string, bool, error)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.eventAuths = append(f.eventAuths, auth)
 	if evt.IdempotencyKey != "" {
 		if f.eventKeys == nil {
 			f.eventKeys = map[string]string{}
@@ -640,6 +649,79 @@ func TestEventWebhookUnauthenticated(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("guarded route without token = %d, want 401", resp.StatusCode)
+	}
+}
+
+// RP-15: a space with a webhook secret 401s wrong/missing X-Evva-Webhook-Secret
+// headers and accepts the right one; the router reports secret + loopback peer.
+func TestEventWebhookSecret(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+
+	postEv := func(secret string) int {
+		req, _ := http.NewRequest("POST", srv.URL+"/api/swarm/sp-secret/event", bytes.NewBufferString(`{"body":"hi"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if secret != "" {
+			req.Header.Set(WebhookSecretHeader, secret)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if s := postEv(""); s != http.StatusUnauthorized {
+		t.Fatalf("missing secret = %d, want 401", s)
+	}
+	if s := postEv("wrong"); s != http.StatusUnauthorized {
+		t.Fatalf("wrong secret = %d, want 401", s)
+	}
+	if s := postEv("s3cret"); s != http.StatusAccepted {
+		t.Fatalf("right secret = %d, want 202", s)
+	}
+	if n := len(fake.eventAuths); n != 1 {
+		t.Fatalf("recorded auths = %d, want 1 (only the accepted POST)", n)
+	}
+	if a := fake.eventAuths[0]; a.Secret != "s3cret" || !a.Loopback {
+		t.Fatalf("reported auth = %+v, want the secret and a loopback peer", a)
+	}
+}
+
+// RP-15: GET /api/auth/bootstrap hands the token to loopback callers only, and
+// vanishes entirely in --allow-remote mode (the reverse-proxy guard).
+func TestBootstrapTokenEndpoint(t *testing.T) {
+	fake := newFake()
+	router := NewRouter(fake, NewHub(), nil)
+
+	get := func(remoteAddr string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/auth/bootstrap", nil)
+		req.RemoteAddr = remoteAddr
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := get("127.0.0.1:54321")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("loopback bootstrap = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Token != fake.token {
+		t.Fatalf("bootstrap token = %q (err %v), want %q", body.Token, err, fake.token)
+	}
+
+	if rec := get("203.0.113.9:4242"); rec.Code != http.StatusNotFound {
+		t.Fatalf("remote-peer bootstrap = %d, want 404 (not advertised)", rec.Code)
+	}
+
+	fake.allowRemote = true
+	if rec := get("127.0.0.1:54321"); rec.Code != http.StatusNotFound {
+		t.Fatalf("allow-remote bootstrap = %d, want 404 even for loopback", rec.Code)
 	}
 }
 

@@ -26,10 +26,11 @@ import (
 // EVVA_SERVICE_HOME overrides the directory (tests point it at a temp dir);
 // EVVA_SERVICE_ADDR overrides the listen/target address.
 const (
-	daemonEnv  = "EVVA_SERVICE_DAEMON" // set on the backgrounded child
-	addrEnv    = "EVVA_SERVICE_ADDR"
-	homeEnv    = "EVVA_SERVICE_HOME"
-	defaultSvc = "127.0.0.1:8888"
+	daemonEnv      = "EVVA_SERVICE_DAEMON"       // set on the backgrounded child
+	addrEnv        = "EVVA_SERVICE_ADDR"
+	allowRemoteEnv = "EVVA_SERVICE_ALLOW_REMOTE" // "1" = non-loopback bind opt-in (RP-15)
+	homeEnv        = "EVVA_SERVICE_HOME"
+	defaultSvc     = "127.0.0.1:8888"
 
 	pidName   = "evva-service.pid"
 	tokenName = "token"

@@ -41,8 +41,18 @@ async function start(s: SpaceInfo) {
   }
 }
 
-onMounted(() => {
-  if (session.authed) spaces.load()
+onMounted(async () => {
+  // Same-machine browsers auto-login via the loopback bootstrap (RP-15).
+  if (!session.authed) await session.bootstrap()
+  if (!session.authed) return
+  await spaces.load()
+  // Tokens rotate per service start, so a stored one goes stale on restart —
+  // drop it and bootstrap once more before bothering the operator.
+  if (spaces.error.includes('unauthorized')) {
+    session.disconnect()
+    await session.bootstrap()
+    if (session.authed) await spaces.load()
+  }
 })
 </script>
 
@@ -61,10 +71,11 @@ onMounted(() => {
 
     <EvPanel v-if="!session.authed" title="Connect" class="gate">
       <p class="dim">
-        Enter the session token printed by <code>evva service start</code>. Default in dev: <code>root</code>.
+        On the service's machine this page logs in by itself. From another device, paste the
+        session token from the file shown by <code>evva service status</code>.
       </p>
       <div class="row">
-        <input v-model="draft" type="password" placeholder="session token (default: root)" @keyup.enter="connect" />
+        <input v-model="draft" type="password" placeholder="session token" @keyup.enter="connect" />
         <EvButton variant="primary" @click="connect">Connect</EvButton>
       </div>
     </EvPanel>

@@ -205,3 +205,35 @@ settings:
 		}
 	}
 }
+
+// RP-15: settings.webhook_secret loads (trimmed), defaults to "", and
+// round-trips through WriteManifest.
+func TestManifestWebhookSecret(t *testing.T) {
+	p := writeManifest(t, "leader:\n  agent: lead\nsettings:\n  webhook_secret: \"  hunter2  \"\n")
+	m, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.Settings.WebhookSecret != "hunter2" {
+		t.Fatalf("WebhookSecret = %q, want trimmed %q", m.Settings.WebhookSecret, "hunter2")
+	}
+	if err := WriteManifest(p, m); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	back, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if back.Settings.WebhookSecret != "hunter2" {
+		t.Fatalf("round-trip WebhookSecret = %q, want %q", back.Settings.WebhookSecret, "hunter2")
+	}
+
+	plain := writeManifest(t, "leader:\n  agent: lead\n")
+	m2, err := LoadManifest(plain)
+	if err != nil {
+		t.Fatalf("LoadManifest (omitted): %v", err)
+	}
+	if m2.Settings.WebhookSecret != "" {
+		t.Fatalf("omitted webhook_secret = %q, want empty", m2.Settings.WebhookSecret)
+	}
+}

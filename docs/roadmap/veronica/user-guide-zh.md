@@ -156,6 +156,7 @@ settings:
   # budget_stay_frozen: false     # true = 超额冻结跨日不自动解冻（需手动）
   # stall_threshold: 10m          # 成员忙超过即告警；"0" 关闭（省略 = 默认 10m）
   # stall_hard_timeout: 30m       # 忙超过即自动取消该次运行；0/省略 = 关闭
+  # webhook_secret: "hunter2"     # 要求事件 POST 携带 X-Evva-Webhook-Secret（见 §10）
 ```
 
 - 同一 space 内**成员名唯一**（不支持副本 —— 每个成员取不同名字）。
@@ -428,10 +429,55 @@ evva swarm ls            # 两个都列出，完全隔离
 
 - service 默认**只绑定 `127.0.0.1`** —— 外部机器无法访问。（agent 会跑 shell、改
   文件，所以这个工作站等同于远程代码执行；务必留在 loopback 上。）
-- 每个 Web/API 请求都需要**会话 token**（启动时打印，存于
-  `~/.evva/service/token`）。浏览器会让你粘贴一次。
+- 每个 Web/API 请求都需要**会话 token**。自 v1.5 起它是每次 `evva service start`
+  随机铸造的密钥（固定的开发 token `root` 已移除），存于 `~/.evva/service/token`
+ （权限 0600）。正常情况下你根本见不到它：同一台机器上的浏览器会自动登录
+ （一个仅限 loopback 的 bootstrap 端点把 token 交给页面），CLI 直接读文件。
+  轮换 = 重启。
 - 在 `permission_mode: default` 下，写/ shell 类工具会走审批弹窗 —— 你始终在环路里。
   仅在你信任任务和工作目录时才用 `bypass`。
+
+### 把工作站暴露到本机之外（`--allow-remote`）
+
+默认情况下，非 loopback 绑定**直接拒绝启动**。要从其他设备（局域网、或经反向
+代理）访问工作站，必须显式开启：
+
+```bash
+evva service start --addr 0.0.0.0:8888 --allow-remote
+```
+
+先想清楚威胁模型：**谁拿到会话 token，谁就是 operator** —— 可以批准工具调用、给
+成员发消息，等同于在这台机器上执行 shell。远程模式下，loopback 的便利全部关闭：
+
+- FE 自动登录的 bootstrap 端点消失（经代理后所有请求看起来都来自本机）。每台
+  设备、每次 service 重启后，从 `~/.evva/service/token` 粘贴一次 token。
+- 其他主机发来的 webhook POST 一律拒绝，除非目标 space 配置了
+  `settings.webhook_secret`（见下）。
+
+TLS 终结和 IP 过滤交给你的反向代理 —— service 本身保持纯 HTTP、单 operator
+（没有账号体系，没有 RBAC）。
+
+### 外部事件 webhook 与 `webhook_secret`
+
+外部应用可以 POST 一个事件来唤醒某个成员（默认 leader），不需要会话 token：
+
+```bash
+curl -X POST http://127.0.0.1:8888/api/swarm/<space-id>/event \
+  -H 'Content-Type: application/json' \
+  -H 'X-Evva-Webhook-Secret: hunter2' \
+  -d '{"title":"BTC spike","body":"vol>3sigma","source":"trader-engine",
+       "idempotency_key":"evt-123"}'
+```
+
+鉴权规则（RP-15）：
+
+| space 配置 | 本机调用 | 远程调用 |
+| --- | --- | --- |
+| 未设 `webhook_secret` | 放行（沿用 loopback 信任） | **401** |
+| 设了 `webhook_secret` | 必须带对的 header | 必须带对的 header |
+
+返回码：新事件 → 202，重复 `idempotency_key` → 200，secret 缺失/错误 → 401，
+未知 space → 404，已停止 → 409。请求体上限 64 KB。
 
 ---
 
@@ -441,7 +487,7 @@ evva swarm ls            # 两个都列出，完全隔离
 
 | 命令 | 作用 |
 | --- | --- |
-| `evva service start` | 以后台守护进程启动 `:8888` 宿主（打印 token）。 |
+| `evva service start` | 以后台守护进程启动 `:8888` 宿主（铸造并保存 token）。旗标：`--addr <host:port>`、`--allow-remote`（任何非 loopback 地址都必须带它）。 |
 | `evva service status` | 报告运行/停止、pid、地址、token 位置。 |
 | `evva service stop` | 停止守护进程（space 会被保留，下次启动续跑）。 |
 | `evva swarm .` | 把当前目录的 `evva-swarm.yml` 注册为一个新 space。 |
@@ -455,6 +501,7 @@ evva swarm ls            # 两个都列出，完全隔离
 | --- | --- |
 | `EVVA_SERVICE_ADDR` | 覆盖监听/目标地址（默认 `127.0.0.1:8888`）。 |
 | `EVVA_SERVICE_HOME` | 覆盖运行时目录（默认 `<AppHome>/service/`：pidfile、token、addr、log）。 |
+| `EVVA_SERVICE_ALLOW_REMOTE` | `1` = 允许非 loopback 绑定（`--allow-remote` 传给守护子进程的形式）。 |
 
 ### 运行时文件（`~/.evva/service/`）
 

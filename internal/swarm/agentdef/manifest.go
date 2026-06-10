@@ -53,6 +53,11 @@ type Settings struct {
 	// the non-clean exit unclaims the run's mail so it retries on the next
 	// wake. 0 = disabled (the default: alert-only until thresholds are tuned).
 	StallHardTimeout time.Duration
+	// WebhookSecret, when set, is required on every external-event POST for
+	// this space (header X-Evva-Webhook-Secret, RP-15). Unset keeps the RP-9
+	// loopback trust: local callers post freely, non-loopback callers are
+	// rejected outright.
+	WebhookSecret string
 }
 
 // DefaultStallThreshold is the alert line a manifest gets when it does not set
@@ -88,6 +93,7 @@ type manifestYml struct {
 		BudgetStayFrozen  bool   `yaml:"budget_stay_frozen,omitempty"`
 		StallThreshold    string `yaml:"stall_threshold,omitempty"`    // duration; "" = default, "0" = off
 		StallHardTimeout  string `yaml:"stall_hard_timeout,omitempty"` // duration; "" or "0" = off
+		WebhookSecret     string `yaml:"webhook_secret,omitempty"`
 	} `yaml:"settings,omitempty"`
 }
 
@@ -160,6 +166,7 @@ func LoadManifest(path string) (Manifest, error) {
 			BudgetStayFrozen:  y.Settings.BudgetStayFrozen,
 			StallThreshold:    stall,
 			StallHardTimeout:  hard,
+			WebhookSecret:     strings.TrimSpace(y.Settings.WebhookSecret),
 		},
 	}
 	for _, w := range y.Workers {
@@ -214,6 +221,7 @@ func WriteManifest(path string, m Manifest) error {
 	if m.Settings.StallHardTimeout > 0 {
 		y.Settings.StallHardTimeout = m.Settings.StallHardTimeout.String()
 	}
+	y.Settings.WebhookSecret = m.Settings.WebhookSecret
 	b, err := yaml.Marshal(y)
 	if err != nil {
 		return fmt.Errorf("agentdef: marshal manifest: %w", err)

@@ -30,6 +30,21 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ### Added
 
+- **Swarm web API auth hardening (RP-15).** The fixed dev session token
+  (`root`) is gone: every `evva service start` mints a random secret, persists
+  it to `~/.evva/service/token` (0600), and the CLI keeps reading that file —
+  while a browser on the same machine now logs in BY ITSELF via the new
+  loopback-only `GET /api/auth/bootstrap` endpoint (it also self-heals a stale
+  stored token after a service restart, since tokens rotate per start).
+  Non-loopback binds refuse to start unless `evva service start --addr …
+  --allow-remote` is given; remote mode kills the bootstrap endpoint (the
+  reverse-proxy guard) so every remote caller must present the minted token.
+  The external-event webhook gains an optional per-space shared secret
+  (`settings.webhook_secret`, header `X-Evva-Webhook-Secret`): when set it is
+  required from everyone; when unset, local callers keep the RP-9 trust and
+  remote callers are rejected — `--allow-remote` can no longer expose an
+  unauthenticated wake endpoint. Documented in the swarm user guide's §10
+  (threat model, LAN exposure how-to, webhook auth matrix; zh/en).
 - **Swarm stuck-run watchdog (RP-14).** A member busy past
   `settings.stall_threshold` (default 10m; `"0"` disables) raises ONE stall
   notice per run to the operator and the leader — members waiting on a human

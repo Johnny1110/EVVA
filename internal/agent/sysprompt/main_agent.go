@@ -50,6 +50,7 @@ import (
 func buildMainPrompt(ctx PromptContext) string {
 	return joinSections(
 		identitySection(ctx),
+		prioritySection(),
 		coreRulesSection(),
 		systemSection(),
 		doingTasksSection(),
@@ -62,6 +63,7 @@ func buildMainPrompt(ctx PromptContext) string {
 		autoMemoryGuidanceSection(ctx),
 		memoryIndexSection(ctx),
 		sessionSpecificGuidanceSection(),
+		contextPreservationSection(),
 		skillsSection(ctx.Skills, false),
 		summarizeToolResultsSection(),
 		mainTodoSection(),

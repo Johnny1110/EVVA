@@ -46,3 +46,34 @@ func TestRetentionSweepDisabledByZero(t *testing.T) {
 		t.Fatalf("retention-off sweep touched the ledger: %v", err)
 	}
 }
+
+// RP-17: the scheduler feeds the per-member counters — a message wake counts
+// once, its run counts once (clean), and a suspended run counts as an abort.
+func TestMetricsCounting(t *testing.T) {
+	sp, ctls := ctlSpace(t, map[string]agentdef.Role{"w": agentdef.RoleWorker})
+	sp.metrics = newSpaceMetrics()
+	startSup(t, sp)
+
+	if _, err := sp.Bus.Send(store.Message{Sender: "user", Recipient: "w", Body: "hi"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitFor(t, 5*time.Second, "clean run counted", func() bool {
+		m, _ := sp.MetricsSnapshot()
+		w := m["w"]
+		return w.WakesMessage >= 1 && w.Runs >= 1 && w.Aborts == 0 && w.RunSeconds[0] >= 1
+	})
+
+	// A blocked run cancelled by Suspend lands in the abort column.
+	ctls["w"].block = true
+	if _, err := sp.Bus.Send(store.Message{Sender: "user", Recipient: "w", Body: "hang"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitFor(t, 5*time.Second, "member busy", func() bool { return runStatusOf(sp, "w") == RunBusy })
+	if err := sp.super.Suspend("w"); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	waitFor(t, 5*time.Second, "abort counted", func() bool {
+		m, _ := sp.MetricsSnapshot()
+		return m["w"].Aborts >= 1
+	})
+}

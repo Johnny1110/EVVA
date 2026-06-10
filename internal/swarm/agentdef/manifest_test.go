@@ -281,3 +281,34 @@ func TestManifestRetentionKnob(t *testing.T) {
 		}
 	}
 }
+
+// RP-17: settings.event_log — omitted → true, explicit false → false, and the
+// value round-trips (true omits, false writes).
+func TestManifestEventLogKnob(t *testing.T) {
+	m, err := LoadManifest(writeManifest(t, "leader:\n  agent: lead\n"))
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if !m.Settings.EventLog {
+		t.Fatal("omitted event_log should default to true")
+	}
+
+	p := writeManifest(t, "leader:\n  agent: lead\nsettings:\n  event_log: false\n")
+	m, err = LoadManifest(p)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.Settings.EventLog {
+		t.Fatal("event_log: false should disable")
+	}
+	if err := WriteManifest(p, m); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	back, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if back.Settings.EventLog {
+		t.Fatal("explicit off lost in the round-trip")
+	}
+}

@@ -158,6 +158,7 @@ settings:
   # stall_hard_timeout: 30m       # 忙超过即自动取消该次运行；0/省略 = 关闭
   # webhook_secret: "hunter2"     # 要求事件 POST 携带 X-Evva-Webhook-Secret（见 §10）
   # retention_days: 30            # 已消费历史 N 天后归档+删除；"0" = 永不删除
+  # event_log: true               # 事件镜像到 .vero/events/（按日 jsonl）；false = 关闭
 ```
 
 - 同一 space 内**成员名唯一**（不支持副本 —— 每个成员取不同名字）。
@@ -427,6 +428,33 @@ evva swarm vacuum my-eng-team --days 7      # 本次临时覆盖窗口
 `zcat .vero/archive/2026-06.jsonl.gz | jq .`（每行带 `kind` message/task 和完整
 原始行）。量级参考：积压 10 万条 messages 时 API 单次 ~300 ms，vacuum 后回到
 亚毫秒，清理本身约 1.2 秒。
+
+### 飞行记录器与 metrics（event log / `/metrics`）
+
+Web 界面看到的每一个事件（run/turn 生命周期、工具调用与结果、审批、错误——除了
+token 级的流式 chunk）都会同时追加到 `<workdir>/.vero/events/YYYY-MM-DD.jsonl`，
+每行一条带时间戳的 JSON。「昨晚 03:00 发生了什么」从此一句 grep 就能回答，重启
+也不丢：
+
+```bash
+grep '03:0' .vero/events/2026-06-09.jsonl | jq '.event.event.Kind' | sort | uniq -c
+```
+
+文件按日切；旧文件按同一个 `retention_days` 窗口清理（`"0"` = 永久保留）。
+`event_log: false` 关闭记录器。记录器永远不会拖慢 swarm：缓冲满了就丢行并计数
+（`eventsDropped`），绝不阻塞事件泵。
+
+实时计数器（按成员，自 space 启动起累计）：
+
+```bash
+curl -s -H "Authorization: Bearer $(cat ~/.evva/service/token)" \
+  http://127.0.0.1:8888/api/swarm/<ref>/metrics | jq .
+```
+
+返回 `uptimeSecs`、`eventsLogged` / `eventsDropped`（记录器）、`hintsDropped`
+（信箱背压——持续上涨说明某成员长期积压）、以及每成员的 `wakesMessage` /
+`wakesTimer` / `runs` / `aborts` 和运行时长直方图（`runSeconds`：lt10s / lt1m /
+lt10m / gte10m）。纯 JSON——要历史曲线就自己接 exporter。
 
 ### 重启与续跑
 

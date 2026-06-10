@@ -127,6 +127,11 @@ type Backend interface {
 	// messages read ≥ days ago and tasks completed ≥ days ago. days <= 0 uses
 	// the space's configured window (or the default); dryRun only counts.
 	Vacuum(ref string, days int, dryRun bool) (VacuumStats, error)
+
+	// Metrics snapshots a space's scheduler counters (RP-17): per-member
+	// wakes/runs/aborts + run-duration buckets, bus hint drops, and the event
+	// log's logged/dropped counts. false = unknown or stopped space.
+	Metrics(spaceID string) (MetricsInfo, bool)
 }
 
 // SpaceInfo is one row of GET /api/swarms. Status is "running" | "stopped"
@@ -271,6 +276,26 @@ type VacuumStats struct {
 	Files    []string `json:"files,omitempty"`
 	Days     int      `json:"days"`
 	DryRun   bool     `json:"dryRun"`
+}
+
+// MetricsInfo is GET /api/swarm/{id}/metrics (RP-17): plain counters, no
+// timeseries — the user-side exporter (if any) owns history.
+type MetricsInfo struct {
+	UptimeSecs    int64                        `json:"uptimeSecs"`
+	EventsLogged  int64                        `json:"eventsLogged"`
+	EventsDropped int64                        `json:"eventsDropped"`
+	HintsDropped  int64                        `json:"hintsDropped"`
+	Members       map[string]MemberMetricsInfo `json:"members"`
+}
+
+// MemberMetricsInfo is one member's scheduler counters. RunSeconds buckets
+// completed runs by wall-clock duration: lt10s / lt1m / lt10m / gte10m.
+type MemberMetricsInfo struct {
+	WakesMessage int64            `json:"wakesMessage"`
+	WakesTimer   int64            `json:"wakesTimer"`
+	Runs         int64            `json:"runs"`
+	Aborts       int64            `json:"aborts"`
+	RunSeconds   map[string]int64 `json:"runSeconds"`
 }
 
 // MessageInfo mirrors store.Message on the wire (GET /api/messages).
@@ -456,6 +481,14 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 	mux.Handle("GET /api/swarm/{id}/pending", guard(func(w http.ResponseWriter, r *http.Request) {
 		if gates, ok := b.PendingGates(r.PathValue("id")); ok {
 			writeJSON(w, http.StatusOK, gates)
+		} else {
+			http.Error(w, "unknown space", http.StatusNotFound)
+		}
+	}))
+	// Scheduler counters (RP-17).
+	mux.Handle("GET /api/swarm/{id}/metrics", guard(func(w http.ResponseWriter, r *http.Request) {
+		if m, ok := b.Metrics(r.PathValue("id")); ok {
+			writeJSON(w, http.StatusOK, m)
 		} else {
 			http.Error(w, "unknown space", http.StatusNotFound)
 		}

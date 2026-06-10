@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/johnny1110/evva/internal/swarm/store"
 	"github.com/johnny1110/evva/pkg/common"
@@ -36,7 +37,16 @@ type Bus struct {
 	inboxes map[string]chan string
 	store   *store.Store
 	roster  Membership
+
+	// hintsDropped counts full-buffer signal drops (RP-17 metrics). Harmless
+	// individually — the rescan recovers the row — but a climbing counter is
+	// the cheap tell for a chronically backed-up mailbox.
+	hintsDropped atomic.Int64
 }
+
+// HintsDropped reports how many mailbox hints were dropped on a full buffer
+// since the bus was built (the durable rows were never at risk).
+func (b *Bus) HintsDropped() int64 { return b.hintsDropped.Load() }
 
 // New builds a Bus over a space's store and roster view. Register each member's
 // mailbox before the scheduler selects on it.
@@ -166,6 +176,7 @@ func (b *Bus) signal(to, uuid string) {
 		// Buffer full: the hint is dropped but the row is durable, so the
 		// recipient still recovers it via store.UnreadFor on its next cycle.
 		// Worth a debug line — a chronically full mailbox is a real stall signal.
+		b.hintsDropped.Add(1)
 		slog.Debug("swarm bus: mailbox hint dropped (buffer full)", "recipient", to, "id", uuid)
 	}
 }

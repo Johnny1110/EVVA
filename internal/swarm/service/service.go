@@ -131,7 +131,9 @@ type spaceEntry struct {
 	super    *swarm.Supervisor
 	cancel   context.CancelFunc // stops the supervisor's run loops + timer tick
 	stopPump chan struct{}      // closed after Shutdown so the pump drains then exits
+	pumpDone chan struct{}      // closed BY the pump when it exits — teardown waits on it
 	pending  *gateTracker       // outstanding approval/question gates, for reconnect replay
+	events   *eventLog          // RP-17 durable event mirror; nil when event_log: false
 }
 
 // live reports whether the entry currently has a running space behind it.
@@ -356,6 +358,14 @@ func teardownSpace(ent *spaceEntry) {
 	if ent.stopPump != nil {
 		close(ent.stopPump) // pump does a final drain, then exits
 	}
+	if ent.events != nil {
+		// Only close the event log once the pump has actually exited — Offer on
+		// a closed channel would panic, and the final drain above runs async.
+		if ent.pumpDone != nil {
+			<-ent.pumpDone
+		}
+		ent.events.Close()
+	}
 }
 
 // Addr returns the address the service is bound to. Before Listen it is the
@@ -440,14 +450,23 @@ func (s *Service) register(id, name string, m agentdef.Manifest, loaded []agentd
 	super.Start(spaceCtx)
 
 	stopPump := make(chan struct{})
+	pumpDone := make(chan struct{})
+	var events *eventLog
+	if m.Settings.EventLog {
+		events = newEventLog(sp.Workdir, m.Settings.RetentionDays)
+	}
 	s.mu.Lock()
 	s.spaces[id] = &spaceEntry{
 		id: id, name: name, workdir: sp.Workdir, status: statusRunning,
-		space: sp, super: super, cancel: cancel, stopPump: stopPump, pending: newGateTracker(),
+		space: sp, super: super, cancel: cancel, stopPump: stopPump, pumpDone: pumpDone,
+		pending: newGateTracker(), events: events,
 	}
 	s.mu.Unlock()
 
-	go s.pump(sp, stopPump)
+	go func() {
+		defer close(pumpDone)
+		s.pump(sp, stopPump)
+	}()
 	s.persistSpaces()
 	s.log.Info("swarm: space registered", "id", id, "name", name, "workdir", sp.Workdir, "members", len(loaded))
 	return id, nil
@@ -471,9 +490,10 @@ func (s *Service) StopSpace(ref string) error {
 	}
 	// Flip to stopped and detach the live handles UNDER the lock, so a concurrent
 	// reader never observes a half-torn-down running space; tear them down after.
-	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space, stopPump: ent.stopPump}
+	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space,
+		stopPump: ent.stopPump, pumpDone: ent.pumpDone, events: ent.events}
 	ent.status = statusStopped
-	ent.space, ent.super, ent.cancel, ent.stopPump, ent.pending = nil, nil, nil, nil, nil
+	ent.space, ent.super, ent.cancel, ent.stopPump, ent.pumpDone, ent.pending, ent.events = nil, nil, nil, nil, nil, nil, nil
 	id, name := ent.id, ent.name
 	s.mu.Unlock()
 
@@ -536,7 +556,8 @@ func (s *Service) RemoveSpace(ref string) error {
 		return fmt.Errorf("swarm: unknown space %q", ref)
 	}
 	delete(s.spaces, ent.id)
-	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space, stopPump: ent.stopPump}
+	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space,
+		stopPump: ent.stopPump, pumpDone: ent.pumpDone, events: ent.events}
 	id, name := ent.id, ent.name
 	s.mu.Unlock()
 
@@ -576,7 +597,8 @@ func (s *Service) ResetSpace(ref string) (string, error) {
 	// DB so its files are free to delete) and drop it from the registry. Detach
 	// the live handles under the lock; teardown is a no-op when already stopped.
 	s.mu.Lock()
-	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space, stopPump: ent.stopPump}
+	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space,
+		stopPump: ent.stopPump, pumpDone: ent.pumpDone, events: ent.events}
 	delete(s.spaces, id)
 	s.mu.Unlock()
 	teardownSpace(live)
@@ -762,7 +784,8 @@ func (s *Service) pump(sp *swarm.SwarmSpace, stop <-chan struct{}) {
 }
 
 // publish records gate lifecycle for reconnect replay, then marshals one spaced
-// event and fans it out by (spaceID, AgentID).
+// event, mirrors it into the durable event log, and fans it out by
+// (spaceID, AgentID).
 func (s *Service) publish(e swarm.SpacedEvent) {
 	if pending, ok := s.pendingFor(e.SpaceID); ok {
 		pending.observe(e.Event)
@@ -771,7 +794,29 @@ func (s *Service) publish(e swarm.SpacedEvent) {
 	if err != nil {
 		return
 	}
+	// RP-17: every event except token-level stream chunks — those would dwarf
+	// the file with text the member transcripts already hold. Offer never
+	// blocks, so the log can't slow this pump.
+	if e.Event.Kind != event.KindTextChunk && e.Event.Kind != event.KindThinkingChunk {
+		if log, ok := s.eventLogFor(e.SpaceID); ok {
+			log.Offer(payload)
+		}
+	}
 	s.hub.Publish(e.SpaceID, e.Event.AgentID, payload)
+}
+
+// eventLogFor returns a live space's event log, read under the registry lock
+// for the same reason as pendingFor: StopSpace detaches the field under the
+// write lock, and the returned logger is safe to use after release (teardown
+// waits for the pump to exit before closing it).
+func (s *Service) eventLogFor(ref string) (*eventLog, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e := s.resolveLocked(ref)
+	if !e.live() || e.events == nil {
+		return nil, false
+	}
+	return e.events, true
 }
 
 // wireEvent is the JSON envelope pushed over the WebSocket: the raw agent
@@ -1430,6 +1475,47 @@ func (s *Service) HaltAll(id string) error {
 		return fmt.Errorf("swarm: unknown space %q", id)
 	}
 	return ent.super.HaltAll()
+}
+
+// Metrics snapshots a space's scheduler counters (RP-17): per-member wakes /
+// runs / aborts / run-duration buckets from the space, hint drops from the
+// bus, and the event log's logged/dropped line counts. Reads the entry's
+// fields under the registry lock (StopSpace detaches them under the write
+// lock). false when the ref is unknown or stopped.
+func (s *Service) Metrics(ref string) (webapi.MetricsInfo, bool) {
+	s.mu.RLock()
+	ent := s.resolveLocked(ref)
+	if !ent.live() {
+		s.mu.RUnlock()
+		return webapi.MetricsInfo{}, false
+	}
+	sp, events := ent.space, ent.events
+	s.mu.RUnlock()
+
+	members, started := sp.MetricsSnapshot()
+	mi := webapi.MetricsInfo{
+		HintsDropped: sp.Bus.HintsDropped(),
+		Members:      make(map[string]webapi.MemberMetricsInfo, len(members)),
+	}
+	if !started.IsZero() {
+		mi.UptimeSecs = int64(time.Since(started).Seconds())
+	}
+	if events != nil {
+		mi.EventsLogged, mi.EventsDropped = events.Logged(), events.Dropped()
+	}
+	for name, m := range members {
+		mi.Members[name] = webapi.MemberMetricsInfo{
+			WakesMessage: m.WakesMessage,
+			WakesTimer:   m.WakesTimer,
+			Runs:         m.Runs,
+			Aborts:       m.Aborts,
+			RunSeconds: map[string]int64{
+				"lt10s": m.RunSeconds[0], "lt1m": m.RunSeconds[1],
+				"lt10m": m.RunSeconds[2], "gte10m": m.RunSeconds[3],
+			},
+		}
+	}
+	return mi, true
 }
 
 // Vacuum runs one RP-16 retention pass for a space right now (the manual

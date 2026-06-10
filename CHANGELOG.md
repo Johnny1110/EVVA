@@ -30,6 +30,19 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ### Added
 
+- **Swarm flight recorder + metrics (RP-17).** Every event the web UI sees —
+  run/turn lifecycle, tool calls and results, approvals, errors; everything
+  except token-level streaming chunks — is also appended to
+  `<workdir>/.vero/events/YYYY-MM-DD.jsonl` as ts-stamped JSON lines, so
+  "what happened at 03:00 last night" survives restarts and is one grep away.
+  Files rotate daily and prune on the space's `retention_days` window;
+  `settings.event_log: false` switches the recorder off. The recorder can
+  never slow the swarm: a full buffer drops lines and counts them instead of
+  blocking the event pump. New `GET /api/swarm/{id}/metrics` returns live
+  per-member counters — wakes (message/timer), runs, aborts, a run-duration
+  histogram (lt10s/lt1m/lt10m/gte10m) — plus `uptimeSecs`,
+  `eventsLogged`/`eventsDropped`, and `hintsDropped` (mailbox backpressure).
+  Documented in the swarm user guide §8 (zh/en).
 - **Swarm ledger retention (RP-16).** A 24/7 swarm's messages and completed
   tasks no longer grow without bound: rows whose life is over — messages READ
   at least `retention_days` ago, tasks COMPLETED at least that long ago and

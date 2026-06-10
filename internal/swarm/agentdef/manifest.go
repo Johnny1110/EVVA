@@ -65,6 +65,11 @@ type Settings struct {
 	// (the pre-RP-16 "never deletes history" behavior); a manifest that omits
 	// the knob gets DefaultRetentionDays.
 	RetentionDays int
+	// EventLog mirrors the space's event stream into .vero/events/ as daily
+	// jsonl files (RP-17 forensics). A manifest that omits the knob gets true;
+	// `event_log: false` turns the side-channel off entirely. Note the Go
+	// zero value is OFF — programmatic spaces opt in, yaml spaces opt out.
+	EventLog bool
 }
 
 // DefaultStallThreshold is the alert line a manifest gets when it does not set
@@ -107,6 +112,7 @@ type manifestYml struct {
 		StallHardTimeout  string `yaml:"stall_hard_timeout,omitempty"` // duration; "" or "0" = off
 		WebhookSecret     string `yaml:"webhook_secret,omitempty"`
 		RetentionDays     string `yaml:"retention_days,omitempty"` // days; "" = default 30, "0" = off
+		EventLog          *bool  `yaml:"event_log,omitempty"`      // nil = default true
 	} `yaml:"settings,omitempty"`
 }
 
@@ -202,6 +208,7 @@ func LoadManifest(path string) (Manifest, error) {
 			StallHardTimeout:  hard,
 			WebhookSecret:     strings.TrimSpace(y.Settings.WebhookSecret),
 			RetentionDays:     retention,
+			EventLog:          y.Settings.EventLog == nil || *y.Settings.EventLog,
 		},
 	}
 	for _, w := range y.Workers {
@@ -264,6 +271,10 @@ func WriteManifest(path string, m Manifest) error {
 		y.Settings.RetentionDays = "0"
 	default:
 		y.Settings.RetentionDays = strconv.Itoa(m.Settings.RetentionDays)
+	}
+	if !m.Settings.EventLog { // default (true) omits; only an explicit off is written
+		off := false
+		y.Settings.EventLog = &off
 	}
 	b, err := yaml.Marshal(y)
 	if err != nil {

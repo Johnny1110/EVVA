@@ -71,6 +71,10 @@ type SwarmSpace struct {
 	budgets map[string]int
 	meter   usageMeter
 
+	// metrics counts the scheduler lifecycle per member (RP-17). nil on
+	// hand-built spaces — every counting method is nil-safe.
+	metrics *spaceMetrics
+
 	// alarmSched is the space's shared one-shot alarm scheduler (alarm_set /
 	// alarm_clear). Lazy-allocated under mu on first AlarmScheduler() access; a
 	// fired alarm is delivered as a durable bus message to its target member.
@@ -139,6 +143,7 @@ func NewSpace(id string, m agentdef.Manifest, loaded []agentdef.Loaded, ts ToolS
 		agents:    make(map[string]agent.Agent),
 		schedules: make(map[string]agentdef.Schedule),
 		budgets:   budgetOverrides(m),
+		metrics:   newSpaceMetrics(),
 		reg:       reg,
 		cfg:       cfg,
 		ts:        ts,

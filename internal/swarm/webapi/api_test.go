@@ -218,6 +218,19 @@ func (f *fakeBackend) DeleteSkill(space, agent, skill string) error {
 	f.mu.Unlock()
 	return nil
 }
+func (f *fakeBackend) Metrics(ref string) (MetricsInfo, bool) {
+	if !f.HasSpace(ref) {
+		return MetricsInfo{}, false
+	}
+	return MetricsInfo{
+		UptimeSecs: 42, EventsLogged: 7, EventsDropped: 1, HintsDropped: 2,
+		Members: map[string]MemberMetricsInfo{
+			"leader": {WakesMessage: 3, WakesTimer: 1, Runs: 4, Aborts: 1,
+				RunSeconds: map[string]int64{"lt10s": 3, "lt1m": 1, "lt10m": 0, "gte10m": 0}},
+		},
+	}, true
+}
+
 func (f *fakeBackend) Vacuum(ref string, days int, dryRun bool) (VacuumStats, error) {
 	if !f.HasSpace(ref) {
 		return VacuumStats{}, errUnknownSpace
@@ -659,6 +672,46 @@ func TestEventWebhookUnauthenticated(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("guarded route without token = %d, want 401", resp.StatusCode)
+	}
+}
+
+// RP-17: the metrics route is guarded, returns the backend's counters, and
+// 404s an unknown space.
+func TestMetricsRoute(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/swarm/sp-a/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("metrics without token = %d, want 401", resp.StatusCode)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/swarm/sp-a/metrics?token=" + fake.token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m MetricsInfo
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || m.EventsLogged != 7 || m.Members["leader"].Runs != 4 ||
+		m.Members["leader"].RunSeconds["lt10s"] != 3 {
+		t.Fatalf("metrics = %d %+v, want the fake's counters", resp.StatusCode, m)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/swarm/ghost/metrics?token=" + fake.token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown-space metrics = %d, want 404", resp.StatusCode)
 	}
 }
 

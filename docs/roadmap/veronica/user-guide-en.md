@@ -163,6 +163,7 @@ settings:
   # stall_hard_timeout: 30m       # auto-cancel a run busy longer; 0/omit = off
   # webhook_secret: "hunter2"     # require X-Evva-Webhook-Secret on event POSTs (see §10)
   # retention_days: 30            # archive+delete consumed history after N days; "0" = keep forever
+  # event_log: true               # mirror events to .vero/events/ (daily jsonl); false = off
 ```
 
 - **Member names are unique** within a space (no replicas — give each a distinct
@@ -465,6 +466,36 @@ Reading the archive later: it is gzipped JSON-lines —
 message/task plus the full original row). For scale: a 100k-message backlog
 makes the messages API take ~300 ms per call; after a vacuum it is back to
 sub-millisecond, and the pass itself took ~1.2 s.
+
+### Flight recorder & metrics (event log / `/metrics`)
+
+Every event the web UI sees (run/turn lifecycle, tool calls + results,
+approvals, errors — everything except token-level streaming chunks) is also
+appended to `<workdir>/.vero/events/YYYY-MM-DD.jsonl`, one ts-stamped JSON
+line each. "What happened at 03:00 last night?" is now a grep, even after a
+restart:
+
+```bash
+grep '03:0' .vero/events/2026-06-09.jsonl | jq '.event.event.Kind' | sort | uniq -c
+```
+
+Files rotate daily; old days are pruned by the same `retention_days` window
+(`"0"` keeps them forever). `event_log: false` switches the recorder off. The
+recorder can never slow the swarm: it drops lines (and counts the drops)
+rather than ever blocking the event pump.
+
+Live counters, per member, since the space started:
+
+```bash
+curl -s -H "Authorization: Bearer $(cat ~/.evva/service/token)" \
+  http://127.0.0.1:8888/api/swarm/<ref>/metrics | jq .
+```
+
+returns `uptimeSecs`, `eventsLogged` / `eventsDropped` (the recorder),
+`hintsDropped` (mailbox backpressure — a climbing value means a chronically
+backed-up member), and per-member `wakesMessage` / `wakesTimer` / `runs` /
+`aborts` plus a run-duration histogram (`runSeconds`: lt10s / lt1m / lt10m /
+gte10m). Plain JSON — point your own exporter at it if you want history.
 
 ### Restart & resume
 

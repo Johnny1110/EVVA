@@ -135,6 +135,7 @@ func (s *Supervisor) serve(ctx context.Context, name string, m *memberRun, reaso
 	if !s.isActive(name) {
 		return // frozen: never scheduled
 	}
+	s.sp.metrics.countWake(name, reason) // RP-17: one tally per served wake
 
 	if reason == wakeTimer {
 		// A standing-duty tick. runOnce still settles/unclaims any mail drain B
@@ -213,6 +214,7 @@ func (s *Supervisor) runOnce(ctx context.Context, name string, m *memberRun, pro
 
 	m.mu.Lock()
 	m.cancelRun = nil
+	started := m.runStartedAt
 	m.runStartedAt = time.Time{}
 	suspended := m.suspended
 	if !suspended {
@@ -240,6 +242,7 @@ func (s *Supervisor) runOnce(ctx context.Context, name string, m *memberRun, pro
 	if hasCtl {
 		s.meterRun(name, preUsage, ctl)
 	}
+	s.sp.metrics.countRun(name, time.Since(started), clean) // RP-17
 	return clean
 }
 

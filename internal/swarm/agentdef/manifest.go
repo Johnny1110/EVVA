@@ -26,12 +26,23 @@ type Manifest struct {
 type Member struct {
 	Agent    string
 	Schedule *Schedule // nil when the manifest declares none for this member
+	// BudgetTokens overrides the space-wide daily token budget for this member
+	// (RP-13): >0 = own daily cap, <0 = unlimited (exempt even when the space
+	// sets a default), 0 = inherit Settings.DailyBudgetTokens.
+	BudgetTokens int
 }
 
 // Settings are space-wide knobs from the manifest.
 type Settings struct {
 	PermissionMode string
 	MaxIterations  int
+	// DailyBudgetTokens is the per-member daily token cap (input+output, local
+	// day) — the RP-13 budget breaker. 0 = unlimited. A member that crosses it
+	// is frozen until the day rolls over (or the operator unfreezes it).
+	DailyBudgetTokens int
+	// BudgetStayFrozen keeps a budget-frozen member frozen across the day
+	// rollover, requiring a manual unfreeze (default false = auto-unfreeze).
+	BudgetStayFrozen bool
 }
 
 // scheduleYml is the on-disk schedule block shared by the manifest's leader and
@@ -44,8 +55,9 @@ type scheduleYml struct {
 
 // memberYml is one leader/worker entry in evva-swarm.yml.
 type memberYml struct {
-	Agent    string       `yaml:"agent"`
-	Schedule *scheduleYml `yaml:"schedule,omitempty"`
+	Agent        string       `yaml:"agent"`
+	Schedule     *scheduleYml `yaml:"schedule,omitempty"`
+	BudgetTokens int          `yaml:"budget_tokens,omitempty"`
 }
 
 // manifestYml is the on-disk schema for evva-swarm.yml (design §4.4).
@@ -55,8 +67,10 @@ type manifestYml struct {
 	Leader   memberYml   `yaml:"leader"`
 	Workers  []memberYml `yaml:"workers,omitempty"`
 	Settings struct {
-		PermissionMode string `yaml:"permission_mode,omitempty"`
-		MaxIterations  int    `yaml:"max_iterations,omitempty"`
+		PermissionMode    string `yaml:"permission_mode,omitempty"`
+		MaxIterations     int    `yaml:"max_iterations,omitempty"`
+		DailyBudgetTokens int    `yaml:"daily_budget_tokens,omitempty"`
+		BudgetStayFrozen  bool   `yaml:"budget_stay_frozen,omitempty"`
 	} `yaml:"settings,omitempty"`
 }
 
@@ -91,17 +105,22 @@ func LoadManifest(path string) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("agentdef: manifest leader %q schedule: %w", y.Leader.Agent, err)
 	}
 	m := Manifest{
-		Name:     y.Name,
-		Workdir:  y.Workdir,
-		Leader:   Member{Agent: y.Leader.Agent, Schedule: leaderSched},
-		Settings: Settings{PermissionMode: y.Settings.PermissionMode, MaxIterations: y.Settings.MaxIterations},
+		Name:    y.Name,
+		Workdir: y.Workdir,
+		Leader:  Member{Agent: y.Leader.Agent, Schedule: leaderSched, BudgetTokens: y.Leader.BudgetTokens},
+		Settings: Settings{
+			PermissionMode:    y.Settings.PermissionMode,
+			MaxIterations:     y.Settings.MaxIterations,
+			DailyBudgetTokens: y.Settings.DailyBudgetTokens,
+			BudgetStayFrozen:  y.Settings.BudgetStayFrozen,
+		},
 	}
 	for _, w := range y.Workers {
 		ws, err := parseScheduleYml(w.Schedule)
 		if err != nil {
 			return Manifest{}, fmt.Errorf("agentdef: manifest worker %q schedule: %w", w.Agent, err)
 		}
-		m.Workers = append(m.Workers, Member{Agent: w.Agent, Schedule: ws})
+		m.Workers = append(m.Workers, Member{Agent: w.Agent, Schedule: ws, BudgetTokens: w.BudgetTokens})
 	}
 	if err := m.validate(); err != nil {
 		return Manifest{}, err
@@ -128,12 +147,14 @@ func toScheduleYml(s *Schedule) *scheduleYml {
 // emitted too, though runtime.json stays the live authority (RP-7).
 func WriteManifest(path string, m Manifest) error {
 	y := manifestYml{Name: m.Name, Workdir: m.Workdir}
-	y.Leader = memberYml{Agent: m.Leader.Agent, Schedule: toScheduleYml(m.Leader.Schedule)}
+	y.Leader = memberYml{Agent: m.Leader.Agent, Schedule: toScheduleYml(m.Leader.Schedule), BudgetTokens: m.Leader.BudgetTokens}
 	for _, w := range m.Workers {
-		y.Workers = append(y.Workers, memberYml{Agent: w.Agent, Schedule: toScheduleYml(w.Schedule)})
+		y.Workers = append(y.Workers, memberYml{Agent: w.Agent, Schedule: toScheduleYml(w.Schedule), BudgetTokens: w.BudgetTokens})
 	}
 	y.Settings.PermissionMode = m.Settings.PermissionMode
 	y.Settings.MaxIterations = m.Settings.MaxIterations
+	y.Settings.DailyBudgetTokens = m.Settings.DailyBudgetTokens
+	y.Settings.BudgetStayFrozen = m.Settings.BudgetStayFrozen
 	b, err := yaml.Marshal(y)
 	if err != nil {
 		return fmt.Errorf("agentdef: marshal manifest: %w", err)

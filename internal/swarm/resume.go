@@ -26,6 +26,15 @@ import (
 type runtimeState struct {
 	Membership map[string]string            `json:"membership"` // name -> "active" | "frozen"
 	Schedules  map[string]agentdef.Schedule `json:"schedules"`  // name -> live schedule (absent in a pre-RP-7 file → nil → keep manifest)
+
+	// RP-13 budget meter: the local day the counters belong to, each member's
+	// spend that day, and which members the BREAKER froze mapped to the day
+	// they tripped (so a restart can tell a budget freeze from an operator
+	// freeze, and the sweep can release stale marks — only breaker freezes
+	// auto-unfreeze at rollover). Absent in a pre-RP-13 file → zero meter.
+	UsageDay     string            `json:"usage_day,omitempty"`
+	UsageDaily   map[string]int    `json:"usage_daily,omitempty"`
+	BudgetFrozen map[string]string `json:"budget_frozen,omitempty"`
 }
 
 func runtimePath(workdir string) string {
@@ -49,6 +58,15 @@ func (sp *SwarmSpace) persistRuntime() {
 	sp.mu.Lock()
 	for n, s := range sp.schedules {
 		rs.Schedules[n] = s
+	}
+	rs.UsageDay = sp.meter.day
+	if len(sp.meter.daily) > 0 {
+		rs.UsageDaily = make(map[string]int, len(sp.meter.daily))
+		maps.Copy(rs.UsageDaily, sp.meter.daily)
+	}
+	if len(sp.meter.frozen) > 0 {
+		rs.BudgetFrozen = make(map[string]string, len(sp.meter.frozen))
+		maps.Copy(rs.BudgetFrozen, sp.meter.frozen)
 	}
 	sp.mu.Unlock()
 	data, err := json.MarshalIndent(rs, "", "  ")
@@ -102,6 +120,19 @@ func (sp *SwarmSpace) Reload() {
 		maps.Copy(sp.schedules, rt.Schedules)
 		sp.mu.Unlock()
 	}
+
+	// Restore the budget meter (RP-13). A stale day is left as-is: the
+	// supervisor's first tick sweep rolls it over and releases budget-frozen
+	// members (their frozen MEMBERSHIP below is what keeps them parked until
+	// then). Same-day restart keeps counters and marks — no budget reset by
+	// bouncing the service.
+	sp.mu.Lock()
+	sp.meter.day = rt.UsageDay
+	sp.meter.daily = make(map[string]int, len(rt.UsageDaily))
+	maps.Copy(sp.meter.daily, rt.UsageDaily)
+	sp.meter.frozen = make(map[string]string, len(rt.BudgetFrozen))
+	maps.Copy(sp.meter.frozen, rt.BudgetFrozen)
+	sp.mu.Unlock()
 
 	for name, ag := range members {
 		if id := latestSessionFor(ag, name); id != "" {

@@ -469,3 +469,20 @@ func TestListMembersShowsCrontab(t *testing.T) {
 		t.Errorf("list_members missing worker-a's crontab line, got:\n%s", res.Content)
 	}
 }
+
+func TestFmtTokens(t *testing.T) {
+	cases := map[int]string{
+		0:          "0",
+		950:        "950",
+		1_500:      "1.5k",
+		12_340:     "12k",
+		999_999:    "1000k",
+		1_234_000:  "1.2M",
+		12_345_678: "12M",
+	}
+	for in, want := range cases {
+		if got := fmtTokens(in); got != want {
+			t.Errorf("fmtTokens(%d) = %q, want %q", in, got, want)
+		}
+	}
+}

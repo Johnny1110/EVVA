@@ -110,3 +110,47 @@ leader:
 		t.Fatalf("Name = %q, want empty (service assigns the handle)", m.Name)
 	}
 }
+
+func TestManifestBudgetFieldsRoundTrip(t *testing.T) {
+	p := writeManifest(t, `
+name: budgeted
+leader:
+  agent: lead
+  budget_tokens: -1
+workers:
+  - agent: w1
+    budget_tokens: 250000
+  - agent: w2
+settings:
+  daily_budget_tokens: 1000000
+  budget_stay_frozen: true
+`)
+	m, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.Settings.DailyBudgetTokens != 1000000 || !m.Settings.BudgetStayFrozen {
+		t.Errorf("Settings = %+v", m.Settings)
+	}
+	if m.Leader.BudgetTokens != -1 {
+		t.Errorf("leader budget = %d, want -1", m.Leader.BudgetTokens)
+	}
+	if m.Workers[0].BudgetTokens != 250000 || m.Workers[1].BudgetTokens != 0 {
+		t.Errorf("worker budgets = %d/%d, want 250000/0", m.Workers[0].BudgetTokens, m.Workers[1].BudgetTokens)
+	}
+
+	// WriteManifest must carry the budget fields back out.
+	out := filepath.Join(t.TempDir(), "evva-swarm.yml")
+	if err := WriteManifest(out, m); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	m2, err := LoadManifest(out)
+	if err != nil {
+		t.Fatalf("re-LoadManifest: %v", err)
+	}
+	if m2.Settings.DailyBudgetTokens != 1000000 || !m2.Settings.BudgetStayFrozen ||
+		m2.Leader.BudgetTokens != -1 || m2.Workers[0].BudgetTokens != 250000 {
+		t.Errorf("round-trip lost budget fields: %+v / leader %d / w1 %d",
+			m2.Settings, m2.Leader.BudgetTokens, m2.Workers[0].BudgetTokens)
+	}
+}

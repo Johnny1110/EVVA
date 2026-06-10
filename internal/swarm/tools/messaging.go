@@ -99,6 +99,16 @@ func newListMembers(mc swarm.MemberContext) pubtools.Tool {
 				if m.CurrentTask != 0 {
 					fmt.Fprintf(&b, " task#%d", m.CurrentTask)
 				}
+				// Token meter (RP-13): cumulative session spend, plus today's
+				// counter against the member's daily budget when one is set.
+				if m.Usage.InputTokens+m.Usage.OutputTokens > 0 || m.DailyTokens > 0 {
+					fmt.Fprintf(&b, " · tok in %s out %s", fmtTokens(m.Usage.InputTokens), fmtTokens(m.Usage.OutputTokens))
+					if budget := mc.Space.BudgetFor(m.Name); budget > 0 {
+						fmt.Fprintf(&b, ", today %s/%s", fmtTokens(m.DailyTokens), fmtTokens(budget))
+					} else if m.DailyTokens > 0 {
+						fmt.Fprintf(&b, ", today %s", fmtTokens(m.DailyTokens))
+					}
+				}
 				if m.WhenToUse != "" {
 					fmt.Fprintf(&b, " — %s", m.WhenToUse)
 				}
@@ -124,5 +134,22 @@ func newListMembers(mc swarm.MemberContext) pubtools.Tool {
 			}
 			return pubtools.Result{Content: b.String(), Metadata: members}, nil
 		},
+	}
+}
+
+// fmtTokens renders a token count compactly for the list_members line:
+// 950 → "950", 12_340 → "12k", 1_234_000 → "1.2M".
+func fmtTokens(n int) string {
+	switch {
+	case n >= 10_000_000:
+		return fmt.Sprintf("%.0fM", float64(n)/1e6)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 10_000:
+		return fmt.Sprintf("%.0fk", float64(n)/1e3)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
 	}
 }

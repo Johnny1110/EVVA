@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
+	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/ui"
 )
 
@@ -69,6 +70,13 @@ type rosterEntry struct {
 	currentTask int64
 	whenToUse   string
 	ctl         ui.Controller
+
+	// Token metering (RP-13), pushed by the supervisor at run boundaries (the
+	// member's own loop goroutine reads the controller; the roster only stores
+	// the snapshot — no concurrent session reads from display goroutines).
+	usage         llm.Usage // cumulative session usage as of the last run boundary
+	lastTurnInput int       // input tokens of the most recent turn (context pressure)
+	dailyTokens   int       // input+output tokens spent today (meter day)
 }
 
 // MemberView is a read-only snapshot of one member, the shape served to the
@@ -83,6 +91,10 @@ type MemberView struct {
 	PhaseSince  int64 // unix millis the current phase was entered
 	CurrentTask int64
 	WhenToUse   string
+
+	Usage         llm.Usage // cumulative session tokens as of the last run boundary (RP-13)
+	LastTurnInput int       // most recent turn's input tokens (context pressure)
+	DailyTokens   int       // tokens spent today (the budget breaker's counter)
 }
 
 // DisplayPhase composes the coarse run status and the fine event-derived phase
@@ -223,15 +235,18 @@ func (r *Roster) Snapshot() []MemberView {
 	for _, name := range r.order {
 		e := r.entries[name]
 		out = append(out, MemberView{
-			Name:        e.name,
-			Role:        e.role,
-			Membership:  e.membership,
-			Run:         e.run,
-			Phase:       e.phase,
-			Tool:        e.tool,
-			PhaseSince:  e.phaseSince,
-			CurrentTask: e.currentTask,
-			WhenToUse:   e.whenToUse,
+			Name:          e.name,
+			Role:          e.role,
+			Membership:    e.membership,
+			Run:           e.run,
+			Phase:         e.phase,
+			Tool:          e.tool,
+			PhaseSince:    e.phaseSince,
+			CurrentTask:   e.currentTask,
+			WhenToUse:     e.whenToUse,
+			Usage:         e.usage,
+			LastTurnInput: e.lastTurnInput,
+			DailyTokens:   e.dailyTokens,
 		})
 	}
 	return out
@@ -365,5 +380,33 @@ func (r *Roster) setCurrentTask(name string, taskID int64) {
 	defer r.mu.Unlock()
 	if e, ok := r.entries[name]; ok {
 		e.currentTask = taskID
+	}
+}
+
+// leaderName returns the unique leader's member name, or "" when the roster has
+// none (e.g. a store-only test space). Used by the budget breaker to address
+// its notification mail without the caller knowing the leader's actual name.
+func (r *Roster) leaderName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, name := range r.order {
+		if r.entries[name].role == agentdef.RoleLeader {
+			return name
+		}
+	}
+	return ""
+}
+
+// setUsage stores a member's token snapshot (RP-13). Called by the supervisor
+// at run boundaries — on the member's own loop goroutine, where reading the
+// controller's session is race-free — so every display surface (list_members,
+// web) reads this stored copy instead of touching the live session.
+func (r *Roster) setUsage(name string, u llm.Usage, lastTurnInput, dailyTokens int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.entries[name]; ok {
+		e.usage = u
+		e.lastTurnInput = lastTurnInput
+		e.dailyTokens = dailyTokens
 	}
 }

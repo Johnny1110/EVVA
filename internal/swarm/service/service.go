@@ -860,6 +860,10 @@ func (s *Service) Roster(id string) ([]webapi.MemberInfo, bool) {
 			WhenToUse:     v.WhenToUse,
 			ContextTokens: ctxUsed,
 			ContextLimit:  ctxLimit,
+			TokensIn:      v.Usage.InputTokens,
+			TokensOut:     v.Usage.OutputTokens,
+			TokensToday:   v.DailyTokens,
+			TokensBudget:  ent.space.BudgetFor(v.Name),
 		}
 		// Schedule lives in the space's map (RP-7 didn't put it on MemberView);
 		// surface it on the wire so the roster card can show/edit the crontab (RP-8).

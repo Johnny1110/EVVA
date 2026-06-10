@@ -245,6 +245,10 @@ func (s *Supervisor) Unfreeze(name string) error {
 		return fmt.Errorf("swarm: unfreeze: unknown member %q", name)
 	}
 	s.sp.Roster.setMembership(name, MembershipActive)
+	// An unfreeze overrides the budget breaker too (RP-13): clear its mark so a
+	// still-over-budget member re-trips (once) after its next run instead of
+	// being silently held by a stale mark.
+	s.sp.clearBudgetFrozen(name)
 	s.sp.persistRuntime()
 	if m := s.memberOf(name); m != nil {
 		s.poke(m, wakeMessage)

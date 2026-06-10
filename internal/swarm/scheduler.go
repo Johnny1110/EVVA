@@ -10,7 +10,9 @@ import (
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
 	"github.com/johnny1110/evva/internal/swarm/store"
 	"github.com/johnny1110/evva/pkg/common"
+	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/skill"
+	"github.com/johnny1110/evva/pkg/ui"
 )
 
 // wakeReason identifies why a member's run loop fired. The two mechanical wake
@@ -72,6 +74,13 @@ func (s *Supervisor) startMemberLoop(ctx context.Context, name string) {
 	m.loopCancel = loopCancel
 	s.members[name] = m
 	s.mu.Unlock()
+
+	// Seed the roster's usage snapshot (RP-13) so a resumed member shows its
+	// cumulative spend before its first run. Safe: the loop hasn't started, so
+	// no run is in flight to race the session read.
+	if ctl, ok := s.sp.Roster.Controller(name); ok {
+		s.sp.Roster.setUsage(name, ctl.Usage(), ctl.LastTurnInputTokens(), s.sp.dailyFor(name))
+	}
 
 	s.wg.Add(1)
 	go func() { defer s.wg.Done(); s.runLoop(loopCtx, name, m) }()
@@ -180,6 +189,14 @@ func (s *Supervisor) runOnce(ctx context.Context, name string, m *memberRun, pro
 	s.sp.Roster.setRun(name, RunBusy)
 	m.mu.Unlock()
 
+	// Pre-run usage snapshot (RP-13): read on this goroutine, where the member's
+	// session is quiescent, so the post-run delta is race-free.
+	ctl, hasCtl := s.sp.Roster.Controller(name)
+	var preUsage llm.Usage
+	if hasCtl {
+		preUsage = ctl.Usage()
+	}
+
 	s.log.Debug("swarm run start", "member", name)
 	_, err := s.safeRun(runCtx, name, prompt)
 	cancel()
@@ -207,7 +224,75 @@ func (s *Supervisor) runOnce(ctx context.Context, name string, m *memberRun, pro
 	} else {
 		_ = s.store.UnclaimFor(name)
 	}
+
+	// Meter the run regardless of clean — tokens were burned either way (RP-13).
+	if hasCtl {
+		s.meterRun(name, preUsage, ctl)
+	}
 	return clean
+}
+
+// meterRun folds one finished run's token delta into the member's daily
+// counter, refreshes the roster's usage snapshot, and trips the budget breaker
+// when the member crossed its daily cap (RP-13). Runs on the member's loop
+// goroutine right after the run — the only place the session is safely
+// readable while the loop owns the member.
+func (s *Supervisor) meterRun(name string, pre llm.Usage, ctl ui.Controller) {
+	post := ctl.Usage()
+	delta := (post.InputTokens + post.OutputTokens) - (pre.InputTokens + pre.OutputTokens)
+	total := s.sp.addDailyUsage(name, delta, localDay(time.Now()))
+	s.sp.Roster.setUsage(name, post, ctl.LastTurnInputTokens(), total)
+
+	budget := s.sp.BudgetFor(name)
+	if budget <= 0 || total < budget {
+		return
+	}
+	// Fresh mark only: a member the operator unfroze while still over budget
+	// re-trips exactly once after its next run (Unfreeze clears the mark).
+	if !s.sp.markBudgetFrozen(name) {
+		return
+	}
+	s.tripBudget(name, total, budget)
+}
+
+// tripBudget freezes an over-budget member and notifies the operator and the
+// leader (durable mail — the leader wakes on it; the operator reads it in the
+// web). Freeze also persists the runtime snapshot, meter included.
+func (s *Supervisor) tripBudget(name string, total, budget int) {
+	if err := s.Freeze(name); err != nil {
+		s.log.Warn("swarm: budget trip could not freeze member", "member", name, "err", err)
+		return
+	}
+	s.log.Warn("swarm: daily token budget tripped — member frozen",
+		"member", name, "spent", total, "budget", budget)
+
+	subject := fmt.Sprintf("⚠️ budget breaker: %s frozen", name)
+	body := fmt.Sprintf(
+		"Member %q spent %d tokens today, crossing its daily budget of %d, and has been FROZEN by the budget breaker. "+
+			"Its mailbox keeps queuing; it runs nothing until unfrozen. It auto-unfreezes when the local day rolls over "+
+			"(unless settings.budget_stay_frozen is set). An operator may unfreeze it earlier via the web — if it is still "+
+			"over budget it will re-freeze after its next run, so raise settings.daily_budget_tokens (or the member's "+
+			"budget_tokens) to give it real headroom.",
+		name, total, budget)
+
+	if leader := s.sp.Roster.leaderName(); leader != "" && leader != name {
+		_, _ = s.sp.Bus.Send(store.Message{Sender: "system", Recipient: leader, Subject: subject, Body: body})
+	}
+	_, _ = s.sp.Bus.Send(store.Message{Sender: "system", Recipient: "user", Subject: subject, Body: body})
+}
+
+// sweepBudgetDay advances the meter day and unfreezes members whose breaker
+// mark is from an earlier day (unless the space pins them with
+// budget_stay_frozen). Driven by the timer tick — a frozen member never runs,
+// so its release cannot depend on a run happening.
+func (s *Supervisor) sweepBudgetDay(now time.Time) {
+	for _, name := range s.sp.sweepMeter(localDay(now), s.sp.settings.BudgetStayFrozen) {
+		if err := s.Unfreeze(name); err != nil {
+			s.log.Warn("swarm: budget rollover unfreeze failed", "member", name, "err", err)
+			continue
+		}
+		s.log.Info("swarm: budget day rolled over — member unfrozen", "member", name)
+	}
 }
 
 // safeRun calls Controller.Run inside a recover guard so one agent's panic
@@ -334,6 +419,7 @@ func (s *Supervisor) timerTick(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
+			s.sweepBudgetDay(now)
 			s.fireDue(now)
 		}
 	}

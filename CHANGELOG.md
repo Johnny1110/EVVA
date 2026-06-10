@@ -30,6 +30,19 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ### Added
 
+- **Swarm member usage metering + daily budget breaker (RP-13).** The roster
+  now carries each member's cumulative token usage, last-turn input, and
+  today's spend — measured by the supervisor at run boundaries (race-free) —
+  surfaced in `list_members` (`tok in 1.2M out 345k, today 89k/500k`) and the
+  web roster API (`tokensIn/Out/Today/Budget`). New manifest knobs:
+  `settings.daily_budget_tokens` (per-member daily cap, input+output tokens,
+  local day), per-member `budget_tokens` override (`-1` = exempt), and
+  `settings.budget_stay_frozen`. A member that crosses its cap is FROZEN by
+  the breaker and both the leader and the operator receive a durable notice;
+  the day rollover auto-unfreezes it. Each freeze mark carries the day it
+  tripped, so a post-midnight run by another member advancing the counter day
+  can never strand a frozen member. The meter persists in `runtime.json` — a
+  restart neither resets the day's spend nor forgets who the breaker froze.
 - **Alarm tool family — one-shot absolute-time self-wake.** New
   `pkg/tools/alarm` package: a non-blocking, durable `Scheduler` plus the
   `alarm_create` / `alarm_list` / `alarm_cancel` tools. Unlike `schedule_wakeup`

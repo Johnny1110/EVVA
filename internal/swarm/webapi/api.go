@@ -149,6 +149,15 @@ type MemberInfo struct {
 	// unknown window) and the TS contract expects both fields always present.
 	ContextTokens int `json:"contextTokens"`
 	ContextLimit  int `json:"contextLimit"`
+	// Token meter (RP-13): cumulative session input/output tokens as of the
+	// member's last run boundary, today's spend, and the member's effective
+	// daily budget (0 = unlimited). TokensToday vs TokensBudget is the budget
+	// breaker's gauge; a frozen membership plus an exhausted gauge reads as
+	// "frozen by the breaker".
+	TokensIn     int `json:"tokensIn,omitempty"`
+	TokensOut    int `json:"tokensOut,omitempty"`
+	TokensToday  int `json:"tokensToday,omitempty"`
+	TokensBudget int `json:"tokensBudget,omitempty"`
 	// Cron / SchedulePrompt expose the member's recurring timer (RP-7/RP-8), read
 	// live from the space's schedule map (the schedule's owner — it is NOT on
 	// MemberView). Empty when the member has no schedule.

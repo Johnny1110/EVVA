@@ -21,10 +21,35 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
+      - name: Cross-compile gate (windows/amd64)
+        # Seconds on the same runner; catches any reintroduced unix-only
+        # syscall usage (Setpgid/Kill/Setsid belong in pkg/common/proc).
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go build ./...
       - name: Swarm unit tests
         run: go test -race ./internal/swarm/...
       - name: dep-check (multi-agent oracle)
         run: bash scripts/depcheck.sh
+
+  windows:
+    name: Windows build · vet · tests (bring-up)
+    runs-on: windows-latest
+    # WIN-7 bring-up posture: surface Windows test signal without blocking
+    # PRs while the suite is triaged; flip to required before v1.7.0-beta.1.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Tests
+        run: go test ./...
 
   web:
     name: Web SPA build (web2 / FE v2)

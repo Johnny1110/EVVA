@@ -3,6 +3,8 @@ package shell
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -178,20 +180,23 @@ func TestBash_HonorsWorkdir(t *testing.T) {
 	// each agent (including subagents spawned with isolation: "worktree")
 	// sees its own working directory.
 	dir := t.TempDir()
+	// Probe the cwd by listing a marker file rather than comparing `pwd`
+	// output — pwd's rendering is dialect-dependent (macOS may resolve
+	// /var → /private/var; Git Bash renders C:\ paths as /c/...).
+	if err := os.WriteFile(filepath.Join(dir, "evva-workdir-marker.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("marker: %v", err)
+	}
 	tool := NewBash(dir)
 	res, err := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"command":"pwd"}`))
+		json.RawMessage(`{"command":"ls"}`))
 	if err != nil {
 		t.Fatalf("unexpected go error: %v", err)
 	}
 	if res.IsError {
 		t.Fatalf("unexpected IsError; content=%q", res.Content)
 	}
-	// On macOS, t.TempDir() returns a path under /var/folders/... but
-	// /var is a symlink to /private/var, so `pwd` may report the
-	// resolved /private/... form. Accept either.
-	if !strings.Contains(res.Content, dir) && !strings.Contains(res.Content, strings.TrimPrefix(dir, "/var")) {
-		t.Errorf("pwd should report the configured workdir %q; got %q", dir, res.Content)
+	if !strings.Contains(res.Content, "evva-workdir-marker.txt") {
+		t.Errorf("ls should list the marker in workdir %q; got %q", dir, res.Content)
 	}
 }
 

@@ -35,10 +35,11 @@ func pathFromURIFor(goos, uri string) string {
 	}
 	if goos == "windows" {
 		// file:///C:/x → /C:/x → C:\x (servers may lowercase the drive).
+		// URIs without a drive prefix have no native Windows rendering —
+		// pass them through untouched rather than backslashifying them.
 		if len(p) >= 3 && p[0] == '/' && p[2] == ':' {
-			p = p[1:]
+			p = strings.ReplaceAll(p[1:], "/", `\`)
 		}
-		p = strings.ReplaceAll(p, "/", `\`)
 	}
 	return p
 }

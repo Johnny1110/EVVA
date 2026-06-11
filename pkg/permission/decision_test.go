@@ -1,10 +1,18 @@
 package permission
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strconv"
 	"testing"
 )
+
+// jstr marshals s as a JSON string literal (quotes included) so Windows
+// path backslashes survive the trip into tool input.
+func jstr(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
 
 func mkCall(name, cmd string) ToolCall {
 	if cmd == "" {
@@ -143,7 +151,7 @@ func TestDecide_PlanModeAllowsPlanFileWrite(t *testing.T) {
 	wd := t.TempDir()
 	planPath := filepath.Join(wd, ".evva", "plans", "current.md")
 
-	in := []byte(`{"file_path":"` + planPath + `","content":"# Plan"}`)
+	in := []byte(`{"file_path":` + jstr(planPath) + `,"content":"# Plan"}`)
 	call := ToolCall{Name: "write", Input: in}
 	d := Decide(call, ModePlan, NewStore(), Hint{}, wd, "")
 	if d.Behavior != BehaviorAllow {
@@ -152,14 +160,14 @@ func TestDecide_PlanModeAllowsPlanFileWrite(t *testing.T) {
 
 	// Non-plan path still denies.
 	otherPath := filepath.Join(wd, "main.go")
-	in2 := []byte(`{"file_path":"` + otherPath + `","content":"package main"}`)
+	in2 := []byte(`{"file_path":` + jstr(otherPath) + `,"content":"package main"}`)
 	d = Decide(ToolCall{Name: "write", Input: in2}, ModePlan, NewStore(), Hint{}, wd, "")
 	if d.Behavior != BehaviorDeny {
 		t.Errorf("plan-mode write outside plan dir should deny; got %v", d.Behavior)
 	}
 
 	// Edit also honored.
-	in3 := []byte(`{"file_path":"` + planPath + `","old_string":"a","new_string":"b"}`)
+	in3 := []byte(`{"file_path":` + jstr(planPath) + `,"old_string":"a","new_string":"b"}`)
 	d = Decide(ToolCall{Name: "edit", Input: in3}, ModePlan, NewStore(), Hint{}, wd, "")
 	if d.Behavior != BehaviorAllow {
 		t.Errorf("plan-mode edit on plan file should allow; got %v (%s)", d.Behavior, d.Reason)
@@ -390,7 +398,7 @@ func TestDecide_ConfigNullValueIsWrite(t *testing.T) {
 // --- auto-memory write carve-out (A8) ---
 
 func memWrite(name, path string) ToolCall {
-	return ToolCall{Name: name, Input: []byte(`{"file_path":"` + path + `","content":"x"}`)}
+	return ToolCall{Name: name, Input: []byte(`{"file_path":` + jstr(path) + `,"content":"x"}`)}
 }
 
 func TestDecide_AutoMemWriteAllowsInDefaultAndAcceptEdits(t *testing.T) {

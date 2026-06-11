@@ -153,6 +153,7 @@ func TestDownstream_PersonaPickerAndSwitch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWithProfile: %v", err)
 	}
+	t.Cleanup(ag.Shutdown) // releases the agent log file — Windows can't delete it open
 
 	// The /profile picker enumerates the registry's main personas.
 	picker := ag.ListMainProfiles()

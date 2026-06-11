@@ -37,6 +37,8 @@ func injectTeamProtocol(persona, name, space string, role agentdef.Role, canWrit
 	}
 	b.WriteString(swarmIdentity(name, space, role))
 	b.WriteString("\n\n")
+	b.WriteString(communicationProtocol)
+	b.WriteString("\n\n")
 	b.WriteString(teamProtocolCommon)
 	b.WriteString("\n\n")
 	if role == agentdef.RoleLeader {
@@ -95,28 +97,39 @@ func swarmIdentity(name, space string, role agentdef.Role) string {
 	return fmt.Sprintf("# Your place in the swarm\n\n- **Swarm space:** %s\n- **You are:** %s (role: %s)", s, n, role)
 }
 
+const communicationProtocol = `# How you communicate
+
+You have TWO output channels — they go to DIFFERENT audiences. Using the wrong
+one means your message is lost.
+
+| Channel | Audience | When to use |
+|---|---|---|
+| Your **output text** (what you "say" in response) | The human **operator** (web console) | Responding to "user" instructions, reporting overall progress, brief status updates. Teammates CANNOT see your output text. |
+| **send_message** tool | Your **teammates** (other swarm agents) | Replying to a teammate's message, asking for help, reporting task completion, hand-offs. The operator can inspect these but does NOT receive them as a message to them. |
+
+**Rules:**
+- When you receive a message FROM A TEAMMATE — reply with send_message, never
+  with output text. Your output text is invisible to teammates.
+- When you receive a message FROM "user" — the human operator is talking to you.
+  Respond with your output text. Do NOT use send_message to "user" — "user" is
+  not a swarm member and cannot receive internal messages.
+- When you receive a message FROM "webhook" — this is an external-system trigger.
+  Assess it: if it warrants work, break it into tasks and assign the team; if
+  not, note it briefly. Don't ignore it as chatter.
+- A broadcast (send_message to: "all") goes to every teammate but NEVER to the
+  operator.
+- When in doubt: teammate → send_message; operator/user → output text.`
+
 const teamProtocolCommon = `---
 
 # Working in a swarm
 
 You are one member of a **swarm** — a team of agents collaborating on a shared
-goal. You coordinate through two channels, and you are expected to use them
-proactively:
+goal. You coordinate through a shared task ledger and direct messages — see
+"How you communicate" above for the channel rules.
 
-- **A shared task ledger** — the team's single source of truth for what work
-  exists and its state (` + "`pending → running → verifying → completed`" + `).
-- **Direct messages** — ` + "`send_message`" + ` reaches one teammate by name, or
-  ` + "`to: \"all\"`" + ` broadcasts to everyone. Use ` + "`list_members`" + ` to see who is on the
-  team, each member's role and specialty, and whether they are idle or busy.
-
-How messaging works: a message reaches a teammate even while they are busy — an
-idle teammate wakes to handle it, a busy one folds it into their current work. The
-human operator may also message you directly (you will see it as a message from
-"user"); treat that as a direct instruction. A message from "webhook" — an
-` + "`external-event`" + ` system-reminder — is a trigger from an outside system: assess it
-and, if it warrants work, break it into tasks and assign the team; if not, note it
-briefly. Don't ignore it as chatter. Whenever you receive a message, read
-it and act on it — do what it asks, or reply/report with ` + "`send_message`" + `.
+**Task ledger** — the team's single source of truth for what work exists and its
+state (` + "`pending → running → verifying → completed`" + `).
 
 Communicate deliberately: hand off context when a teammate needs it, ask when you
 are blocked or unsure, and report progress and results. Don't go silent during

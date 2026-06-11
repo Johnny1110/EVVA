@@ -434,7 +434,7 @@ func (s *Supervisor) safeRun(ctx context.Context, name, prompt string) (out stri
 func composeMailPrompt(now time.Time, batch []store.Message, memIndex string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<system-reminder>currenttime: %s%s</system-reminder>\n", common.Stamp(now), wakeMemoryBlock(memIndex))
-	b.WriteString("You have unread messages from your teammates. Read each one and take whatever action it asks for; use send_message to reply or report back.\n")
+	b.WriteString("You have unread messages from teammates. Reply to each with send_message — your output text goes to the operator, not your teammates. Keep your output text brief (e.g., \"Replied to analyst\"). Do NOT use send_message to \"user\".\n")
 	for _, msg := range batch {
 		b.WriteString("\n--- Message from ")
 		b.WriteString(msg.Sender)

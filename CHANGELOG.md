@@ -26,7 +26,10 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
   `os.UserHomeDir`. `evva update` swaps the running exe via rename-aside
   (`.old` swept at next start). Release workflow ships
   `evva-windows-*.zip`; CI gains a windows cross-compile gate and a
-  `windows-latest` bring-up job. PRD:
+  required `windows-latest` test job (full `go test ./...`). The
+  bring-up triage also fixed two latent bugs visible on every platform:
+  the per-agent log file was never closed, and the grep tool broke on
+  search roots containing spaces. PRD:
   `docs/roadmap/PRD/windows-support.md`.
 
 ## [v1.6.0-beta.2] — 2026-06-11

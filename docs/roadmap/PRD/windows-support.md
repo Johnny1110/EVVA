@@ -1,9 +1,14 @@
 # PRD — Windows Support — Implementation Plan
 
 > **Audience:** senior engineers implementing this wave.
-> **Status:** in progress — WIN-1..WIN-8 implemented on
-> `feature/windows-support` (2026-06-12); pending: WIN-7 triage of the
-> first `windows-latest` CI runs, WIN-9 real-hardware validation.
+> **Status:** implemented — WIN-1..WIN-8 on `feature/windows-support`
+> (PR #35). WIN-7 triage took 2 rounds; `go test ./...` is green on
+> `windows-latest` and the job is required as of 2026-06-12. The triage
+> surfaced two real product bugs beyond §3's audit: the per-agent log
+> file was never closed (internal/logger — blocked file deletion on
+> Windows), and the grep tool's unquoted search root broke on
+> backslashes and spaces. Pending: WIN-9 real-hardware validation
+> against the v1.7.0-beta.1 assets.
 > **Target release:** `v1.7.0` (this wave claims the v1.7 minor per the
 > CLAUDE.md wave → minor rule; first Windows binaries ship in
 > `v1.7.0-beta.1`).

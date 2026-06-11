@@ -34,11 +34,10 @@ jobs:
         run: bash scripts/depcheck.sh
 
   windows:
-    name: Windows build · vet · tests (bring-up)
+    name: Windows build · vet · tests
     runs-on: windows-latest
-    # WIN-7 bring-up posture: surface Windows test signal without blocking
-    # PRs while the suite is triaged; flip to required before v1.7.0-beta.1.
-    continue-on-error: true
+    # Required since the WIN-7 bring-up triage got the full suite green
+    # (2026-06-12) — a red here blocks the PR like any other job.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

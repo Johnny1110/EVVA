@@ -33,7 +33,7 @@ func TestGlob_DoublestarMatchesRecursively(t *testing.T) {
 
 	tool := NewGlob("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"pattern":"**/*.go","path":"`+dir+`"}`))
+		json.RawMessage(`{"pattern":"**/*.go","path":`+jstr(dir)+`}`))
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -63,7 +63,7 @@ func TestGlob_MtimeSortedAscending(t *testing.T) {
 
 	tool := NewGlob("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"pattern":"*.go","path":"`+dir+`"}`))
+		json.RawMessage(`{"pattern":"*.go","path":`+jstr(dir)+`}`))
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -83,7 +83,7 @@ func TestGlob_NoMatches(t *testing.T) {
 
 	tool := NewGlob("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"pattern":"*.rs","path":"`+dir+`"}`))
+		json.RawMessage(`{"pattern":"*.rs","path":`+jstr(dir)+`}`))
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -116,7 +116,7 @@ func TestGlob_PathNotDir(t *testing.T) {
 	path := writeTempFile(t, "x")
 	tool := NewGlob("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"pattern":"*.go","path":"`+path+`"}`))
+		json.RawMessage(`{"pattern":"*.go","path":`+jstr(path)+`}`))
 	if !res.IsError {
 		t.Fatal("expected error when search root is a file")
 	}
@@ -159,7 +159,7 @@ func TestGlob_OutputFormatPlainFilenames(t *testing.T) {
 
 	tool := NewGlob("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"pattern":"*.go","path":"`+dir+`"}`))
+		json.RawMessage(`{"pattern":"*.go","path":`+jstr(dir)+`}`))
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -184,7 +184,7 @@ func TestGlob_TruncationFooter(t *testing.T) {
 	}
 	tool := NewGlob("")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"pattern":"*.go","path":"`+dir+`"}`))
+		json.RawMessage(`{"pattern":"*.go","path":`+jstr(dir)+`}`))
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}

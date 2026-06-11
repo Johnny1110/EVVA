@@ -19,7 +19,7 @@ func TestEdit_FileNotFound_NonEmptyOldString(t *testing.T) {
 	tool := NewEdit(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+missing+`","old_string":"a","new_string":"b"}`))
+		`{"file_path":`+jstr(missing)+`,"old_string":"a","new_string":"b"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "does not exist") {
 		t.Errorf("expected 'does not exist' error; got isErr=%v content=%q", res.IsError, res.Content)
@@ -34,7 +34,7 @@ func TestEdit_RejectsDirectory(t *testing.T) {
 	tool := NewEdit(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+dir+`","old_string":"a","new_string":"b"}`))
+		`{"file_path":`+jstr(dir)+`,"old_string":"a","new_string":"b"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "not a regular file") {
 		t.Errorf("expected dir rejection; got isErr=%v content=%q", res.IsError, res.Content)
@@ -46,7 +46,7 @@ func TestEdit_BlockedWithoutPriorRead(t *testing.T) {
 	tool := NewEdit(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"hello","new_string":"bye"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"hello","new_string":"bye"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "has not been read") {
 		t.Errorf("expected 'has not been read' guard error; got isErr=%v content=%q", res.IsError, res.Content)
@@ -80,7 +80,7 @@ func TestEdit_BlockedOnMtimeDrift(t *testing.T) {
 
 	tool := NewEdit(tr, "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"hello","new_string":"bye"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"hello","new_string":"bye"}`))
 	if !res.IsError {
 		t.Fatal("expected mtime-drift error")
 	}
@@ -100,7 +100,7 @@ func TestEdit_AllowedAfterPartialView(t *testing.T) {
 
 	tool := NewEdit(tr, "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"hello","new_string":"bye"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"hello","new_string":"bye"}`))
 	if res.IsError {
 		t.Fatalf("edit after partial-view read should succeed; got %q", res.Content)
 	}
@@ -119,7 +119,7 @@ func TestEdit_RejectsIPYNB(t *testing.T) {
 
 	tool := NewEdit(tr, "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"a","new_string":"b"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"a","new_string":"b"}`))
 	if !res.IsError {
 		t.Fatal("expected .ipynb rejection")
 	}
@@ -135,7 +135,7 @@ func TestEdit_RejectsIdenticalStrings(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"x","new_string":"x"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"x","new_string":"x"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "exactly the same") {
 		t.Errorf("expected 'exactly the same' rejection; got isErr=%v content=%q", res.IsError, res.Content)
@@ -149,7 +149,7 @@ func TestEdit_OldStringNotFound(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"nope","new_string":"yes"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"nope","new_string":"yes"}`))
 
 	if !res.IsError || !strings.Contains(res.Content, "not found") {
 		t.Errorf("expected 'not found'; got isErr=%v content=%q", res.IsError, res.Content)
@@ -167,7 +167,7 @@ func TestEdit_OldStringNotFound_LineNumberPrefixHint(t *testing.T) {
 
 	oldWithPrefix := "     1\thello world"
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":`+strconv.Quote(oldWithPrefix)+`,"new_string":"bye"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":`+strconv.Quote(oldWithPrefix)+`,"new_string":"bye"}`))
 
 	if !res.IsError {
 		t.Fatalf("expected error; got content=%q", res.Content)
@@ -184,7 +184,7 @@ func TestEdit_AmbiguousWithoutReplaceAll(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"foo","new_string":"bar"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"foo","new_string":"bar"}`))
 
 	if !res.IsError {
 		t.Fatal("expected ambiguity rejection")
@@ -205,7 +205,7 @@ func TestEdit_SingleReplacement_HappyPath(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"beta","new_string":"BETA"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"beta","new_string":"BETA"}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -234,7 +234,7 @@ func TestEdit_ReplaceAll(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"foo","new_string":"FOO","replace_all":true}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"foo","new_string":"FOO","replace_all":true}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -271,7 +271,7 @@ func TestEdit_CreatesNewFileWithEmptyOldString(t *testing.T) {
 	tool := NewEdit(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"","new_string":"package main\n"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"","new_string":"package main\n"}`))
 
 	if res.IsError {
 		t.Fatalf("file creation should succeed; got: %s", res.Content)
@@ -298,7 +298,7 @@ func TestEdit_EmptyOldStringOnExistingFileRejected(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"","new_string":"new content"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"","new_string":"new content"}`))
 	if !res.IsError {
 		t.Fatal("expected rejection for empty old_string on non-empty file")
 	}
@@ -316,7 +316,7 @@ func TestEdit_EmptyOldStringOnEmptyFile(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"","new_string":"populated"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"","new_string":"populated"}`))
 	if res.IsError {
 		t.Fatalf("populating empty file should succeed; got: %s", res.Content)
 	}
@@ -340,7 +340,7 @@ func TestEdit_CRLFRoundtrip(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"second","new_string":"SECOND"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"second","new_string":"SECOND"}`))
 	if res.IsError {
 		t.Fatalf("CRLF edit should succeed (LF old_string normalized to LF in mem); got: %s", res.Content)
 	}
@@ -371,7 +371,7 @@ func TestEdit_UTF16LERoundtrip(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"hello","new_string":"world"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"hello","new_string":"world"}`))
 	if res.IsError {
 		t.Fatalf("UTF-16 edit should succeed; got: %s", res.Content)
 	}
@@ -398,7 +398,7 @@ func TestEdit_CurlyQuoteToStraight(t *testing.T) {
 	// Model sends straight quotes — should match the curly version
 	// in the file via normalizeQuotes.
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"say \"hello\" loudly","new_string":"say \"hi\" quietly"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"say \"hello\" loudly","new_string":"say \"hi\" quietly"}`))
 	if res.IsError {
 		t.Fatalf("curly-quote match should succeed; got: %s", res.Content)
 	}
@@ -422,7 +422,7 @@ func TestEdit_StraightQuoteToCurly(t *testing.T) {
 
 	// old_string with curly, new_string with straight.
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"say “hello” loudly","new_string":"say \"hi\" quietly"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"say “hello” loudly","new_string":"say \"hi\" quietly"}`))
 	if res.IsError {
 		t.Fatalf("curly→straight match should succeed; got: %s", res.Content)
 	}
@@ -442,7 +442,7 @@ func TestEdit_TrailingNewlineCleanupOnEmptyNewString(t *testing.T) {
 	tool := NewEdit(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"line2","new_string":""}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"line2","new_string":""}`))
 	if res.IsError {
 		t.Fatalf("delete-line edit should succeed; got: %s", res.Content)
 	}
@@ -463,7 +463,7 @@ func TestEdit_StripTrailingWhitespaceOnNonMarkdown(t *testing.T) {
 
 	// new_string has trailing spaces on each line — should be stripped.
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"foo","new_string":"bar   \n  baz  "}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"foo","new_string":"bar   \n  baz  "}`))
 	if res.IsError {
 		t.Fatalf("edit should succeed; got: %s", res.Content)
 	}
@@ -489,7 +489,7 @@ func TestEdit_MarkdownPreservesTrailingSpaces(t *testing.T) {
 	// Two trailing spaces on the first line of new_string — should NOT
 	// be stripped because this is markdown.
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"foo","new_string":"line1  \nline2"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"foo","new_string":"line1  \nline2"}`))
 	if res.IsError {
 		t.Fatalf("edit should succeed; got: %s", res.Content)
 	}
@@ -517,7 +517,7 @@ func TestEdit_AllowedOnMtimeDriftSameContent(t *testing.T) {
 
 	tool := NewEdit(tr, "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"hello","new_string":"bye"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"hello","new_string":"bye"}`))
 	if res.IsError {
 		t.Fatalf("edit should be allowed when mtime moved but content is identical; got %q", res.Content)
 	}
@@ -546,7 +546,7 @@ func TestEdit_RejectsOversizeFile(t *testing.T) {
 
 	tool := NewEdit(NewReadTracker(), "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(
-		`{"file_path":"`+path+`","old_string":"x","new_string":"y"}`))
+		`{"file_path":`+jstr(path)+`,"old_string":"x","new_string":"y"}`))
 	if !res.IsError {
 		t.Fatal("expected oversize-file rejection")
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/johnny1110/evva/internal/swarm/service"
+	"github.com/johnny1110/evva/pkg/common/proc"
 )
 
 // parseLogLevel maps EVVA_LOG_LEVEL (debug|info|warn|error, case-insensitive)
@@ -203,7 +204,7 @@ func serviceStart(out io.Writer, addrFlag string, allowRemote bool) error {
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	cmd.Stdin = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach from this terminal
+	proc.Detach(cmd) // detach from this terminal (Setsid on unix; DETACHED_PROCESS on windows)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("spawn daemon: %w", err)
@@ -262,8 +263,9 @@ func serviceRun() {
 	clearRuntimeFiles()
 }
 
-// serviceStop terminates the daemon (SIGTERM) and clears the pidfile. A stale
-// pidfile (process already gone) is cleaned without error.
+// serviceStop terminates the daemon (SIGTERM on unix; hard kill on windows,
+// where the crash-safe resume path makes that acceptable) and clears the
+// pidfile. A stale pidfile (process already gone) is cleaned without error.
 func serviceStop(out io.Writer) error {
 	pid, ok := readPid()
 	if !ok {
@@ -276,12 +278,8 @@ func serviceStop(out io.Writer) error {
 		return nil
 	}
 
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("signal pid %d: %w", pid, err)
+	if err := proc.Terminate(pid); err != nil {
+		return fmt.Errorf("terminate pid %d: %w", pid, err)
 	}
 
 	// Give the daemon a moment to drain, then ensure the pidfile is gone.

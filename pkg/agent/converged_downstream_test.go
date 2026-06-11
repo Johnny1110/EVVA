@@ -57,6 +57,7 @@ func TestDownstream_OneConstructor_DefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent.New: %v", err)
 	}
+	t.Cleanup(ag.Shutdown) // releases the agent log file — Windows can't delete it open
 
 	if got := ag.ProfileName(); got != "evva" {
 		t.Errorf("ProfileName = %q, want evva (default)", got)
@@ -112,6 +113,7 @@ func TestDownstream_OneConstructor_InCodePersona(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent.New: %v", err)
 	}
+	t.Cleanup(ag.Shutdown) // releases the agent log file — Windows can't delete it open
 
 	if got := ag.ProfileName(); got != "finbot" {
 		t.Errorf("ProfileName = %q, want finbot", got)
@@ -147,6 +149,7 @@ func TestDownstream_OneConstructor_UnknownPersonaFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent.New: %v", err)
 	}
+	t.Cleanup(ag.Shutdown) // releases the agent log file — Windows can't delete it open
 	if got := ag.ProfileName(); got != "evva" {
 		t.Errorf("ProfileName = %q, want evva (fallback)", got)
 	}

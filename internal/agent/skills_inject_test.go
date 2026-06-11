@@ -112,6 +112,7 @@ func TestAgentNew_InjectedSkillRegistryDrivesInitialPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(a.Shutdown) // releases the agent log file — Windows can't delete it open
 	sp := a.profile.SystemPrompt
 	if !strings.Contains(sp, "memberskill") {
 		t.Errorf("initial prompt must list the injected member skill; got:\n%s", sp)
@@ -144,6 +145,7 @@ func TestAgentNew_EmptyInjectedRegistryAdvertisesNoneNotGlobal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(a.Shutdown) // releases the agent log file — Windows can't delete it open
 	sp := a.profile.SystemPrompt
 	if strings.Contains(sp, "# Skills") {
 		t.Errorf("empty injected registry must not render a # Skills section; got:\n%s", sp)

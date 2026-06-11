@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -65,7 +66,11 @@ type Agent struct {
 	ID     string
 	Name   string
 	logger *slog.Logger
-	status constant.AgentStatus
+	// logClose owns the per-agent log file when the logger opened one
+	// (nil otherwise). Closed in Shutdown — on Windows an open log file
+	// blocks deletion of its directory.
+	logClose io.Closer
+	status   constant.AgentStatus
 
 	profile Profile
 
@@ -320,11 +325,12 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	a.toolState.SetConfig(a.cfg)
 
 	// Logger picks up LogDir / LogLevel / LogFormat from a.cfg.
-	lgr, err := logger.OfAgent(a.cfg, parentID, ID)
+	lgr, logClose, err := logger.OfAgent(a.cfg, parentID, ID)
 	if err != nil {
 		return nil, fmt.Errorf("agent: init logger: %w", err)
 	}
 	a.logger = lgr
+	a.logClose = logClose
 
 	// Auto-load the skill registry from disk if no override was injected
 	// via WithSkillRegistry. Downstream apps that want a programmatic-only
@@ -589,6 +595,12 @@ func (a *Agent) Shutdown() {
 	}
 	if a.rootCancel != nil {
 		a.rootCancel()
+	}
+	// Last: release the log file so its directory is deletable (Windows
+	// refuses while open). A background goroutine that logs after this
+	// hits a closed-file write error, which slog swallows.
+	if a.logClose != nil {
+		_ = a.logClose.Close()
 	}
 }
 

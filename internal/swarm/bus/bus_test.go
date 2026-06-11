@@ -184,7 +184,9 @@ func TestSendNonBlockingUnderFullBuffer(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
+		// Anti-deadlock guard, not a perf bound — each Send does a sqlite
+		// INSERT, and slow CI disks (Windows runners) need real time.
 		t.Fatal("Send blocked on a full mailbox buffer (deadlock)")
 	}
 

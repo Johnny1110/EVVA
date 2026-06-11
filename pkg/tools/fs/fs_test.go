@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -15,14 +16,17 @@ import (
 // `/root/tmp` instead of the user's actual home. With SUDO_USER honored
 // in resolveUserHome the expansion now follows the user's intent.
 func TestResolvePathExpandsTilde(t *testing.T) {
+	// A real directory, not a literal "/home/agent" — a driveless unix
+	// path is not absolute on Windows and would get workdir-joined.
+	home := t.TempDir()
 	t.Setenv("SUDO_USER", "")
-	t.Setenv("HOME", "/home/agent")
+	t.Setenv("HOME", home)
 
 	got, err := resolvePath("~/tmp/notes.md", "")
 	if err != nil {
 		t.Fatalf("resolvePath: %v", err)
 	}
-	want := "/home/agent/tmp/notes.md"
+	want := filepath.Join(home, "tmp", "notes.md")
 	if got != want {
 		t.Fatalf("resolvePath(~/tmp/notes.md) = %q, want %q", got, want)
 	}
@@ -39,6 +43,9 @@ func TestResolvePathExpandsTilde(t *testing.T) {
 // whose homedir is not /root. Skipping when no such user exists keeps the
 // test meaningful on minimal images.
 func TestResolvePathHonorsSudoUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-only: SUDO_USER / /etc/passwd semantics")
+	}
 	username, homeDir := sudoUserCandidate(t)
 
 	t.Setenv("HOME", "/root")
@@ -76,12 +83,13 @@ func TestResolvePathAutoAbs(t *testing.T) {
 // TestResolvePathPreservesAbsolute confirms an already-absolute path
 // passes through untouched (modulo filepath.Clean).
 func TestResolvePathPreservesAbsolute(t *testing.T) {
-	got, err := resolvePath("/var/log/agent.log", "")
+	abs := filepath.Join(t.TempDir(), "agent.log") // absolute on every platform
+	got, err := resolvePath(abs, "")
 	if err != nil {
 		t.Fatalf("resolvePath: %v", err)
 	}
-	if got != "/var/log/agent.log" {
-		t.Fatalf("resolvePath(/var/log/agent.log) = %q", got)
+	if got != abs {
+		t.Fatalf("resolvePath(%q) = %q", abs, got)
 	}
 }
 

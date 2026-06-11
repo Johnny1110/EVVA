@@ -132,6 +132,7 @@ func TestDownstream_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent.NewWithProfile: %v", err)
 	}
+	t.Cleanup(ag.Shutdown) // releases the agent log file — Windows can't delete it open
 
 	// Step 5 — run one turn and verify events landed.
 	resp, err := ag.Run(context.Background(), "hello")

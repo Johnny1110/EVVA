@@ -214,10 +214,8 @@ func FormatDiagnosticsReminder(diags []PendingDiagnostic) string {
 	return b.String()
 }
 
-// fileURIToPath extracts a filesystem path from a file:// URI.
+// fileURIToPath extracts a filesystem path from a file:// URI, undoing
+// the drive-letter shape on Windows (file:///C:/x → C:\x) — see uri.go.
 func fileURIToPath(uri string) string {
-	if strings.HasPrefix(uri, "file://") {
-		return uri[7:]
-	}
-	return uri
+	return pathFromURI(uri)
 }

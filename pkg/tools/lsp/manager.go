@@ -268,13 +268,14 @@ func (m *Manager) languageForFile(filePath string) string {
 	return ext
 }
 
-// fileURI converts an absolute file path to a file:// URI.
+// fileURI converts an absolute file path to a file:// URI. Drive-letter
+// paths need the extra slash (file:///C:/...) — uri.go owns that logic.
 func fileURI(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	return "file://" + filepath.ToSlash(abs)
+	return uriFromPath(abs)
 }
 
 // normalizeExt ensures the extension starts with a dot.

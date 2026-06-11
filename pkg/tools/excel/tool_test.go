@@ -352,7 +352,9 @@ func TestDeleteSheet(t *testing.T) {
 		"operation": "list_sheets",
 		"filePath":  path,
 	})
-	if strings.Contains(r.Content, "Temp") {
+	// Match the numbered sheet entry ("2. Temp"), not the bare word — the
+	// listing echoes the file path, and Windows temp dirs contain \Temp\.
+	if strings.Contains(r.Content, ". Temp") {
 		t.Errorf("Temp sheet should be deleted: %s", r.Content)
 	}
 }

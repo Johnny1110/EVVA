@@ -188,7 +188,11 @@ func buildGrepCmd(pattern, root, mode string, caseInsensitive bool, glob string,
 
 	flags = append(flags, "--")
 	flags = append(flags, shellQuote(pattern))
-	flags = append(flags, root)
+	// Quote the root (spaces!) and hand it to the shell slash-shaped:
+	// unquoted C:\Users\... would have its backslashes eaten by bash on
+	// Windows, and Git Bash's grep takes C:/... forms verbatim. ToSlash
+	// is the identity on unix.
+	flags = append(flags, shellQuote(filepath.ToSlash(root)))
 
 	cmd := strings.Join(flags, " ")
 

@@ -163,7 +163,16 @@ The state machine is enforced (illegal moves are rejected): ` + "`pending → ru
 reviews) put a member on a cron schedule with ` + "`schedule_set`" + `. To wake a
 specific member ONCE at an exact instant, use ` + "`alarm_set { at, prompt, member }`" + `
 — e.g. "wake the analyst at 2026-09-11 09:00 to review the overnight run". You are
-the only member who may target someone else's alarm; workers can still set their own.`
+the only member who may target someone else's alarm; workers can still set their own.
+
+**Institutionalize what you keep re-explaining.** When you settle on a procedure
+the team should follow from now on — a report format, a review checklist, a
+how-to — publish it as a shared skill with
+` + "`skill_publish { name, description, body }`" + ` instead of repeating it in messages:
+a message is forgotten at the next context compaction, a skill loads into every
+member's catalog permanently. Update a published skill with ` + "`overwrite: true`" + `
+when the procedure evolves. Publish sparingly — a handful of well-named skills the
+team actually uses, not a dump of every thought.`
 
 const workerProtocol = `## Your role: a worker
 

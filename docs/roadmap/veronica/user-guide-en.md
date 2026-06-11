@@ -59,6 +59,7 @@ Two commands:
 | Owns | planning, assignment, verification | doing the work, reporting back |
 | Task tools | `task_create`, `task_assign`, `task_update_status`, `task_verify`, `task_list`, `proposal_list`, `proposal_accept`, `proposal_decline` | `my_tasks`, `task_get` (read-only), `task_propose` (file work) |
 | Talk | `send_message`, `list_members` | `send_message`, `list_members` |
+| Institutionalize | `skill_publish` (publish a team-shared skill) | — (loads shared skills, never authors) |
 | Writes the ledger? | **Yes** (sole writer) | No |
 
 The leader decomposes a goal into tasks, **pushes** each to a worker, and
@@ -402,11 +403,23 @@ pick up their tasks, report back, and the board march to **completed**.
   every member's skill catalog — no more copy-pasting the same SKILL.md into N
   members and syncing edits by hand. A member's own same-named skill in its
   private `skills/` wins (local overrides global; the shadowing surfaces as a
-  registration warning). The shared dir is yours (the User's) to maintain by
-  dropping folders in — agents load skills, they don't author them (the RP-10
-  discipline unchanged). Files added there take full effect on re-register
-  (`evva swarm .`), or reach a single member at its next run-boundary reload
-  triggered by any web skill add/delete on that member.
+  registration warning). Three maintenance channels: drop folders in yourself
+  (full effect on re-register, `evva swarm .`); the web's shared-skill surface
+  (`GET/POST /api/swarm/{id}/skills`, `DELETE /api/swarm/{id}/skills/{name}` —
+  an add/delete triggers an ALL-member run-boundary reload); and the leader's
+  `skill_publish {name, description, body}` — the ONE deliberate opening in the
+  RP-10 "agents load skills, never author them" discipline: the leader
+  institutionalizes a procedure it settled on during operations (a review
+  format, a checklist) as a team skill instead of re-explaining it in messages
+  that die at the next compaction. The opening stays narrow three ways: it can
+  only write the shared dir (the tool has no member parameter — no path into
+  anyone's private persona), the tool_use event self-audits into the event log,
+  and you hold the final-arbiter delete in the web (operator add/deletes are
+  logged as synthetic `shared_skill_change` lines). Updating a published skill
+  takes an explicit `overwrite: true` (no accidental clobber; the leader's
+  prompt teaches "publish to institutionalize, sparingly"). To shut the opening
+  entirely, give the leader a `skill_publish` deny rule — RP-24 deny binds in
+  every permission mode.
 - **Member long-term memory.** Every member gets `agents/{main,sub}/<name>/memory/`
   at construction — plain files that ride the same git/.gitignore decision as
   agents/ and survive restarts for free. Members with a file-write tool

@@ -57,6 +57,15 @@ func TestInjectTeamProtocol_RoleSpecific(t *testing.T) {
 		t.Error("advice-loop closure is leader-only")
 	}
 
+	// RP-26 Part B: the leader is taught to institutionalize procedures via
+	// skill_publish (and only the leader — workers don't hold the tool).
+	if !strings.Contains(leader, "skill_publish") || !strings.Contains(leader, "Institutionalize") {
+		t.Error("leader protocol should teach skill_publish institutionalization")
+	}
+	if strings.Contains(worker, "skill_publish") {
+		t.Error("skill_publish guidance is leader-only")
+	}
+
 	// Worker gets the worker protocol + its read-only task tools.
 	if !strings.Contains(worker, "Your role: a worker") {
 		t.Error("worker protocol missing")

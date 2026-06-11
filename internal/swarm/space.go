@@ -663,6 +663,53 @@ func (sp *SwarmSpace) reloadSkills(member string) error {
 	return s.ReloadMemberSkills(member)
 }
 
+// SharedSkills lists the space-shared skill dir (RP-26) fresh from disk — the
+// same source-of-truth-on-disk read as MemberSkills, for the web GET and the
+// skill_publish result. A space without the dir yields an empty list.
+func (sp *SwarmSpace) SharedSkills() []agent.Skill {
+	reg, _ := skill.LoadRegistry(agentdef.SharedSkillsDir(sp.Workdir), "")
+	list := reg.List()
+	out := make([]agent.Skill, 0, len(list))
+	for _, m := range list {
+		out = append(out, agent.Skill{Name: m.Name, Description: m.Description})
+	}
+	return out
+}
+
+// PublishSharedSkill writes a skill into the space-shared dir and fans the
+// reload out to EVERY member (RP-26 Part B) — each picks the new catalog up at
+// its own next run boundary (an idle member on the spot, a busy one when its
+// current run ends). The two callers are the leader's skill_publish tool and
+// the operator's web POST; both go through here so the write+reload-all pairing
+// can't be skipped. overwrite gates replacing an existing version
+// (agentdef.ErrSkillExists otherwise).
+func (sp *SwarmSpace) PublishSharedSkill(name, description, body string, overwrite bool) error {
+	if err := agentdef.WriteSharedSkill(sp.Workdir, name, description, body, overwrite); err != nil {
+		return err
+	}
+	return sp.reloadAllSkills()
+}
+
+// RemoveSharedSkill deletes a shared skill and fans the reload out — the
+// User's final-arbiter delete (web), so a bad publish is reversible.
+func (sp *SwarmSpace) RemoveSharedSkill(name string) error {
+	if err := agentdef.RemoveSharedSkill(sp.Workdir, name); err != nil {
+		return err
+	}
+	return sp.reloadAllSkills()
+}
+
+// reloadAllSkills is reloadSkills for the whole roster (shared-skill changes).
+func (sp *SwarmSpace) reloadAllSkills() error {
+	sp.mu.Lock()
+	s := sp.super
+	sp.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("swarm: skill reload unavailable (space has no running supervisor)")
+	}
+	return s.ReloadAllMemberSkills()
+}
+
 // removeAgent tears down one member's live agent and drops it from the space's
 // maps (RP-8 remove): shut the agent's background workers, forget its handle and
 // any schedule. The roster entry, mailbox, and run loop are handled by the

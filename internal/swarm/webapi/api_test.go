@@ -43,6 +43,8 @@ type fakeBackend struct {
 	eventKeys     map[string]string // idempotency_key -> message id
 	skillsAdded   []SkillSpec       // AddSkill calls
 	skillsDeleted [][2]string       // {agent, skill}
+	sharedAdded   []SkillSpec       // AddSharedSkill calls (RP-26)
+	sharedDeleted []string          // DeleteSharedSkill calls
 }
 
 func (f *fakeBackend) Token() string                           { return f.token }
@@ -231,6 +233,33 @@ func (f *fakeBackend) DeleteSkill(space, agent, skill string) error {
 	}
 	f.mu.Lock()
 	f.skillsDeleted = append(f.skillsDeleted, [2]string{agent, skill})
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeBackend) SharedSkills(space string) ([]SkillInfo, bool) {
+	if !f.HasSpace(space) {
+		return nil, false
+	}
+	return []SkillInfo{{Name: "review-format", Description: "the five sections"}}, true
+}
+func (f *fakeBackend) AddSharedSkill(space string, spec SkillSpec) error {
+	if !f.HasSpace(space) {
+		return errUnknownSpace
+	}
+	if strings.TrimSpace(spec.Name) == "" {
+		return errBadSkill
+	}
+	f.mu.Lock()
+	f.sharedAdded = append(f.sharedAdded, spec)
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeBackend) DeleteSharedSkill(space, skill string) error {
+	if !f.HasSpace(space) {
+		return errUnknownSpace
+	}
+	f.mu.Lock()
+	f.sharedDeleted = append(f.sharedDeleted, skill)
 	f.mu.Unlock()
 	return nil
 }
@@ -648,6 +677,60 @@ func TestRESTSkillRoutes(t *testing.T) {
 	// guarded: no token → 401.
 	if s := getCode(srv.URL + "/api/agents/leader/skills?space=sp-a"); s != http.StatusUnauthorized {
 		t.Fatalf("skills list without token = %d, want 401", s)
+	}
+}
+
+// RP-26 routes: space-shared skill library — list (GET), author (POST), delete
+// (DELETE) under /api/swarm/{id}/skills — guarded, same 404/400 mapping as the
+// per-member CRUD.
+func TestRESTSharedSkillRoutes(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+
+	getCode := func(url string) int {
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	var skills []SkillInfo
+	getJSON(t, srv.URL+"/api/swarm/sp-a/skills?token=secret", &skills)
+	if len(skills) != 1 || skills[0].Name != "review-format" {
+		t.Fatalf("shared skills = %+v", skills)
+	}
+	if s := getCode(srv.URL + "/api/swarm/ghost/skills?token=secret"); s != http.StatusNotFound {
+		t.Fatalf("list unknown space = %d, want 404", s)
+	}
+
+	if s := post(t, srv.URL+"/api/swarm/sp-a/skills?token=secret", bytes.NewBufferString(`{"name":"prd-format","description":"d","body":"b"}`)); s != http.StatusNoContent {
+		t.Fatalf("add shared skill = %d, want 204", s)
+	}
+	if len(fake.sharedAdded) != 1 || fake.sharedAdded[0].Name != "prd-format" {
+		t.Fatalf("shared add not recorded: %+v", fake.sharedAdded)
+	}
+	if s := post(t, srv.URL+"/api/swarm/sp-a/skills?token=secret", bytes.NewBufferString(`{"name":"","body":"b"}`)); s != http.StatusBadRequest {
+		t.Fatalf("empty name = %d, want 400", s)
+	}
+	if s := post(t, srv.URL+"/api/swarm/ghost/skills?token=secret", bytes.NewBufferString(`{"name":"x","description":"d","body":"b"}`)); s != http.StatusNotFound {
+		t.Fatalf("add unknown space = %d, want 404", s)
+	}
+
+	if s := del(t, srv.URL+"/api/swarm/sp-a/skills/prd-format?token=secret"); s != http.StatusNoContent {
+		t.Fatalf("delete shared skill = %d, want 204", s)
+	}
+	if len(fake.sharedDeleted) != 1 || fake.sharedDeleted[0] != "prd-format" {
+		t.Fatalf("shared delete not recorded: %+v", fake.sharedDeleted)
+	}
+	if s := del(t, srv.URL+"/api/swarm/ghost/skills/x?token=secret"); s != http.StatusNotFound {
+		t.Fatalf("delete unknown space = %d, want 404", s)
+	}
+
+	if s := getCode(srv.URL + "/api/swarm/sp-a/skills"); s != http.StatusUnauthorized {
+		t.Fatalf("shared skills list without token = %d, want 401", s)
 	}
 }
 

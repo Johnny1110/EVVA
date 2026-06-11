@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -375,6 +376,21 @@ func (s *Supervisor) ReloadMemberSkills(name string) error {
 	m.mu.Unlock()
 	s.poke(m, wakeMessage)
 	return nil
+}
+
+// ReloadAllMemberSkills runs ReloadMemberSkills over the whole roster — the
+// fan-out a shared-skill change needs (RP-26 Part B): every member re-scans
+// (shared, own) and applies at its own next run boundary. Per-member failures
+// are joined, not short-circuited, so one bad member can't strand the rest of
+// the team on a stale catalog.
+func (s *Supervisor) ReloadAllMemberSkills() error {
+	var errs []error
+	for _, mv := range s.sp.Roster.Snapshot() {
+		if err := s.ReloadMemberSkills(mv.Name); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // applyMemberSkills installs a rebuilt catalog on a member's live agent through the

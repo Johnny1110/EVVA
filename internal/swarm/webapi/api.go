@@ -126,6 +126,15 @@ type Backend interface {
 	AddSkill(spaceID, agent string, spec SkillSpec) error
 	DeleteSkill(spaceID, agent, skill string) error
 
+	// Space-shared skills (RP-26): one copy every member loads. SharedSkills
+	// lists them (bool false when the space is unknown); AddSharedSkill authors
+	// one (create-only — delete first to replace) and reloads EVERY member;
+	// DeleteSharedSkill is the User's final-arbiter delete over anything the
+	// leader's skill_publish put there, also reloading every member.
+	SharedSkills(spaceID string) ([]SkillInfo, bool)
+	AddSharedSkill(spaceID string, spec SkillSpec) error
+	DeleteSharedSkill(spaceID, skill string) error
+
 	// MemberMemory lists a member's long-term memory files read-only (RP-25):
 	// the User's transparency window onto the team's mind. bool false when the
 	// space or member is unknown. Curation (delete) is deferred with the FE tab.
@@ -654,6 +663,27 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 	}))
 	mux.Handle("DELETE /api/agents/{name}/skills/{skill}", guard(func(w http.ResponseWriter, r *http.Request) {
 		respondInputErr(w, b.DeleteSkill(r.URL.Query().Get("space"), r.PathValue("name"), r.PathValue("skill")))
+	}))
+	// Space-shared skills (RP-26): the User's review-and-final-arbiter surface
+	// over the team skill library — including anything the leader's
+	// skill_publish tool put there. Add/delete reload EVERY member.
+	mux.Handle("GET /api/swarm/{id}/skills", guard(func(w http.ResponseWriter, r *http.Request) {
+		skills, ok := b.SharedSkills(r.PathValue("id"))
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, skills)
+	}))
+	mux.Handle("POST /api/swarm/{id}/skills", guard(func(w http.ResponseWriter, r *http.Request) {
+		var spec SkillSpec
+		if !decode(w, r, &spec) {
+			return
+		}
+		respondInputErr(w, b.AddSharedSkill(r.PathValue("id"), spec))
+	}))
+	mux.Handle("DELETE /api/swarm/{id}/skills/{skill}", guard(func(w http.ResponseWriter, r *http.Request) {
+		respondInputErr(w, b.DeleteSharedSkill(r.PathValue("id"), r.PathValue("skill")))
 	}))
 	// The tool catalog the add-agent form offers (collaboration tools excluded).
 	mux.Handle("GET /api/tools", guard(func(w http.ResponseWriter, r *http.Request) {

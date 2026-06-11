@@ -1,6 +1,12 @@
 # EX-6 — Skill 共享生態（space 級技能庫＋ leader 教 worker）
 
-> 狀態：**探索 / Exploration** ｜ 日期：2026-06-10 ｜ 規模：中 ｜ 依賴：無（建立在 RP-10 之上）
+> 狀態：**✅ 已畢業至 [RP-26](../refine-plan/RP-26-shared-skills.md)（Part A+B 全落地
+> 2026-06-11）** ｜ 日期：2026-06-10 ｜ 規模：中 ｜ 依賴：無（建立在 RP-10 之上）
+>
+> 畢業註記：spike 本身未跑——operator 直接揭門進 Part B；本票「最短驗證」三步裡的
+> 1、2（loader 疊加 + skill_publish）已是正式實作，第 3 步（friday 發布復盤格式、
+> 觀察 reviewer 遵循）轉為 Sunday 真實運營中的回歸劇本。治理對策（web 審視/刪除、
+> 發布審計、deny 後手）與 publish 同 commit 上線，垃圾堆積觀察在運營中持續。
 
 ## 動機
 

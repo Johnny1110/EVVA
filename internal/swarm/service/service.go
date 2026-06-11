@@ -1344,6 +1344,76 @@ func (s *Service) DeleteSkill(id, agent, skill string) error {
 	return ent.space.RemoveMemberSkill(agent, skill)
 }
 
+// SharedSkills / AddSharedSkill / DeleteSharedSkill are the operator's surface
+// over the space-shared skill library (RP-26): list what the team loads —
+// User-dropped files and leader skill_publish output alike — author one, or
+// exercise the final-arbiter delete. Add/delete reload every member (the space
+// owns that pairing). Operator edits get a synthetic event-log line, mirroring
+// the schedule precedent: a web write produces no tool_use event to self-audit
+// through, and "who deleted the team's skill last night" must stay answerable.
+func (s *Service) SharedSkills(id string) ([]webapi.SkillInfo, bool) {
+	ent, ok := s.entry(id)
+	if !ok {
+		return nil, false
+	}
+	skills := ent.space.SharedSkills()
+	out := make([]webapi.SkillInfo, 0, len(skills))
+	for _, sk := range skills {
+		out = append(out, webapi.SkillInfo{Name: sk.Name, Description: sk.Description})
+	}
+	return out, true
+}
+
+func (s *Service) AddSharedSkill(id string, spec webapi.SkillSpec) error {
+	ent, ok := s.entry(id)
+	if !ok {
+		return fmt.Errorf("swarm: unknown space %q", id)
+	}
+	if err := ent.space.PublishSharedSkill(spec.Name, spec.Description, spec.Body, false); err != nil {
+		return err
+	}
+	s.log.Info("swarm: shared skill added by operator", "space", ent.name, "skill", spec.Name)
+	s.auditSharedSkillChange(ent, spec.Name, "add")
+	return nil
+}
+
+func (s *Service) DeleteSharedSkill(id, skill string) error {
+	ent, ok := s.entry(id)
+	if !ok {
+		return fmt.Errorf("swarm: unknown space %q", id)
+	}
+	if err := ent.space.RemoveSharedSkill(skill); err != nil {
+		return err
+	}
+	s.log.Info("swarm: shared skill deleted by operator", "space", ent.name, "skill", skill)
+	s.auditSharedSkillChange(ent, skill, "delete")
+	return nil
+}
+
+// sharedSkillChangeEvent is the synthetic event-log line for an operator edit
+// of the shared skill library. Leader publishes need no synthetic line: the
+// skill_publish tool_use event already carries the full args (RP-17).
+type sharedSkillChangeEvent struct {
+	Kind   string `json:"kind"` // "shared_skill_change"
+	Skill  string `json:"skill"`
+	Action string `json:"action"` // "add" | "delete"
+	Source string `json:"source"` // "operator"
+}
+
+func (s *Service) auditSharedSkillChange(ent *spaceEntry, skill, action string) {
+	log, ok := s.eventLogFor(ent.id)
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(wireEvent{SpaceID: ent.id, Event: sharedSkillChangeEvent{
+		Kind: "shared_skill_change", Skill: skill, Action: action, Source: "operator",
+	}})
+	if err != nil {
+		return
+	}
+	log.Offer(payload)
+}
+
 // CreateMember authors a new worker from the web form (RP-8): hot-load it live,
 // record it in the manifest so it survives a restart, then tell the leader (only
 // the when_to_use) so its team model updates immediately.

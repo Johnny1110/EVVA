@@ -1,6 +1,8 @@
 package agentdef
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +56,61 @@ func TestWriteRemoveSkillRoundTrip(t *testing.T) {
 	reg2, _ := skill.LoadRegistry(SkillsDir(wd, RoleWorker, "qa"), "")
 	if _, ok := reg2.Get("pnl-report"); ok {
 		t.Error("skill still present after RemoveSkill")
+	}
+}
+
+// TestWriteSharedSkill (RP-26 Part B): WriteSharedSkill lands in the space-shared
+// dir; a duplicate name is ErrSkillExists unless overwrite, which replaces the
+// folder wholesale; RemoveSharedSkill deletes it. Same name/body validation as
+// the per-member path (shared core).
+func TestWriteSharedSkill(t *testing.T) {
+	wd := t.TempDir()
+
+	if err := WriteSharedSkill(wd, "review-format", "the five sections", "1..5", false); err != nil {
+		t.Fatalf("WriteSharedSkill: %v", err)
+	}
+	reg, _ := skill.LoadRegistry(SharedSkillsDir(wd), "")
+	if m, ok := reg.Get("review-format"); !ok || m.Description != "the five sections" {
+		t.Fatalf("shared skill not loaded back; have %v", reg.Names())
+	}
+
+	err := WriteSharedSkill(wd, "review-format", "x", "y", false)
+	if !errors.Is(err, ErrSkillExists) {
+		t.Errorf("duplicate without overwrite: err = %v, want ErrSkillExists", err)
+	}
+
+	// Overwrite replaces wholesale: a stray extra file of v1 must not survive.
+	stray := filepath.Join(SharedSkillsDir(wd), "review-format", "stray.txt")
+	if err := os.WriteFile(stray, []byte("v1 leftover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSharedSkill(wd, "review-format", "v2", "new body", true); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	reg2, _ := skill.LoadRegistry(SharedSkillsDir(wd), "")
+	if m, _ := reg2.Get("review-format"); m.Description != "v2" {
+		t.Errorf("description after overwrite = %q, want %q", m.Description, "v2")
+	}
+	if _, err := os.Stat(stray); !os.IsNotExist(err) {
+		t.Error("overwrite must replace the skill folder wholesale (stray v1 file survived)")
+	}
+
+	if err := WriteSharedSkill(wd, "../escape", "x", "y", false); err == nil {
+		t.Error("illegal shared skill name should be rejected")
+	}
+	if err := WriteSharedSkill(wd, "blank", "x", "  ", false); err == nil {
+		t.Error("empty shared skill body should be rejected")
+	}
+
+	if err := RemoveSharedSkill(wd, "review-format"); err != nil {
+		t.Fatalf("RemoveSharedSkill: %v", err)
+	}
+	reg3, _ := skill.LoadRegistry(SharedSkillsDir(wd), "")
+	if _, ok := reg3.Get("review-format"); ok {
+		t.Error("shared skill still present after RemoveSharedSkill")
+	}
+	if err := RemoveSharedSkill(wd, "../escape"); err == nil {
+		t.Error("RemoveSharedSkill must reject an illegal name")
 	}
 }
 

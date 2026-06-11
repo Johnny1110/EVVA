@@ -22,8 +22,28 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
   global; the shadowing surfaces as a registration warning). The shared dir
   is User-authored — agents load skills, they don't author them (the RP-10
   discipline unchanged); a space without `agents/skills/` behaves exactly as
-  before. Part B (`skill_publish`, the leader's authoring inlet into the
-  shared dir) stays parked on the EX-6 spike per the ticket.
+  before.
+- **Leader `skill_publish` + shared-skill web surface (RP-26 Part B).** The
+  leader can institutionalize a procedure as a team skill:
+  `skill_publish {name, description, body}` writes the space-shared dir and
+  reloads EVERY member (each applies at its own next run boundary — an idle
+  member instantly, a busy one when its current run ends; the reload poke
+  costs zero tokens on an empty mailbox). This is the one deliberate opening
+  in the RP-10 "agents load, never author" discipline, kept narrow three
+  ways: the tool can only reach the shared dir (no member parameter — no
+  write path into anyone's private skills/), the tool_use event self-audits
+  into the RP-17 event log, and the operator holds list + final-arbiter
+  delete in the web (`GET/POST /api/swarm/{id}/skills`,
+  `DELETE /api/swarm/{id}/skills/{skill}`; operator edits log synthetic
+  `shared_skill_change` lines and also reload all members). Updating a
+  published skill requires an explicit `overwrite: true` (refused otherwise
+  with guidance; the overwrite replaces the skill folder wholesale). The
+  leader protocol teaches when to publish — codified procedures, sparingly —
+  and an RP-24 deny rule on `skill_publish` shuts the opening in any
+  permission mode. Gate note: the ticket parked Part B on the EX-6
+  spike's garbage-accumulation observation; the operator lifted the gate on
+  2026-06-11 (Sunday's reorganization wants the publish channel), with the
+  web review/delete surface shipping in the same change as the recourse.
 - **Member-native long-term memory (RP-25).** Every swarm member gets its own
   typed memory directory at `agents/{main,sub}/<name>/memory/` (auto-created
   at construction, hot-add included): one fact per file with frontmatter plus

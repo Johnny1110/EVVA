@@ -1,0 +1,130 @@
+# RP-26 — Space 級共享 skills（EX-6 的畢業票：Part A 共享目錄先行）
+
+> 狀態：**✅ 全票已實作（Part A + Part B，2026-06-11，feature/RP-26）** ｜ 階段：**第五波** ｜ 優先：**P2** ｜ 日期：2026-06-11
+> 觸發：Sunday swarm 重整。具體重複實例：`query-sunday` SKILL.md 在 risk-monitor 與 reviewer 各貼一份——查 Sunday 帳戶端點的 know-how 是全隊共用知識，現在改版要改兩處（隊伍再長就是 N 處）。
+> 關聯：**[EX-6](../explore/EX-6-skill-sharing.md)（parent——本文是它「spike 成功 → 立 RP」的去向；Part B 治理問題以 spike 結論為準）**、[RP-10](RP-10-agent-skills-injection-and-web-mgmt.md)（per-member skills 地基；`WriteSkill`/`ReloadMemberSkills` 原語）、[RP-10A](RP-10A-subtickets.md)（「agent 只載入、不著作」紀律）
+> 請求者：Sunday。**無 Sunday-specific code。**
+
+---
+
+## 1. Problem（observed）
+
+skills 目前嚴格 per-member（`agents/{main,sub}/<name>/skills/`）。兩個成長痛（EX-6 §動機 + Sunday 實例）：
+
+1. **共用 know-how 重複貼份**：`query-sunday` ×2 只是開始——「怎麼讀 K 線指標端點」「PRD 開票格式」天然全隊適用；逐成員複製 = 改版漂移（兩份已開始各自演化）。
+2. **leader 的制度化管道缺失**：leader 總結的流程只能 send_message 口傳，compaction 一過就消失；skill 才是持久載體，但 RP-10 紀律（正確地）禁止 agent 著作 per-member skill。
+
+## 2. Proposal（兩段切，A 不等 B）
+
+**Part A — 共享目錄（機械、可直接動工）**：
+
+1. 新增 `<workdir>/agents/skills/`（space 級共享）；`Loader.Build`（`internal/swarm/agentdef/loader.go:104` 的 `skill.LoadRegistry` 處）改為**兩源合併**：member 私有 + space 共享，**同名時 member 版優先**（局部覆寫全域，與一般 config 疊加直覺一致）。
+2. 提示詞的 skill 清單（RP-10-1 強制注入）自然帶出共享技能——零額外注入面。
+3. 熱更新沿 RP-10 的 run-邊界 reload；`evva swarm .` 重註冊全量生效。
+
+**Part B — `skill_publish`（leader 著作窄口，gated on EX-6 spike）**：
+
+- leader 工具 `skill_publish {name, description, body}` → 薄包 `WriteSkill`（`space.go:409`）寫進 shared dir + 對全員 `ReloadMemberSkills`（`supervisor.go:314`）。
+- 治理邊界照 EX-6：leader **只能寫 shared**、不能寫成員私有 dir（不越權改人設）；User 在 Web 終審可刪（FE-7）。
+- **EX-6 spike 的觀察點（skill 垃圾堆積與否）是 Part B 的開工門檻**——spike 沒跑或結論負面，Part B 不動，Part A 照常有效。
+
+## 3. Why evva（not Sunday）
+
+skill 的載入與合併是 agentdef loader 的職權。Sunday 端唯一替代是繼續複製貼上 + 人肉同步——這正是要消滅的東西。
+
+## 4. Acceptance
+
+- 放一份 skill 進 `agents/skills/` → 全員 prompt 的 skill 清單可見、`skill` 工具可載入。
+- member 私有同名 skill 蓋過共享版（載入優先序測試）。
+- 無 `agents/skills/` 目錄的 space 行為與今日完全相同。
+- （Part B）leader `skill_publish` → 下個 run 邊界全員生效；leader 對成員私有 skills 目錄無寫路徑；發布事件入 event log。
+- Sunday 回歸：`query-sunday` 收斂為 shared 單份，risk-monitor / reviewer 行為不退化。
+
+## 5. Notes
+
+- Part A 對 RP-10-3 紀律零衝突：共享 dir 仍是 User 著作（放檔案進去）、agent 載入。
+- prompt cache：共享 skill 變動 → 全員前綴一次性 miss——RP-10 已接受同款成本，低頻可控。
+- 命名建議避開 `agents/main|sub` 的角色語義：`agents/skills/` 平放即可，loader 用「不是 main/ 不是 sub/」即可辨識，無 schema 變更。
+
+---
+
+## 6. 落地註記（2026-06-11 — Part A only）
+
+Part A 照 §2 落地，比預想更省：`pkg/skill.LoadRegistry(home, workdir)` **本來就是雙源後者勝**
+（workdir 蓋 home，附 shadowing warning），所以「合併」就是把呼叫處從
+`LoadRegistry(memberSkills, "")` 改成 `LoadRegistry(shared, memberSkills)`——member 在
+後者位 = member 優先，零新合併邏輯。
+
+1. **`agentdef.SharedSkillsDir(workdir)`** = `<workdir>/agents/skills/`（平放、無角色語義，
+   照 §5 命名建議）。**`Loader.Build` 簽名加第三參數 `sharedSkills`**（顯式傳入，不做
+   `dir/../../` 路徑魔法）；`""` = 舊行為，正好就是「無共享目錄的 space 與今日完全相同」。
+2. **三個載入點全部對齊**（construction = hot-add = reload 同源同序的不變量）：
+   `BuildAll`（初建/重啟 rebuild）、supervisor `AddMember`（熱加入）、
+   `ReloadMemberSkills`（run-邊界 reload——所以 web 對某成員的 skill 增刪也會順帶把
+   新放的共享 skill 帶給該成員）。
+3. **`space.MemberSkills`（web GET）刻意維持 private-only**：那是 RP-10 的著作 CRUD 面
+   （DELETE 打 member dir），共享 skill 混進去會出現「每個成員都列同一份 + 刪不掉」的
+   錯誤暗示。共享 dir 是 User 直接管檔案系統的東西；等 Part B 一起上專屬的
+   shared-skills web 面。
+4. **純檔案丟入的生效時機**（誠實記錄）：構建/重註冊全量生效；live space 裡單純丟檔案
+   **沒有自動觸發器**——要嘛 `evva swarm .` 重註冊，要嘛任一成員的 web skill 操作觸發
+   該成員 reload。全員即刻 reload 的觸發器就是 Part B 的 `skill_publish`，不提前做。
+5. **Shadowing warning 措辭**：複用 pkg/skill 的來源標籤，會印成 `from workdir overrides
+   home`（home=共享、workdir=member 私有）——語義正確（後者蓋前者）但字面是 solo 的詞彙；
+   為一行 warning 改 pkg/skill 的公開語彙不划算，記錄即可。
+6. **Part B（`skill_publish`）不動**：本票自訂的開工門檻是 EX-6 spike 的「skill 垃圾堆積
+   與否」觀察，spike 未跑。Sunday 回歸（query-sunday 收斂單份）在 user 的 Mac 上做。
+   測試：`TestBuildAllMergesSharedSkills`（全員可見 + member-wins + warning）、
+   `TestReloadPicksUpSharedSkills`（live catalog 經 run-邊界 reload 取得共享 skill +
+   本地蓋共享）。
+
+---
+
+## 7. 落地註記（2026-06-11 — Part B）
+
+**門檻處置（誠實記錄）**：§2 自訂的開工門檻是「EX-6 spike 的垃圾堆積觀察」，spike 並未跑
+——operator 於 2026-06-11 明示「開始 RP-26 Phase B」直接揭門（Sunday 重整等著 publish
+管道用）。對策性的差異：EX-6 原本把「web 可審視/刪除」列為 spike 後的治理對策，本次把
+**整個 web 治理面與 publish 同 commit 落地**（不是先開口、後補欄），垃圾堆積的觀察改在
+真實運營中做——recourse 先於 risk 上線。
+
+1. **`skill_publish` 照 §2 形狀落地**，加了票面沒寫的 `overwrite` 旗標：不帶旗標撞名
+   → `agentdef.ErrSkillExists`（errors.Is-able sentinel）→ 工具回「set overwrite:true」
+   指引。動機：EX-6 成功訊號之一就是「shared skill 改版」，但無門檻覆寫會讓混亂的 leader
+   靜默蓋掉 User 親手放的共享 skill——顯式旗標讓改版是個「有意識的決定」，且 tool_use
+   args 帶著 `overwrite:true` 進 event log 可稽核。overwrite 是 RemoveAll + 重建
+   （整資料夾替換，舊版殘檔不殘留）。`description` 在工具層強制必填（目錄行是隊友判斷
+   要不要載入的唯一依據，沒描述的共享 skill 正是垃圾堆積的形狀）；磁碟格式本身仍容忍
+   無描述（User 手放檔案不受限）。
+2. **寫入路徑共構**：`WriteSkill`（member 私有）與 `WriteSharedSkill` 共用
+   `writeSkillDir` 核心（member 路徑行為不變，含 create-only）。`SwarmSpace.
+   PublishSharedSkill / RemoveSharedSkill` 是唯二入口，**寫 + 全員 reload 綁死**
+   （leader 工具與 web POST/DELETE 都走這裡，不可能寫了不 reload）。fan-out 是
+   `Supervisor.ReloadAllMemberSkills`：逐成員 ReloadMemberSkills，errors.Join 不
+   短路——一個壞成員不會讓其他人停在舊目錄。成本：reload poke 空信箱零 token（serve
+   只裝 pendingSkills 就 return），busy 成員存 pending 待 run 邊界換裝。
+3. **治理三道窄口照票面**：工具 schema 無 member 參數（寫不到任何私有 skills/——
+   acceptance 的「無寫路徑」是 by construction）；tool_use 自審計入 RP-17 event log
+   （與 RP-20 leader 路徑同理，零合成事件）；web `GET/POST /api/swarm/{id}/skills` +
+   `DELETE .../skills/{skill}`（route 形狀對齊 vacuum/proposals 的 space-scoped 面），
+   operator 增刪記 `shared_skill_change` 合成事件行（RP-20 schedule_change 先例——
+   web 寫沒有 tool_use 可自審）。第四道後手：RP-24 deny 規則點名 `skill_publish` 可在
+   任何檔位（含 bypass）封死這道口。
+4. **skill_publish 列 auto-allow safelist**（permission.ReadOnlyOrSelfTools）：它確實
+   寫檔，但只寫 space 自己的 agents/skills/，且 recourse 是治理形（audit + web 終審 +
+   deny 規則）而非審批形——無人值守的制度化正是這工具存在的理由，掛審批等於廢掉它
+   （set.go init() 註解有完整論證）。web POST 維持 create-only（SkillSpec 不加
+   overwrite 欄位；User 要改版走 DELETE→POST 或直接動檔案，FE-7 可再加 replace 流）。
+5. **leader 協議補「Institutionalize」段**（EX-6「teamprompt 補一句引導」）：教「同一
+   流程講第二遍就 publish」「改版用 overwrite:true」「少而精」。worker 協議不提
+   skill_publish（沒這工具，講了是噪音）——teamprompt 測試斷言 leader 有/worker 無。
+6. **MemberSkills（web 成員 GET）維持 private-only 不變**（Part A 註記 3 的決定）：
+   共享面現在有自己的 GET，兩個清單各管各的目錄，FE-7 可並排呈現。
+7. **測試**：agentdef（create/exists/overwrite 整夾替換/remove/壞名）、swarm e2e
+   `TestPublishSharedSkillReachesAllMembers`（publish → 三成員 live catalog 全到 →
+   overwrite v2 全到 → remove 全掉）、tools `TestSkillPublishTool`（工具面 + 私有目錄
+   零汙染斷言 + overwrite 指引 + 必填欄位）、webapi `TestRESTSharedSkillRoutes`
+   （200/204/400/404/401 對映）、role 表/safelist 計數更新（leader 15 tools）。
+8. **Sunday 回歸（user 的 Mac）**：query-sunday 收斂單份後，可進一步讓 friday 把
+   「復盤格式」publish 成 shared skill，觀察 reviewer 下一輪是否遵循（EX-6 的原始
+   spike 劇本，現在在正式管道上跑）。FE lane（共享技能頁）依慣例隨 FE 批次（FE-7）。

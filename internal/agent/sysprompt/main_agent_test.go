@@ -26,7 +26,8 @@ func TestMainAgent_ContainsAllStaticSections(t *testing.T) {
 
 	for _, want := range []string{
 		"You are evva, an interactive coding agent for the terminal.",
-		"# Core Rules",
+		"# Priorities",
+		"# Core Principles",
 		"# System",
 		"# Doing tasks",
 		"# Executing actions with care",
@@ -35,6 +36,7 @@ func TestMainAgent_ContainsAllStaticSections(t *testing.T) {
 		"# Communicating with the user",
 		"# Environment",
 		"# Session-specific guidance",
+		"# Context Preservation",
 		"# Multi-step work",
 		"## Deferred tools and `tool_search`",
 		"When working with tool results, write down any important information",
@@ -56,7 +58,8 @@ func TestMainAgent_SectionOrder(t *testing.T) {
 		key  string
 	}{
 		{"identity", "You are evva,"},
-		{"core-rules", "# Core Rules"},
+		{"priorities", "# Priorities"},
+		{"core-principles", "# Core Principles"},
 		{"system", "# System"},
 		{"doing-tasks", "# Doing tasks"},
 		{"actions", "# Executing actions with care"},

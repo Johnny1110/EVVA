@@ -50,6 +50,7 @@ import (
 func buildMainPrompt(ctx PromptContext) string {
 	return joinSections(
 		identitySection(ctx),
+		prioritySection(),
 		coreRulesSection(),
 		systemSection(),
 		doingTasksSection(),
@@ -62,6 +63,7 @@ func buildMainPrompt(ctx PromptContext) string {
 		autoMemoryGuidanceSection(ctx),
 		memoryIndexSection(ctx),
 		sessionSpecificGuidanceSection(),
+		contextPreservationSection(),
 		skillsSection(ctx.Skills, false),
 		summarizeToolResultsSection(),
 		mainTodoSection(),
@@ -138,8 +140,14 @@ func mainToolsGuideSection() string {
 		"A *daemon* is any long-running unit the agent kicks off and lets run on its own: bash detached jobs (id prefix `b`), monitor streams (`m`), and async subagents (`a`). They all flow through one set of control tools.\n" +
 		"For commands you don't need the result of immediately (long builds, watch loops, dev servers, background fetches), set `run_in_background: true` on `" + nameBash + "`. The tool returns a daemon id; the process keeps running while you continue other work. When it finishes, you'll receive a `<system-reminder>` on a later turn carrying the final status + captured output — there's no need to poll.\n" +
 		"Use `" + nameDaemonList + "` to enumerate active daemons (optional `kind` filter), `" + nameDaemonOutput + "` to read captured stdout/stderr or recent monitor events, and `" + nameDaemonStop + "` to terminate one by id. `" + nameDaemonStop + "` works uniformly across bash bg, monitors, and async subagents — never fall back to `bash kill <pid>`. For per-line streaming (log watchers, file-change loops) use `" + nameMonitor + "` instead of `run_in_background` — each stdout line becomes its own notification.\n\n" +
+		"## Alarms (`" + nameAlarmCreate + "` / `" + nameAlarmList + "` / `" + nameAlarmCancel + "`)\n" +
+		"Deferred. A one-shot **alarm clock**: it wakes you at an ABSOLUTE wall-clock instant (second precision) and re-enters the conversation with a prompt you wrote, as a fresh user message. Non-blocking (it returns an id immediately — you keep working or go idle), durable by default (survives restarts), and may fire arbitrarily far in the future.\n" +
+		"- `" + nameAlarmCreate + "` takes `at` (\"2006-01-02 15:04:05\" in local time, or RFC3339 with an offset; must be in the future) and a self-contained `prompt` (write it as a note-to-self — it lands with no other context). When it fires, if you are idle a fresh turn starts on its own; if you are mid-task it lands at the next step. It fires once, then is gone.\n" +
+		"- `" + nameAlarmList + "` shows pending alarms (id, fire time, time remaining); `" + nameAlarmCancel + "` removes one by id.\n" +
+		"- Pick the right tool: `" + nameScheduleWakeup + "` is a BLOCKING relative sleep capped at 1 hour — right for \"poll again in 60s\". An alarm is the tool for a SPECIFIC date/time or any wait longer than an hour (\"resume this tomorrow 09:00\", \"follow up at 2026-09-11 12:31:50\"). For a RECURRING cadence use cron, not a chain of alarms.\n\n" +
 		"## Web tools (`" + nameWebSearch + "` / `" + nameWebFetch + "`)\n" +
 		"Reach for these when the answer depends on info past your training cutoff: latest financial news, library versions, new APIs, current events, or a verbatim error-message lookup.\n\n" +
+		untrustedContentProtocolLine + "\n\n" +
 		"## Json tools (`" + nameJSONQuery + "`)\n" +
 		"Extract a value from a JSON blob using a simple path expression.\n\n" +
 		"## Calculate tools (`" + nameCalc + "`)\n" +

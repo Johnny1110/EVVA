@@ -26,7 +26,9 @@ import (
 	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/alarm"
 	"github.com/johnny1110/evva/pkg/tools/cron"
+	"github.com/johnny1110/evva/pkg/tools/excel"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/lsp"
@@ -174,9 +176,11 @@ func mainProfile(cfg *config.Config, provider constant.LLMProvider, model consta
 		notebook.Names(),
 		ux.Names(),
 		cron.Names(),
+		alarm.Names(),
 		web.Names(),
 		util.Names(),
 		repl.Names(),
+		excel.Names(),
 		mcpResourceToolNames(),
 	)
 	// Fold MCP-discovered tool names in last so they appear in both the
@@ -307,6 +311,14 @@ func mainProfileFromDiskAgent(def sysprompt.AgentDefinition, cfg *config.Config,
 	// names in so an opted-in persona advertises and can reach the live
 	// MCP catalog after a /profile switch.
 	deferred := append(append([]tools.ToolName{}, def.DeferredTools...), extraDeferred...)
+	// A deferred catalog is reachable only through tool_search — auto-mount
+	// it (RP-19) so a tools.yml that declares deferred tools but forgets to
+	// list tool_search doesn't ship a dead catalog. Mutating the local def
+	// copy (copy-on-append) keeps the registry's definition untouched and
+	// lets ComposeDiskMainPrompt's tools guide see the effective active set.
+	if len(deferred) > 0 && !slices.Contains(def.ActiveTools, tools.TOOL_SEARCH) {
+		def.ActiveTools = append(append([]tools.ToolName{}, def.ActiveTools...), tools.TOOL_SEARCH)
+	}
 	ctx.DeferredTools = deferredToolSpecs(deferred)
 	ctx.Model = string(model)
 	body := def.BuildSystemPrompt(ctx)
@@ -336,6 +348,15 @@ func modeDeferredNames() []tools.ToolName {
 		out = append(out, n)
 	}
 	return out
+}
+
+// profileAllowsAlarm reports whether a profile admits the alarm tools in
+// either tier. The root agent uses this to decide whether to re-arm durable
+// alarms at boot — re-arm must not depend on the model first loading the
+// (deferred) tool, or a durable alarm set last session would never fire.
+func profileAllowsAlarm(p Profile) bool {
+	return slices.Contains(p.ActiveTools, tools.ALARM_CREATE) ||
+		slices.Contains(p.DeferredTools, tools.ALARM_CREATE)
 }
 
 // deferredToolSpecs converts a list of deferred tool names into the prompt

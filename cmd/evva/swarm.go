@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -25,11 +26,15 @@ import (
 //	evva swarm rm <ref>         forget a space entirely
 //	evva swarm reset <ref>      wipe a space (fresh ledger + cleared context), same id
 //	evva swarm add <ref> <m>    hot-load member <m> into a space (M3)
+//	evva swarm vacuum <ref>     archive-then-delete consumed history (RP-16)
+//	evva swarm send <ref> <m> <text|->  message a member as the operator (RP-27)
 //
 // The bare `evva` (TUI) path is untouched.
 func runSwarm(args []string) {
 	// A --name <value> flag may appear anywhere; it is consumed by `.`.
 	name, args := extractNameFlag(args)
+	// vacuum's flags, likewise position-independent.
+	days, dryRun, args := extractVacuumFlags(args)
 
 	sub := ""
 	if len(args) > 0 {
@@ -76,6 +81,16 @@ func runSwarm(args []string) {
 			exitf(2, "usage: evva swarm add <ref> <member>")
 		}
 		err = swarmAdd(os.Stdout, args[1], args[2])
+	case "vacuum":
+		if len(args) < 2 {
+			exitf(2, "usage: evva swarm vacuum <ref> [--days N] [--dry-run]")
+		}
+		err = swarmVacuum(os.Stdout, args[1], days, dryRun)
+	case "send":
+		if len(args) < 4 {
+			exitf(2, "usage: evva swarm send <ref> <member> <text> (use - to read the text from stdin)")
+		}
+		err = swarmSend(os.Stdout, args[1], args[2], args[3])
 	default:
 		exitf(2, "evva swarm: unknown subcommand %q — run `evva swarm help`", sub)
 	}
@@ -99,15 +114,53 @@ Commands:
   rm    <ref>        forget a space entirely (its workdir data is left intact)
   reset <ref>        wipe a space — fresh ledger + cleared agent context, same id
   add   <ref> <m>    hot-load member <m> into a space
+  vacuum <ref>       archive-then-delete consumed history (read mail + completed
+                     tasks older than the retention window) into .vero/archive/
+  send  <ref> <m> <text>
+                     message member <m> as the operator (sender "user" — same as
+                     the web composer). <text> of - reads the body from stdin.
+                     <m> may also be "leader" (the role resolves to the member)
   help               show this help
 
 Flags:
   --name <name>      with '.', name the new space; otherwise the manifest's
                      name: is used, or a handle is generated (e.g. swift-otter)
+  --days <n>         with 'vacuum', override the retention window (default: the
+                     space's settings.retention_days, or 30)
+  --dry-run          with 'vacuum', only report what would be cleared
 
 <ref> is a space id OR its name (the NAME column of 'evva swarm ls').
 Start the service first with 'evva service start'.
 `)
+}
+
+// extractVacuumFlags pulls `--days <n>` (or `--days=n`) and `--dry-run` out of
+// args from any position, returning the leftovers. A non-numeric --days exits
+// with usage, matching the other arg-validation paths.
+func extractVacuumFlags(args []string) (days int, dryRun bool, rest []string) {
+	rest = make([]string, 0, len(args))
+	take := func(v string) {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 0 {
+			exitf(2, "evva swarm vacuum: --days wants a non-negative whole number, got %q", v)
+		}
+		days = n
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--days" && i+1 < len(args):
+			take(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--days="):
+			take(strings.TrimPrefix(a, "--days="))
+		case a == "--dry-run":
+			dryRun = true
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return days, dryRun, rest
 }
 
 // extractNameFlag pulls a `--name <value>` (or `--name=value`) flag out of args
@@ -213,6 +266,29 @@ func swarmStop(out io.Writer, ref string) error {
 	return nil
 }
 
+// swarmVacuum runs one RP-16 retention pass and prints the outcome. days 0
+// lets the service resolve the space's configured window.
+func swarmVacuum(out io.Writer, ref string, days int, dryRun bool) error {
+	var stats webapi.VacuumStats
+	body := map[string]any{"days": days, "dry_run": dryRun}
+	if err := serviceClient("POST", "/api/swarm/"+ref+"/vacuum", body, &stats); err != nil {
+		return err
+	}
+	verb := "archived"
+	if stats.DryRun {
+		verb = "would archive"
+	}
+	fmt.Fprintf(out, "%s %d message(s) and %d completed task(s) older than %d day(s)\n",
+		verb, stats.Messages, stats.Tasks, stats.Days)
+	for _, f := range stats.Files {
+		fmt.Fprintf(out, "  → %s\n", f)
+	}
+	if stats.DryRun && stats.Messages+stats.Tasks > 0 {
+		fmt.Fprintln(out, "run again without --dry-run to apply")
+	}
+	return nil
+}
+
 // swarmRm forgets a space entirely (by id or name). The workdir's on-disk data
 // (.vero ledger, transcripts) is left intact — rm drops the registration only.
 func swarmRm(out io.Writer, ref string) error {
@@ -246,5 +322,37 @@ func swarmAdd(out io.Writer, ref, member string) error {
 		return err
 	}
 	fmt.Fprintf(out, "added member %s to space %s\n", member, ref)
+	return nil
+}
+
+// swarmSend messages a member as the operator (RP-27): the same
+// POST /api/agents/{member}/message the web composer uses, so the member sees
+// sender "user" — indistinguishable from a web-sent message. Fire-and-forget
+// (an idle member wakes on it, a busy one folds it into its current run); the
+// printed message id is the durable receipt. text == "-" reads the body from
+// stdin, for long messages and script pipelines. member may also be the role
+// "leader" (the service resolves it, §3.5). The endpoint also accepts the
+// web's "all", but the CLI deliberately doesn't advertise it — the ticket
+// keeps operator→member a one-to-one primitive (broadcast = tell the leader
+// to relay).
+func swarmSend(out io.Writer, ref, member, text string) error {
+	if text == "-" {
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+		text = string(b)
+	}
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("message text is empty")
+	}
+	var reply struct {
+		ID string `json:"id"`
+	}
+	if err := serviceClient("POST", "/api/agents/"+member+"/message?space="+ref,
+		map[string]string{"body": text}, &reply); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "message %s sent to %s as \"user\" (idle members wake on it; busy ones fold it into their current run)\n", reply.ID, member)
 	return nil
 }

@@ -13,11 +13,13 @@ import (
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
 	"github.com/johnny1110/evva/internal/swarm/bus"
 	"github.com/johnny1110/evva/internal/swarm/store"
+	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/ui"
 )
 
-// fakeController is a scripted ui.Controller. The supervisor only ever calls
-// Run; the embedded nil interface satisfies the rest of the (fat) surface.
+// fakeController is a scripted ui.Controller. The supervisor calls Run plus the
+// RP-13 metering reads (Usage / LastTurnInputTokens); the embedded nil
+// interface satisfies the rest of the (fat) surface.
 type fakeController struct {
 	ui.Controller
 	runs     atomic.Int32
@@ -26,8 +28,13 @@ type fakeController struct {
 	doPanic  bool                // Run panics every time (models a crashing agent)
 	onRun    func(prompt string) // optional: invoked inside Run (e.g. to inject mid-run mail)
 
+	// usagePerRun is folded into the cumulative total on every Run, so metering
+	// tests can script a member's burn rate. Set before Start; read-only after.
+	usagePerRun llm.Usage
+
 	mu      sync.Mutex
 	prompts []string
+	usage   llm.Usage
 }
 
 func (f *fakeController) Run(ctx context.Context, prompt string) (string, error) {
@@ -37,6 +44,7 @@ func (f *fakeController) Run(ctx context.Context, prompt string) (string, error)
 
 	f.mu.Lock()
 	f.prompts = append(f.prompts, prompt)
+	f.usage = f.usage.Add(f.usagePerRun)
 	f.mu.Unlock()
 
 	if f.onRun != nil {
@@ -52,6 +60,15 @@ func (f *fakeController) Run(ctx context.Context, prompt string) (string, error)
 	return "ok", nil
 }
 
+// Usage / LastTurnInputTokens satisfy the supervisor's RP-13 metering reads.
+func (f *fakeController) Usage() llm.Usage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.usage
+}
+
+func (f *fakeController) LastTurnInputTokens() int { return f.usagePerRun.InputTokens }
+
 func (f *fakeController) lastPrompt() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -65,24 +82,31 @@ func (f *fakeController) lastPrompt() string {
 // controllers — no agent.New, so the supervisor's logic is exercised directly.
 func ctlSpace(t *testing.T, members map[string]agentdef.Role) (*SwarmSpace, map[string]*fakeController) {
 	t.Helper()
-	st, err := store.Open(t.TempDir())
+	dir := t.TempDir()
+	st, err := store.Open(dir)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
 	sp := &SwarmSpace{
-		ID:        "t",
-		Store:     st,
+		ID:    "t",
+		Store: st,
+		// Workdir anchors persistRuntime (runtime.json) and the alarm store —
+		// without it a Freeze inside a test would write .vero/ into the CWD.
+		Workdir:   dir,
 		Roster:    newRoster(),
 		schedules: map[string]agentdef.Schedule{},
+		// Metrics like production (NewSpace always sets them) so counter
+		// assertions — run-token histogram included (RP-28) — see real tallies.
+		metrics: newSpaceMetrics(),
 	}
 	sp.Bus = bus.New(st, sp.Roster)
 
 	ctls := make(map[string]*fakeController, len(members))
 	for name, role := range members {
 		fc := &fakeController{}
-		if err := sp.Roster.add(name, role, "", fc); err != nil {
+		if err := sp.Roster.add(name, role, "", "", fc); err != nil {
 			t.Fatalf("roster add %q: %v", name, err)
 		}
 		sp.Bus.Register(name)
@@ -100,6 +124,10 @@ func startSup(t *testing.T, sp *SwarmSpace) *Supervisor {
 	ctx, cancel := context.WithCancel(context.Background())
 	sup := NewSupervisor(sp)
 	sup.tickInterval = 5 * time.Millisecond
+	// Fast rescan too: a hard-timeout kill exits serve non-clean, so the
+	// unclaimed mail's RETRY arrives via the rescan backstop — at the default
+	// 8s a watchdog test would wait that long for its second run.
+	sup.rescanInterval = 20 * time.Millisecond
 	sup.Start(ctx)
 	t.Cleanup(func() {
 		cancel()

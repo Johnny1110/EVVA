@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -197,5 +199,231 @@ func TestSwarmRegisterNoManifest(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if err := swarmRegister(&bytes.Buffer{}, ""); err == nil || !strings.Contains(err.Error(), "no evva-swarm.yml") {
 		t.Fatalf("want a no-manifest error, got %v", err)
+	}
+}
+
+// TestSwarmVacuumClient (RP-16): the vacuum client POSTs {days, dry_run} with
+// the token and prints the returned stats; the flag extractor handles both
+// flag styles from any position.
+func TestSwarmVacuumClient(t *testing.T) {
+	useServiceHome(t)
+
+	const wantToken = "tkn"
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/swarm/team/vacuum" {
+			http.Error(w, "bad route", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+wantToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Days   int  `json:"days"`
+			DryRun bool `json:"dry_run"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Days != 7 || !body.DryRun {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":3,"tasks":1,"days":7,"dryRun":true,"files":null}`))
+	}))
+	defer stub.Close()
+
+	addr := strings.TrimPrefix(stub.URL, "http://")
+	if err := os.WriteFile(addrPath(), []byte(addr), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath(), []byte(wantToken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := swarmVacuum(&buf, "team", 7, true); err != nil {
+		t.Fatalf("swarmVacuum: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "would archive 3 message(s) and 1 completed task(s)") ||
+		!strings.Contains(out, "without --dry-run to apply") {
+		t.Fatalf("vacuum output = %q, want dry-run wording with the stub's counts", out)
+	}
+
+	days, dry, rest := extractVacuumFlags([]string{"vacuum", "--days=7", "team", "--dry-run"})
+	if days != 7 || !dry || len(rest) != 2 || rest[0] != "vacuum" || rest[1] != "team" {
+		t.Fatalf("extractVacuumFlags = %d %v %v", days, dry, rest)
+	}
+}
+
+// TestSwarmSendClient (RP-27): the send client POSTs {body} to the member's
+// message endpoint with the token and prints the returned message id; "-"
+// reads the body from stdin; a 404 (unknown member, with the service's
+// valid-recipients list) surfaces as a correctable error.
+func TestSwarmSendClient(t *testing.T) {
+	useServiceHome(t)
+
+	const wantToken = "tkn"
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || !strings.HasPrefix(r.URL.Path, "/api/agents/") || !strings.HasSuffix(r.URL.Path, "/message") {
+			http.Error(w, "bad route", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+wantToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Query().Get("space") != "team" {
+			http.Error(w, "bad space", http.StatusBadRequest)
+			return
+		}
+		member := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/agents/"), "/message")
+		if member == "ghost" {
+			http.Error(w, `swarm: unknown member "ghost" — valid recipients: analyst, lead`, http.StatusNotFound)
+			return
+		}
+		var body struct {
+			Body string `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Body) == "" {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg-123"}`))
+	}))
+	defer stub.Close()
+
+	addr := strings.TrimPrefix(stub.URL, "http://")
+	if err := os.WriteFile(addrPath(), []byte(addr), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath(), []byte(wantToken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := swarmSend(&buf, "team", "analyst", "report status please"); err != nil {
+		t.Fatalf("swarmSend: %v", err)
+	}
+	if !strings.Contains(buf.String(), "msg-123") || !strings.Contains(buf.String(), "analyst") {
+		t.Fatalf("send output = %q, want the message-id receipt", buf.String())
+	}
+
+	// "-" reads the body from stdin (script pipelines / long messages).
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString("a long message\nfrom a pipe\n"); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+	buf.Reset()
+	if err := swarmSend(&buf, "team", "analyst", "-"); err != nil {
+		t.Fatalf("swarmSend(stdin): %v", err)
+	}
+	if !strings.Contains(buf.String(), "msg-123") {
+		t.Fatalf("stdin send output = %q", buf.String())
+	}
+
+	// Unknown member: the service's correctable 404 (with the roster list)
+	// surfaces verbatim — non-zero exit comes from runSwarm's err path.
+	err = swarmSend(&bytes.Buffer{}, "team", "ghost", "hi")
+	if err == nil || !strings.Contains(err.Error(), "valid recipients: analyst, lead") {
+		t.Fatalf("unknown member err = %v, want the service's recipient list", err)
+	}
+
+	// Empty text never touches the network.
+	if err := swarmSend(&bytes.Buffer{}, "team", "analyst", "  "); err == nil {
+		t.Fatal("empty text should error locally")
+	}
+}
+
+// RP-18: the service flag extractor handles the start/install-unit flag set
+// from any position.
+func TestExtractServiceFlags(t *testing.T) {
+	f, rest := extractServiceFlags([]string{"--addr", "0.0.0.0:9", "--allow-remote", "--foreground", "--force"})
+	if f.addr != "0.0.0.0:9" || !f.allowRemote || !f.foreground || !f.force || len(rest) != 0 {
+		t.Fatalf("flags = %+v rest=%v", f, rest)
+	}
+	f, rest = extractServiceFlags([]string{"--addr=127.0.0.1:1"})
+	if f.addr != "127.0.0.1:1" || f.foreground || len(rest) != 0 {
+		t.Fatalf("flags = %+v rest=%v", f, rest)
+	}
+}
+
+// RP-18: every platform's unit template points the supervisor at the
+// FOREGROUND mode and survives-by-restart semantics; unknown platforms error.
+func TestUnitFor(t *testing.T) {
+	rel, content, activate, err := unitFor("darwin", "/usr/local/bin/evva", "/tmp/svc.log")
+	if err != nil || rel != filepath.Join("Library", "LaunchAgents", "com.evva.service.plist") {
+		t.Fatalf("darwin = %q, %v", rel, err)
+	}
+	for _, want := range []string{"<string>/usr/local/bin/evva</string>", "<string>--foreground</string>", "SuccessfulExit", "/tmp/svc.log"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("darwin plist lacks %q", want)
+		}
+	}
+	if !strings.Contains(activate, "launchctl load") {
+		t.Errorf("darwin activate = %q", activate)
+	}
+
+	rel, content, activate, err = unitFor("linux", "/usr/local/bin/evva", "/tmp/svc.log")
+	if err != nil || rel != filepath.Join(".config", "systemd", "user", "evva-service.service") {
+		t.Fatalf("linux = %q, %v", rel, err)
+	}
+	for _, want := range []string{"ExecStart=/usr/local/bin/evva service start --foreground", "Restart=on-failure"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("systemd unit lacks %q", want)
+		}
+	}
+	if !strings.Contains(activate, "systemctl --user enable") {
+		t.Errorf("linux activate = %q", activate)
+	}
+
+	if _, _, _, err := unitFor("windows", "x", "y"); err == nil {
+		t.Error("windows should error (no template)")
+	}
+}
+
+// RP-18: install-unit writes the unit under $HOME, refuses a second write
+// without --force, and prints the activation command.
+func TestServiceInstallUnit(t *testing.T) {
+	// Probe for a template BEFORE installing — platforms without one
+	// (windows) make serviceInstallUnit error by design.
+	rel, _, _, err := unitFor(runtime.GOOS, "x", "y")
+	if err != nil {
+		t.Skipf("no unit template on %s", runtime.GOOS)
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	useServiceHome(t)
+
+	var buf bytes.Buffer
+	if err := serviceInstallUnit(&buf, false); err != nil {
+		t.Fatalf("install-unit: %v", err)
+	}
+	path := filepath.Join(home, rel)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("unit file not written: %v", err)
+	}
+	exe, _ := os.Executable()
+	if !strings.Contains(string(b), exe) || !strings.Contains(string(b), "--foreground") {
+		t.Fatalf("unit content = %q, want exe path + --foreground", b)
+	}
+	if !strings.Contains(buf.String(), "activate it with") {
+		t.Fatalf("output = %q, want activation instructions", buf.String())
+	}
+
+	if err := serviceInstallUnit(&bytes.Buffer{}, false); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("second install without --force = %v, want a refusal naming --force", err)
+	}
+	if err := serviceInstallUnit(&bytes.Buffer{}, true); err != nil {
+		t.Fatalf("install-unit --force: %v", err)
 	}
 }

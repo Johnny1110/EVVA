@@ -3,8 +3,14 @@ package swarm
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
 	"github.com/johnny1110/evva/internal/swarm/bus"
@@ -17,6 +23,7 @@ import (
 	"github.com/johnny1110/evva/pkg/permission"
 	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/alarm"
 )
 
 // SpacedEvent tags an agent event with the space it came from. AgentID is
@@ -62,6 +69,27 @@ type SwarmSpace struct {
 	mu        sync.Mutex
 	agents    map[string]agent.Agent
 	schedules map[string]agentdef.Schedule
+	// schedMeta records WHERE a live schedule came from (RP-20): an entry
+	// exists only for runtime-set schedules (schedule_set / web edit, or a
+	// store row applied at rebuild); absence means the schedule is the
+	// manifest/profile seed. Lazily allocated so hand-built test spaces
+	// need no init.
+	schedMeta map[string]ScheduleOrigin
+
+	// budgets holds manifest member-level daily-budget overrides (RP-13);
+	// members without an entry inherit settings.DailyBudgetTokens. meter is the
+	// live daily ledger the supervisor feeds at run boundaries (see usage.go).
+	budgets map[string]int
+	meter   usageMeter
+
+	// metrics counts the scheduler lifecycle per member (RP-17). nil on
+	// hand-built spaces — every counting method is nil-safe.
+	metrics *spaceMetrics
+
+	// alarmSched is the space's shared one-shot alarm scheduler (alarm_set /
+	// alarm_clear). Lazy-allocated under mu on first AlarmScheduler() access; a
+	// fired alarm is delivered as a durable bus message to its target member.
+	alarmSched *alarm.Scheduler
 
 	// super is the run engine driving this space, set once by NewSupervisor
 	// (before Start, before any tool can fire). It is the seam the leader's
@@ -125,6 +153,8 @@ func NewSpace(id string, m agentdef.Manifest, loaded []agentdef.Loaded, ts ToolS
 		out:       make(chan SpacedEvent, eventBuffer),
 		agents:    make(map[string]agent.Agent),
 		schedules: make(map[string]agentdef.Schedule),
+		budgets:   budgetOverrides(m),
+		metrics:   newSpaceMetrics(),
 		reg:       reg,
 		cfg:       cfg,
 		ts:        ts,
@@ -171,7 +201,11 @@ func (sp *SwarmSpace) registerDef(ld agentdef.Loaded) {
 	// operator never has to hand-write the mechanics (see teamprompt.go). Pairs
 	// with the role-based tool injection (ToolSet) — both keyed off ld.Role. The
 	// member's space/name/role grounding is prepended to the protocol here too.
-	def.SystemPrompt = injectTeamProtocol(def.SystemPrompt, def.Name, sp.Name, ld.Role)
+	// The memory protocol (RP-25) rides along for members that can actually
+	// maintain memory files — i.e. carry a file-write tool.
+	canWriteMemory := slices.Contains(def.ActiveTools, tools.WRITE_FILE) ||
+		slices.Contains(def.ActiveTools, tools.EDIT_FILE)
+	def.SystemPrompt = injectTeamProtocol(def.SystemPrompt, def.Name, sp.Name, ld.Role, canWriteMemory)
 	sp.mu.Lock()
 	sp.reg.Register(def)
 	sp.mu.Unlock()
@@ -210,6 +244,36 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 		acfg.DefaultEffort = e
 	}
 
+	// Per-member permission stance (RP-24): the manifest's coarse trust knob,
+	// member field > settings — so "analysts default, trader bypass" composes
+	// in one space. The yaml path already fail-fasted on a bad value at
+	// LoadManifest; this guard covers programmatic manifests (the effort-pin
+	// precedent). Layering with RP-11 rules is decided in pkg/permission:
+	// deny rules bind in every mode, bypass included.
+	permMode := sp.settings.PermissionMode
+	if pm := strings.TrimSpace(ld.PermissionMode); pm != "" {
+		if !permission.Mode(pm).Valid() {
+			return fmt.Errorf("swarm: member %q: invalid permission_mode %q (want default|accept_edits|plan|bypass)", name, pm)
+		}
+		permMode = pm
+	}
+
+	// Member-native long-term memory (RP-25): home this member's writable
+	// memory at its own <agentDir>/memory/ — created here so first boot AND
+	// hot-add both leave an empty dir ready for the model's first write. The
+	// global auto-memory toggles are forced OFF on the clone: the solo prompt
+	// sections would advertise <appHome>/memory (the wrong store), and the
+	// per-turn recall side-query is redundant cost for a swarm member — the
+	// wake-injected index + read-on-demand is the member protocol. The
+	// WithMemoryDir override (below) keeps the write carve-out targeting the
+	// member dir independent of those toggles.
+	memDir := agentdef.MemoryDir(sp.Workdir, ld.Role, name)
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		return fmt.Errorf("swarm: member %q: create memory dir: %w", name, err)
+	}
+	acfg.EnableAutoMemory = false
+	acfg.EnableMemoryRecall = false
+
 	// Bind this member's runtime identity onto its own config so the swarm
 	// custom tools (SPRD-1-7) can read who they belong to at build time — a
 	// shared WithCustomTool factory can't carry it in a closure.
@@ -227,6 +291,7 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 		agent.WithSink(sink),
 		agent.WithSkillRegistry(ld.Skills),
 		agent.WithName(name),
+		agent.WithMemoryDir(memDir),
 		agent.WithRootContext(sp.ctx),
 		// Stream tokens live to the web console. Every swarm member is a root
 		// persona whose run is watched in the :8888 UI, so the streaming UX win
@@ -258,7 +323,7 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 		AppConfig:       acfg,
 		Persona:         name,
 		Personas:        sp.reg,
-		PermissionMode:  sp.settings.PermissionMode,
+		PermissionMode:  permMode,
 		MaxIters:        sp.settings.MaxIterations,
 		PermissionStore: permStore,
 	}, opts...)
@@ -266,7 +331,10 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 		return fmt.Errorf("construct agent %q: %w", name, err)
 	}
 
-	if err := sp.Roster.add(name, ld.Role, ld.Def.WhenToUse, ag.Controller()); err != nil {
+	// Roster stores the TRUE effective stance read back off the agent —
+	// agent.New finishes the fallback chain (member > settings > app config >
+	// "default"), so an all-empty chain still displays its real mode.
+	if err := sp.Roster.add(name, ld.Role, ld.Def.WhenToUse, ag.PermissionModeName(), ag.Controller()); err != nil {
 		ag.Shutdown()
 		return err
 	}
@@ -282,13 +350,88 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 	return nil
 }
 
+// WebhookSecret returns the space's external-event shared secret ("" = unset,
+// RP-9 loopback trust). Exported for the service's webhook auth check (RP-15).
+func (sp *SwarmSpace) WebhookSecret() string {
+	return sp.settings.WebhookSecret // set once at construction, never mutated
+}
+
+// RetentionDays returns the space's ledger retention window in days (0 =
+// retention disabled). Exported for the service's manual vacuum default (RP-16).
+func (sp *SwarmSpace) RetentionDays() int {
+	return sp.settings.RetentionDays // set once at construction, never mutated
+}
+
+// TaskStaleThreshold returns the space's RP-22 task-age reminder line (0 =
+// disabled). Exported so task_list can tag over-threshold tasks as stale.
+func (sp *SwarmSpace) TaskStaleThreshold() time.Duration {
+	return sp.settings.TaskStaleThreshold // set once at construction, never mutated
+}
+
+// ScheduleOrigin says where a member's live schedule came from: the manifest
+// (the zero value) or a runtime change, with the unix-milli instant of that
+// change so list_members can render "set 2026-06-11" (RP-20 §2.5).
+type ScheduleOrigin struct {
+	Runtime bool
+	SetAt   int64
+}
+
 // ScheduleFor returns a member's declared timer schedule, if any. Exported so
 // list_members (internal/swarm/tools) can render each member's crontab.
 func (sp *SwarmSpace) ScheduleFor(name string) (agentdef.Schedule, bool) {
+	sch, _, ok := sp.ScheduleInfoFor(name)
+	return sch, ok
+}
+
+// ScheduleInfoFor is ScheduleFor plus provenance — manifest seed vs runtime
+// override — so the leader and the operator can tell at a glance whose hand
+// set a cadence (RP-20 §2.5).
+func (sp *SwarmSpace) ScheduleInfoFor(name string) (agentdef.Schedule, ScheduleOrigin, bool) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	s, ok := sp.schedules[name]
-	return s, ok
+	return s, sp.schedMeta[name], ok
+}
+
+// setRuntimeSchedule installs a runtime-sourced schedule in the live maps.
+// Shared by the supervisor's SetSchedule and the restart rebuild (Reload
+// applying store rows) so both stamp identical provenance.
+func (sp *SwarmSpace) setRuntimeSchedule(name string, sch agentdef.Schedule, setAt int64) {
+	sp.mu.Lock()
+	sp.schedules[name] = sch
+	if sp.schedMeta == nil {
+		sp.schedMeta = map[string]ScheduleOrigin{}
+	}
+	sp.schedMeta[name] = ScheduleOrigin{Runtime: true, SetAt: setAt}
+	sp.mu.Unlock()
+}
+
+// dropScheduleEntry removes a member's live schedule (and its provenance).
+func (sp *SwarmSpace) dropScheduleEntry(name string) {
+	sp.mu.Lock()
+	delete(sp.schedules, name)
+	delete(sp.schedMeta, name)
+	sp.mu.Unlock()
+}
+
+// DiscardRuntimeSchedules wipes every runtime schedule override — the store
+// rows and the legacy runtime.json field — so the manifest is authoritative
+// again. The service calls it on a FRESH register (`evva swarm .`), the
+// operator's explicit "take the manifest as written" (RP-20 §2.4); restart
+// rebuilds (Reconcile / RunSpace / reset) never do. Must run BEFORE Reload,
+// which is what applies the rows.
+func (sp *SwarmSpace) DiscardRuntimeSchedules() error {
+	if err := sp.Store.ClearSchedules(); err != nil {
+		return err
+	}
+	// Strip only the legacy schedules field; membership/meter in runtime.json
+	// belong to Reload and must survive untouched.
+	rs := loadRuntime(sp.Workdir)
+	if rs.Schedules != nil {
+		rs.Schedules = nil
+		writeRuntime(sp.Workdir, rs)
+	}
+	return nil
 }
 
 // SetMemberSchedule / ClearMemberSchedule are the tool-facing seam onto the run
@@ -317,6 +460,67 @@ func (sp *SwarmSpace) ClearMemberSchedule(name string) error {
 	return s.ClearSchedule(name)
 }
 
+// AlarmScheduler returns the space's shared one-shot alarm scheduler, allocating
+// it on first use. A fired alarm is delivered by deliverAlarm as a durable bus
+// message to its Target (the member to wake) — so it flows through the same
+// mailbox path as a teammate message: the target's run loop wakes and drains it.
+// Durable alarms persist beside the space store and are re-armed by the
+// supervisor on Start.
+func (sp *SwarmSpace) AlarmScheduler() *alarm.Scheduler {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.alarmSched == nil {
+		sp.alarmSched = alarm.New(alarm.Config{
+			StorePath: filepath.Join(sp.Workdir, "alarms.json"),
+			OnFire:    sp.deliverAlarm,
+		})
+	}
+	return sp.alarmSched
+}
+
+// deliverAlarm is the alarm scheduler's fire callback (runs on a timer
+// goroutine): route a fired one-shot alarm to its target member as a durable
+// bus message, sent on behalf of the member that set it. A self-alarm (no
+// target) goes back to its origin. A target that left the team between arming
+// and firing is dropped rather than dead-lettered to a mailbox no loop drains.
+func (sp *SwarmSpace) deliverAlarm(f alarm.Fired) {
+	target := f.Target
+	if target == "" {
+		target = f.Origin
+	}
+	if target == "" {
+		return
+	}
+	if _, ok := sp.Roster.membership(target); !ok {
+		return
+	}
+	sender := f.Origin
+	if sender == "" {
+		sender = target
+	}
+	subject := "⏰ alarm"
+	if f.Label != "" {
+		subject = "⏰ alarm: " + f.Label
+	}
+	_, _ = sp.Bus.Send(store.Message{
+		Sender:    sender,
+		Recipient: target,
+		Subject:   subject,
+		Body:      f.Message(),
+	})
+}
+
+// stopAlarms halts pending alarm timers at teardown. Durable alarms stay on disk
+// and are re-armed next start. No-op when no scheduler was allocated.
+func (sp *SwarmSpace) stopAlarms() {
+	sp.mu.Lock()
+	s := sp.alarmSched
+	sp.mu.Unlock()
+	if s != nil {
+		s.Stop()
+	}
+}
+
 // MemberSkills lists a member's authored skills (RP-10) by re-scanning its on-disk
 // skills/ dir — the source of truth POST/DELETE write, so a GET right after an add
 // reflects it immediately (the live agent registry lags until the boundary reload).
@@ -332,6 +536,91 @@ func (sp *SwarmSpace) MemberSkills(member string) ([]agent.Skill, error) {
 	for _, m := range list {
 		out = append(out, agent.Skill{Name: m.Name, Description: m.Description})
 	}
+	return out, nil
+}
+
+// memoryWakeReminderCap bounds the index text injected per wake. The solo
+// convention caps the index at ~200 lines; 16 KiB is far above any healthy
+// index and merely stops a runaway file from flooding a wake prompt.
+const memoryWakeReminderCap = 16 * 1024
+
+// memoryWakeReminder renders the block the scheduler hangs inside a member's
+// wake <system-reminder> (RP-25): the member's own MEMORY.md index, labeled
+// with its on-disk path so the model knows where the linked files live. ""
+// when the member has no index yet (or it is empty/unreadable) — a member
+// that never saved a memory gets zero wake noise. Read fresh per wake: the
+// index is the member's own latest write, never cached.
+func (sp *SwarmSpace) memoryWakeReminder(name string) string {
+	role, ok := sp.Roster.roleOf(name)
+	if !ok {
+		return ""
+	}
+	dir := agentdef.MemoryDir(sp.Workdir, role, name)
+	b, err := os.ReadFile(filepath.Join(dir, "MEMORY.md"))
+	if err != nil {
+		return ""
+	}
+	idx := strings.TrimSpace(string(b))
+	if idx == "" {
+		return ""
+	}
+	if len(idx) > memoryWakeReminderCap {
+		idx = idx[:memoryWakeReminderCap] + "\n… (index truncated — prune it)"
+	}
+	rel, err := filepath.Rel(sp.Workdir, dir)
+	if err != nil {
+		rel = dir
+	}
+	return "Your memory index (" + filepath.ToSlash(rel) + "/MEMORY.md — read a linked file before relying on it):\n" + idx
+}
+
+// MemoryFile is one file of a member's memory dir, served read-only to the
+// web (RP-25): the User's transparency window onto the team's mind.
+type MemoryFile struct {
+	Name    string // dir-relative path, slash-separated (e.g. "MEMORY.md", "project_x.md")
+	Content string
+}
+
+// MemberMemoryFiles lists a member's memory directory for the web's read-only
+// Memory view (RP-25). Reads the disk fresh — the dir is the single source of
+// truth the member itself writes. Only *.md files surface (the memdir
+// convention); each is capped like memdir.MaxFileBytes so one runaway file
+// cannot balloon the response. An empty dir yields an empty list, not an error.
+func (sp *SwarmSpace) MemberMemoryFiles(member string) ([]MemoryFile, error) {
+	role, ok := sp.Roster.roleOf(member)
+	if !ok {
+		return nil, fmt.Errorf("swarm: unknown member %q", member)
+	}
+	dir := agentdef.MemoryDir(sp.Workdir, role, member)
+	const maxFileBytes = 64 * 1024
+	var out []MemoryFile
+	// Walk errors (missing dir, unreadable entry) skip silently: an absent or
+	// half-readable memory dir is a state to display as empty, not an error.
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		if len(b) > maxFileBytes {
+			b = b[:maxFileBytes]
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil {
+			rel = d.Name()
+		}
+		out = append(out, MemoryFile{Name: filepath.ToSlash(rel), Content: string(b)})
+		return nil
+	})
+	// Index first, then the rest alphabetically — the order a reader wants.
+	sort.Slice(out, func(i, j int) bool {
+		if (out[i].Name == "MEMORY.md") != (out[j].Name == "MEMORY.md") {
+			return out[i].Name == "MEMORY.md"
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 
@@ -374,6 +663,53 @@ func (sp *SwarmSpace) reloadSkills(member string) error {
 	return s.ReloadMemberSkills(member)
 }
 
+// SharedSkills lists the space-shared skill dir (RP-26) fresh from disk — the
+// same source-of-truth-on-disk read as MemberSkills, for the web GET and the
+// skill_publish result. A space without the dir yields an empty list.
+func (sp *SwarmSpace) SharedSkills() []agent.Skill {
+	reg, _ := skill.LoadRegistry(agentdef.SharedSkillsDir(sp.Workdir), "")
+	list := reg.List()
+	out := make([]agent.Skill, 0, len(list))
+	for _, m := range list {
+		out = append(out, agent.Skill{Name: m.Name, Description: m.Description})
+	}
+	return out
+}
+
+// PublishSharedSkill writes a skill into the space-shared dir and fans the
+// reload out to EVERY member (RP-26 Part B) — each picks the new catalog up at
+// its own next run boundary (an idle member on the spot, a busy one when its
+// current run ends). The two callers are the leader's skill_publish tool and
+// the operator's web POST; both go through here so the write+reload-all pairing
+// can't be skipped. overwrite gates replacing an existing version
+// (agentdef.ErrSkillExists otherwise).
+func (sp *SwarmSpace) PublishSharedSkill(name, description, body string, overwrite bool) error {
+	if err := agentdef.WriteSharedSkill(sp.Workdir, name, description, body, overwrite); err != nil {
+		return err
+	}
+	return sp.reloadAllSkills()
+}
+
+// RemoveSharedSkill deletes a shared skill and fans the reload out — the
+// User's final-arbiter delete (web), so a bad publish is reversible.
+func (sp *SwarmSpace) RemoveSharedSkill(name string) error {
+	if err := agentdef.RemoveSharedSkill(sp.Workdir, name); err != nil {
+		return err
+	}
+	return sp.reloadAllSkills()
+}
+
+// reloadAllSkills is reloadSkills for the whole roster (shared-skill changes).
+func (sp *SwarmSpace) reloadAllSkills() error {
+	sp.mu.Lock()
+	s := sp.super
+	sp.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("swarm: skill reload unavailable (space has no running supervisor)")
+	}
+	return s.ReloadAllMemberSkills()
+}
+
 // removeAgent tears down one member's live agent and drops it from the space's
 // maps (RP-8 remove): shut the agent's background workers, forget its handle and
 // any schedule. The roster entry, mailbox, and run loop are handled by the
@@ -384,6 +720,7 @@ func (sp *SwarmSpace) removeAgent(name string) {
 	ag := sp.agents[name]
 	delete(sp.agents, name)
 	delete(sp.schedules, name)
+	delete(sp.schedMeta, name)
 	sp.mu.Unlock()
 	if ag != nil {
 		ag.Shutdown()
@@ -420,6 +757,7 @@ func (sp *SwarmSpace) Shutdown() {
 	for _, ag := range ags {
 		ag.Shutdown()
 	}
+	sp.stopAlarms()
 	if sp.Store != nil {
 		_ = sp.Store.Close()
 	}
@@ -445,6 +783,22 @@ func (s *spaceSink) Emit(e event.Event) {
 		}
 	}
 	s.out <- SpacedEvent{SpaceID: s.spaceID, Event: e}
+}
+
+// budgetOverrides collects the manifest's member-level daily-budget overrides
+// (RP-13). Only non-zero entries are kept: 0 means "inherit the space default",
+// so storing it would shadow a later settings change for no reason.
+func budgetOverrides(m agentdef.Manifest) map[string]int {
+	out := make(map[string]int)
+	if m.Leader.BudgetTokens != 0 {
+		out[m.Leader.Agent] = m.Leader.BudgetTokens
+	}
+	for _, w := range m.Workers {
+		if w.BudgetTokens != 0 {
+			out[w.Agent] = w.BudgetTokens
+		}
+	}
+	return out
 }
 
 // ensureMain guarantees "main" is present so a def is constructible as a root

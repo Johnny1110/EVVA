@@ -3,6 +3,7 @@ package permission
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -39,8 +40,11 @@ const httpRequestToolName = "http_request"
 //
 // Pipeline:
 //
-//  1. ModeBypass → allow (no rule lookup; bypass means bypass).
-//  2. Deny rules → deny (always win when not bypassed).
+//  1. Deny rules → deny (absolute — they bind in every mode, bypass included).
+//     A write/edit into a SIBLING member's memory dir denies here too (the
+//     RP-25 fence; active only for swarm-memory-homed agents).
+//  2. ModeBypass → allow (no further rule lookup; bypass silences prompts,
+//     not prohibitions).
 //  3. Ask rules → ask (a user-forced prompt overrides mode auto-allow).
 //  4. ModePlan-only:
 //     - Write/Edit targeting <workdir>/.evva/plans/ → allow (plan-file carve-out).
@@ -57,14 +61,12 @@ const httpRequestToolName = "http_request"
 //  9. Allow rules → allow.
 //  10. Else → ask.
 //
-// The order ensures deny rules always win (step 2), user-forced asks
-// always show (step 3), and plan mode's hard ceiling is enforced before
-// the auto-allow paths can let a write through (step 4 before steps 5 / 8).
+// The order ensures deny rules always win (step 1 — even in bypass mode,
+// since bypass means "never prompt", not "ignore the operator's explicit
+// prohibitions"; RP-24), user-forced asks always show when prompting is
+// possible (step 3), and plan mode's hard ceiling is enforced before the
+// auto-allow paths can let a write through (step 4 before steps 5 / 8).
 func Decide(call ToolCall, mode Mode, store *Store, hint Hint, workdir, memDir string) Decision {
-	if mode == ModeBypass {
-		return Decision{Behavior: BehaviorAllow, Reason: "bypass mode"}
-	}
-
 	if store != nil {
 		if r, ok := store.firstMatch(call, BehaviorDeny); ok {
 			return Decision{
@@ -72,6 +74,26 @@ func Decide(call ToolCall, mode Mode, store *Store, hint Hint, workdir, memDir s
 				Reason:   "denied by rule: " + FormatRule(r.ToolName, r.Content),
 			}
 		}
+	}
+
+	// Sibling-memory fence (RP-25): an agent whose memory is homed inside a
+	// swarm workspace (memDir under <workdir>/agents/) may never write/edit
+	// another member's memory dir — teammates' memories are readable, not
+	// writable. Sits with the deny rules, ABOVE the bypass short-circuit: a
+	// fully autonomous (bypass) member must not clobber a teammate's memory
+	// either. Inert for solo agents (memDir under appHome, not the workdir).
+	if isSiblingMemWrite(call, workdir, memDir) {
+		return Decision{
+			Behavior: BehaviorDeny,
+			Reason:   "another member's memory directory — teammates' memories are read-only; write only your own memory dir",
+		}
+	}
+
+	if mode == ModeBypass {
+		return Decision{Behavior: BehaviorAllow, Reason: "bypass mode"}
+	}
+
+	if store != nil {
 		if r, ok := store.firstMatch(call, BehaviorAsk); ok {
 			return Decision{
 				Behavior: BehaviorAsk,
@@ -240,6 +262,66 @@ func isPlanFileWrite(call ToolCall, workdir string) bool {
 	}
 	p, _ := m["file_path"].(string)
 	return IsPlanFilePath(workdir, p)
+}
+
+// isSiblingMemWrite reports whether call is a Write or Edit targeting a
+// member memory directory (<workdir>/agents/{main,sub}/<member>/memory/...)
+// that is NOT the calling agent's own memDir (RP-25). Self-gating: it only
+// fires when memDir itself sits under <workdir>/agents/ — i.e. the caller is
+// a swarm member homed in this workspace. A solo agent working in a swarm
+// workspace (memDir = <appHome>/memory) never trips it, so an operator can
+// still curate member memories through ordinary asks. The agents/{main,sub}
+// layout constant mirrors the swarm's agentdef layout the same way
+// isPlanFileWrite bakes in ".evva/plans" — pkg/permission cannot import
+// internal/swarm. Bash writes are NOT fenced (same scope as the auto-mem
+// carve-out: the classifier governs bash); this is a guardrail for the file
+// tools, not a sandbox.
+func isSiblingMemWrite(call ToolCall, workdir, memDir string) bool {
+	if workdir == "" || memDir == "" {
+		return false
+	}
+	if call.Name != "write" && call.Name != "edit" {
+		return false
+	}
+	agentsRoot, err := filepath.Abs(filepath.Join(workdir, "agents"))
+	if err != nil {
+		return false
+	}
+	own, err := filepath.Abs(memDir)
+	if err != nil {
+		return false
+	}
+	// Self-gate: only an agent memory-homed under <workdir>/agents/ is fenced.
+	if rel, err := filepath.Rel(agentsRoot, own); err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	if len(call.Input) == 0 {
+		return false
+	}
+	var m map[string]any
+	if err := json.Unmarshal(call.Input, &m); err != nil {
+		return false
+	}
+	p, _ := m["file_path"].(string)
+	if p == "" {
+		return false
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(agentsRoot, abs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	// rel = <tier>/<member>/memory/<file...> — anything shallower or shaped
+	// differently is not a memory-dir write.
+	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) < 4 || (parts[0] != "main" && parts[0] != "sub") || parts[2] != "memory" {
+		return false
+	}
+	target := filepath.Join(agentsRoot, parts[0], parts[1], "memory")
+	return target != own
 }
 
 // isAutoMemWrite reports whether call is a Write or Edit whose file_path is

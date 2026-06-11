@@ -234,6 +234,18 @@ func WithMemorySnapshot(snap memdir.Snapshot) Option {
 	}
 }
 
+// WithMemoryDir re-homes the agent's writable auto-memory at dir (RP-25):
+// the permission write carve-out and the per-turn recall both target dir
+// instead of <appHome>/memory, and that store's MEMORY.md index is NOT
+// injected into the static system prompt — the host owns surfacing it
+// (the swarm hangs it on wake prompts so the cached prompt prefix stays
+// byte-stable). EVVA.md loading and the auto-memory toggles are unaffected.
+func WithMemoryDir(dir string) Option {
+	return func(a *Agent) {
+		a.memDirOverride = dir
+	}
+}
+
 // WithRootContext installs the agent-lifetime context. The signal pump
 // goroutine binds to this ctx; cancelling it (or calling
 // Agent.Shutdown) tears the pump down. Background bash tasks and

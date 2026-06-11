@@ -109,6 +109,14 @@ const (
 	REMOTE_TRIGGER ToolName = "remote_trigger"
 )
 
+// Alarm — one-shot, absolute-time wake. Wakes the caller (single-agent) or a
+// named swarm member (leader-scheduled) at an exact instant with a prompt.
+const (
+	ALARM_CREATE ToolName = "alarm_create"
+	ALARM_LIST   ToolName = "alarm_list"
+	ALARM_CANCEL ToolName = "alarm_cancel"
+)
+
 // Web.
 const (
 	WEB_FETCH    ToolName = "web_fetch"
@@ -135,6 +143,10 @@ const (
 	// Others — deferred.
 	JSON_QUERY ToolName = "json_query"
 	CALC       ToolName = "calc"
+
+	// EXCEL — read, write, create, and manipulate Excel (.xlsx) spreadsheets.
+	// Deferred: the LLM discovers it via tool_search when it needs Excel operations.
+	EXCEL ToolName = "excel"
 
 	// REPL — run a Python or JavaScript snippet in a fresh subprocess and
 	// return combined stdout+stderr. Deferred; surfaced via tool_search.

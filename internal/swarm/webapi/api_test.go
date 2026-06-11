@@ -20,13 +20,15 @@ var errBadName = errors.New("illegal member name")
 var errLeaderProtected = errors.New("the leader cannot be removed")
 var errSpaceStopped = errors.New("space is stopped")
 var errBadBody = errors.New("event body is required")
+var errUnauthorized = errors.New("unauthorized: webhook secret mismatch")
 var errBadSkill = errors.New("skill name is required")
 
 // fakeBackend is a Backend stub that records inbound commands and returns canned
 // snapshots, so the HTTP/WS layer can be exercised without a live swarm.
 type fakeBackend struct {
-	token  string
-	spaces map[string][]MemberInfo // id -> roster
+	token       string
+	allowRemote bool
+	spaces      map[string][]MemberInfo // id -> roster
 
 	mu            sync.Mutex
 	runs          [][3]string // {space, agent, prompt}
@@ -37,12 +39,16 @@ type fakeBackend struct {
 	creates       []MemberSpec      // CreateMember calls
 	removes       [][3]string       // {space, agent, deleteDir}
 	events        []EventIn         // IngestEvent calls
+	eventAuths    []EventAuth       // what the router reported per event POST (RP-15)
 	eventKeys     map[string]string // idempotency_key -> message id
 	skillsAdded   []SkillSpec       // AddSkill calls
 	skillsDeleted [][2]string       // {agent, skill}
+	sharedAdded   []SkillSpec       // AddSharedSkill calls (RP-26)
+	sharedDeleted []string          // DeleteSharedSkill calls
 }
 
 func (f *fakeBackend) Token() string                           { return f.token }
+func (f *fakeBackend) AllowRemote() bool                       { return f.allowRemote }
 func (f *fakeBackend) HasSpace(id string) bool                 { _, ok := f.spaces[id]; return ok }
 func (f *fakeBackend) Register(string, string) (string, error) { return "sp-new", nil }
 func (f *fakeBackend) StopSpace(id string) error {
@@ -97,6 +103,12 @@ func (f *fakeBackend) Messages(id string) ([]MessageInfo, bool) {
 	}
 	return []MessageInfo{}, true
 }
+func (f *fakeBackend) Proposals(id string) ([]ProposalInfo, bool) {
+	if !f.HasSpace(id) {
+		return nil, false
+	}
+	return []ProposalInfo{{ID: 1, Proposer: "w", Title: "fix it", Status: "open", CreatedAt: 1}}, true
+}
 func (f *fakeBackend) Transcript(id, agent string) ([]TranscriptEntry, bool) {
 	if !f.HasSpace(id) {
 		return nil, false
@@ -115,11 +127,11 @@ func (f *fakeBackend) Run(space, agent, prompt string) error {
 	f.runs = append(f.runs, [3]string{space, agent, prompt})
 	return nil
 }
-func (f *fakeBackend) SendUserMessage(space, to, subject, body string) error {
+func (f *fakeBackend) SendUserMessage(space, to, subject, body string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.msgs = append(f.msgs, [3]string{space, to, body})
-	return nil
+	return "msg-fake-1", nil
 }
 func (f *fakeBackend) RespondPermission(space, agent, reqID, behavior, reason, ruleTool string) error {
 	f.mu.Lock()
@@ -193,6 +205,16 @@ func (f *fakeBackend) MemberSkills(space, agent string) ([]SkillInfo, bool) {
 	}
 	return []SkillInfo{{Name: "demo", Description: "a demo skill"}}, true
 }
+
+func (f *fakeBackend) MemberMemory(space, agent string) ([]MemoryFileInfo, bool) {
+	if !f.HasSpace(space) || agent == "ghost" {
+		return nil, false
+	}
+	return []MemoryFileInfo{
+		{Name: "MEMORY.md", Content: "- [Lead](lead.md) — open lead"},
+		{Name: "lead.md", Content: "---\nname: lead\n---\n\nThe lead."},
+	}, true
+}
 func (f *fakeBackend) AddSkill(space, agent string, spec SkillSpec) error {
 	if !f.HasSpace(space) {
 		return errUnknownSpace
@@ -214,11 +236,71 @@ func (f *fakeBackend) DeleteSkill(space, agent, skill string) error {
 	f.mu.Unlock()
 	return nil
 }
-func (f *fakeBackend) IngestEvent(ref string, evt EventIn) (string, bool, error) {
+func (f *fakeBackend) SharedSkills(space string) ([]SkillInfo, bool) {
+	if !f.HasSpace(space) {
+		return nil, false
+	}
+	return []SkillInfo{{Name: "review-format", Description: "the five sections"}}, true
+}
+func (f *fakeBackend) AddSharedSkill(space string, spec SkillSpec) error {
+	if !f.HasSpace(space) {
+		return errUnknownSpace
+	}
+	if strings.TrimSpace(spec.Name) == "" {
+		return errBadSkill
+	}
+	f.mu.Lock()
+	f.sharedAdded = append(f.sharedAdded, spec)
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeBackend) DeleteSharedSkill(space, skill string) error {
+	if !f.HasSpace(space) {
+		return errUnknownSpace
+	}
+	f.mu.Lock()
+	f.sharedDeleted = append(f.sharedDeleted, skill)
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeBackend) Health() HealthInfo {
+	return HealthInfo{Status: "ok", Version: "v-test", UptimeSecs: 1,
+		SpacesRunning: len(f.spaces), MembersActive: 2}
+}
+
+func (f *fakeBackend) Metrics(ref string) (MetricsInfo, bool) {
+	if !f.HasSpace(ref) {
+		return MetricsInfo{}, false
+	}
+	return MetricsInfo{
+		UptimeSecs: 42, EventsLogged: 7, EventsDropped: 1, HintsDropped: 2,
+		Members: map[string]MemberMetricsInfo{
+			"leader": {WakesMessage: 3, WakesTimer: 1, Runs: 4, Aborts: 1,
+				RunSeconds: map[string]int64{"lt10s": 3, "lt1m": 1, "lt10m": 0, "gte10m": 0},
+				RunTokens:  map[string]int64{"lt1k": 2, "lt10k": 2, "lt50k": 0, "gte50k": 0}},
+		},
+	}, true
+}
+
+func (f *fakeBackend) Vacuum(ref string, days int, dryRun bool) (VacuumStats, error) {
+	if !f.HasSpace(ref) {
+		return VacuumStats{}, errUnknownSpace
+	}
+	if days <= 0 {
+		days = 30
+	}
+	return VacuumStats{Messages: 2, Tasks: 1, Days: days, DryRun: dryRun}, nil
+}
+
+func (f *fakeBackend) IngestEvent(ref string, evt EventIn, auth EventAuth) (string, bool, error) {
 	if ref == "sp-stopped" {
 		return "", false, errSpaceStopped
 	}
-	if !f.HasSpace(ref) {
+	// "sp-secret" models an RP-15 space with settings.webhook_secret = "s3cret".
+	if ref == "sp-secret" && auth.Secret != "s3cret" {
+		return "", false, errUnauthorized
+	}
+	if ref != "sp-secret" && !f.HasSpace(ref) {
 		return "", false, errUnknownSpace
 	}
 	if strings.TrimSpace(evt.Body) == "" {
@@ -226,6 +308,7 @@ func (f *fakeBackend) IngestEvent(ref string, evt EventIn) (string, bool, error)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.eventAuths = append(f.eventAuths, auth)
 	if evt.IdempotencyKey != "" {
 		if f.eventKeys == nil {
 			f.eventKeys = map[string]string{}
@@ -326,6 +409,13 @@ func TestRESTSnapshots(t *testing.T) {
 		t.Fatalf("paged completed = %+v", done)
 	}
 
+	// Proposal inbox (RP-23).
+	var props []ProposalInfo
+	getJSON(t, srv.URL+"/api/swarm/sp-a/proposals?token=secret", &props)
+	if len(props) != 1 || props[0].Proposer != "w" || props[0].Status != "open" {
+		t.Fatalf("proposals = %+v", props)
+	}
+
 	// Unknown space → 404.
 	resp, _ := http.Get(srv.URL + "/api/swarm/nope?token=secret")
 	if resp.StatusCode != http.StatusNotFound {
@@ -356,10 +446,22 @@ func TestRESTCommands(t *testing.T) {
 		t.Fatalf("suspend not recorded: %+v", fake.suspends)
 	}
 
-	// Operator → member message (flat comms).
-	mbody := bytes.NewBufferString(`{"body":"status?"}`)
-	if s := post(t, srv.URL+"/api/agents/worker-a/message?space=sp-a&token=secret", mbody); s != http.StatusNoContent {
-		t.Fatalf("message status = %d, want 204", s)
+	// Operator → member message (flat comms). Replies the durable message id —
+	// the `evva swarm send` receipt (RP-27).
+	mresp, err := http.Post(srv.URL+"/api/agents/worker-a/message?space=sp-a&token=secret",
+		"application/json", bytes.NewBufferString(`{"body":"status?"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(mresp.Body).Decode(&receipt); err != nil || mresp.StatusCode != http.StatusOK {
+		t.Fatalf("message status = %d decode err = %v, want 200 + {id}", mresp.StatusCode, err)
+	}
+	mresp.Body.Close()
+	if receipt.ID != "msg-fake-1" {
+		t.Fatalf("message receipt id = %q, want the backend's message id", receipt.ID)
 	}
 	if len(fake.msgs) != 1 || fake.msgs[0] != [3]string{"sp-a", "worker-a", "status?"} {
 		t.Fatalf("user message not recorded: %+v", fake.msgs)
@@ -591,6 +693,60 @@ func TestRESTSkillRoutes(t *testing.T) {
 	}
 }
 
+// RP-26 routes: space-shared skill library — list (GET), author (POST), delete
+// (DELETE) under /api/swarm/{id}/skills — guarded, same 404/400 mapping as the
+// per-member CRUD.
+func TestRESTSharedSkillRoutes(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+
+	getCode := func(url string) int {
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	var skills []SkillInfo
+	getJSON(t, srv.URL+"/api/swarm/sp-a/skills?token=secret", &skills)
+	if len(skills) != 1 || skills[0].Name != "review-format" {
+		t.Fatalf("shared skills = %+v", skills)
+	}
+	if s := getCode(srv.URL + "/api/swarm/ghost/skills?token=secret"); s != http.StatusNotFound {
+		t.Fatalf("list unknown space = %d, want 404", s)
+	}
+
+	if s := post(t, srv.URL+"/api/swarm/sp-a/skills?token=secret", bytes.NewBufferString(`{"name":"prd-format","description":"d","body":"b"}`)); s != http.StatusNoContent {
+		t.Fatalf("add shared skill = %d, want 204", s)
+	}
+	if len(fake.sharedAdded) != 1 || fake.sharedAdded[0].Name != "prd-format" {
+		t.Fatalf("shared add not recorded: %+v", fake.sharedAdded)
+	}
+	if s := post(t, srv.URL+"/api/swarm/sp-a/skills?token=secret", bytes.NewBufferString(`{"name":"","body":"b"}`)); s != http.StatusBadRequest {
+		t.Fatalf("empty name = %d, want 400", s)
+	}
+	if s := post(t, srv.URL+"/api/swarm/ghost/skills?token=secret", bytes.NewBufferString(`{"name":"x","description":"d","body":"b"}`)); s != http.StatusNotFound {
+		t.Fatalf("add unknown space = %d, want 404", s)
+	}
+
+	if s := del(t, srv.URL+"/api/swarm/sp-a/skills/prd-format?token=secret"); s != http.StatusNoContent {
+		t.Fatalf("delete shared skill = %d, want 204", s)
+	}
+	if len(fake.sharedDeleted) != 1 || fake.sharedDeleted[0] != "prd-format" {
+		t.Fatalf("shared delete not recorded: %+v", fake.sharedDeleted)
+	}
+	if s := del(t, srv.URL+"/api/swarm/ghost/skills/x?token=secret"); s != http.StatusNotFound {
+		t.Fatalf("delete unknown space = %d, want 404", s)
+	}
+
+	if s := getCode(srv.URL + "/api/swarm/sp-a/skills"); s != http.StatusUnauthorized {
+		t.Fatalf("shared skills list without token = %d, want 401", s)
+	}
+}
+
 // RP-9: the external-event webhook is reachable with NO token (loopback trust
 // boundary), maps new→202 / duplicate→200 / missing-body→400 / unknown→404 /
 // stopped→409, while ordinary /api routes still require the token.
@@ -640,6 +796,167 @@ func TestEventWebhookUnauthenticated(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("guarded route without token = %d, want 401", resp.StatusCode)
+	}
+}
+
+// RP-17: the metrics route is guarded, returns the backend's counters, and
+// 404s an unknown space.
+func TestMetricsRoute(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/swarm/sp-a/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("metrics without token = %d, want 401", resp.StatusCode)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/swarm/sp-a/metrics?token=" + fake.token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m MetricsInfo
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || m.EventsLogged != 7 || m.Members["leader"].Runs != 4 ||
+		m.Members["leader"].RunSeconds["lt10s"] != 3 || m.Members["leader"].RunTokens["lt1k"] != 2 {
+		t.Fatalf("metrics = %d %+v, want the fake's counters", resp.StatusCode, m)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/swarm/ghost/metrics?token=" + fake.token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown-space metrics = %d, want 404", resp.StatusCode)
+	}
+}
+
+// RP-16: the vacuum route is guarded, takes an optional {days, dry_run} body
+// (an empty POST uses defaults), and 404s an unknown space.
+func TestVacuumRoute(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+
+	if s := post(t, srv.URL+"/api/swarm/sp-a/vacuum", nil); s != http.StatusUnauthorized {
+		t.Fatalf("vacuum without token = %d, want 401", s)
+	}
+
+	req, _ := http.NewRequest("POST", srv.URL+"/api/swarm/sp-a/vacuum?token="+fake.token,
+		bytes.NewBufferString(`{"days":7,"dry_run":true}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stats VacuumStats
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || stats.Days != 7 || !stats.DryRun || stats.Messages != 2 {
+		t.Fatalf("vacuum = %d %+v, want 200 with echoed days/dry-run", resp.StatusCode, stats)
+	}
+
+	// Empty body → defaults (no decode failure).
+	req, _ = http.NewRequest("POST", srv.URL+"/api/swarm/sp-a/vacuum?token="+fake.token, nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("empty-body vacuum = %d, want 200", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest("POST", srv.URL+"/api/swarm/ghost/vacuum?token="+fake.token, nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown-space vacuum = %d, want 404", resp.StatusCode)
+	}
+}
+
+// RP-15: a space with a webhook secret 401s wrong/missing X-Evva-Webhook-Secret
+// headers and accepts the right one; the router reports secret + loopback peer.
+func TestEventWebhookSecret(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+
+	postEv := func(secret string) int {
+		req, _ := http.NewRequest("POST", srv.URL+"/api/swarm/sp-secret/event", bytes.NewBufferString(`{"body":"hi"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if secret != "" {
+			req.Header.Set(WebhookSecretHeader, secret)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if s := postEv(""); s != http.StatusUnauthorized {
+		t.Fatalf("missing secret = %d, want 401", s)
+	}
+	if s := postEv("wrong"); s != http.StatusUnauthorized {
+		t.Fatalf("wrong secret = %d, want 401", s)
+	}
+	if s := postEv("s3cret"); s != http.StatusAccepted {
+		t.Fatalf("right secret = %d, want 202", s)
+	}
+	if n := len(fake.eventAuths); n != 1 {
+		t.Fatalf("recorded auths = %d, want 1 (only the accepted POST)", n)
+	}
+	if a := fake.eventAuths[0]; a.Secret != "s3cret" || !a.Loopback {
+		t.Fatalf("reported auth = %+v, want the secret and a loopback peer", a)
+	}
+}
+
+// RP-15: GET /api/auth/bootstrap hands the token to loopback callers only, and
+// vanishes entirely in --allow-remote mode (the reverse-proxy guard).
+func TestBootstrapTokenEndpoint(t *testing.T) {
+	fake := newFake()
+	router := NewRouter(fake, NewHub(), nil)
+
+	get := func(remoteAddr string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/auth/bootstrap", nil)
+		req.RemoteAddr = remoteAddr
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := get("127.0.0.1:54321")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("loopback bootstrap = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Token != fake.token {
+		t.Fatalf("bootstrap token = %q (err %v), want %q", body.Token, err, fake.token)
+	}
+
+	if rec := get("203.0.113.9:4242"); rec.Code != http.StatusNotFound {
+		t.Fatalf("remote-peer bootstrap = %d, want 404 (not advertised)", rec.Code)
+	}
+
+	fake.allowRemote = true
+	if rec := get("127.0.0.1:54321"); rec.Code != http.StatusNotFound {
+		t.Fatalf("allow-remote bootstrap = %d, want 404 even for loopback", rec.Code)
 	}
 }
 
@@ -709,4 +1026,36 @@ func recvWSMaybe(ws *websocket.Conn, d time.Duration) string {
 		return ""
 	}
 	return msg
+}
+
+// RP-25 route: member memory, read-only — list (GET) with the 404 mapping and
+// the auth guard; the index file leads the response.
+func TestRESTMemoryRoute(t *testing.T) {
+	fake := newFake()
+	srv := httptest.NewServer(NewRouter(fake, NewHub(), nil))
+	defer srv.Close()
+
+	var files []MemoryFileInfo
+	getJSON(t, srv.URL+"/api/agents/leader/memory?space=sp-a&token=secret", &files)
+	if len(files) != 2 || files[0].Name != "MEMORY.md" || files[1].Name != "lead.md" {
+		t.Fatalf("memory files = %+v", files)
+	}
+
+	codeOf := func(url string) int {
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if s := codeOf(srv.URL + "/api/agents/leader/memory?space=ghost&token=secret"); s != http.StatusNotFound {
+		t.Fatalf("unknown space = %d, want 404", s)
+	}
+	if s := codeOf(srv.URL + "/api/agents/ghost/memory?space=sp-a&token=secret"); s != http.StatusNotFound {
+		t.Fatalf("unknown member = %d, want 404", s)
+	}
+	if s := codeOf(srv.URL + "/api/agents/leader/memory?space=sp-a"); s != http.StatusUnauthorized {
+		t.Fatalf("no token = %d, want 401", s)
+	}
 }

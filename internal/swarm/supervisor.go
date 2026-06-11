@@ -2,11 +2,13 @@ package swarm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
@@ -33,6 +35,22 @@ type Supervisor struct {
 
 	tickInterval   time.Duration
 	rescanInterval time.Duration
+
+	// vacuumDay is the local day ("2006-01-02") the last retention pass ran
+	// for — only the tick goroutine reads/writes it. vacuumBusy stops a new
+	// pass while a slow one (VACUUM) is still holding the store lock (RP-16).
+	vacuumDay  string
+	vacuumBusy atomic.Bool
+
+	// RP-22 workflow-watchdog state — tick-goroutine-only, the vacuumDay
+	// pattern (tests that call the sweeps directly never Start the tick).
+	// lastWorkflowSweep throttles the ledger checks to workflowSweepInterval;
+	// the two maps are the anti-spam marks (one reminder per task stay, one
+	// alert per mailbox backlog episode) and reset on restart by design.
+	workflowSweepInterval time.Duration
+	lastWorkflowSweep     time.Time
+	staleTaskNotified     map[int64]staleTaskKey
+	mailboxAlerted        map[string]bool
 
 	// mu guards members + each member's schedule/nextDue (only the tick touches
 	// those). A member's volatile run state (suspended/cancelRun) is guarded by
@@ -71,10 +89,11 @@ func NewSupervisor(sp *SwarmSpace) *Supervisor {
 		// log) rather than io.Discard, so a swarm runs observable out of the
 		// box; SetLogger overrides it. The old discard default is why the
 		// run loop was invisible during debugging.
-		log:            slog.Default(),
-		tickInterval:   defaultTickInterval,
-		rescanInterval: defaultRescanInterval,
-		members:        make(map[string]*memberRun),
+		log:                   slog.Default(),
+		tickInterval:          defaultTickInterval,
+		rescanInterval:        defaultRescanInterval,
+		workflowSweepInterval: defaultWorkflowSweepInterval,
+		members:               make(map[string]*memberRun),
 	}
 	// Back-reference so the leader's schedule tools (which hold only the space)
 	// can reach this run engine via sp.SetMemberSchedule. One supervisor per
@@ -112,6 +131,14 @@ func (s *Supervisor) Start(ctx context.Context) {
 	s.wg.Add(2)
 	go func() { defer s.wg.Done(); s.timerTick(ctx) }()
 	go func() { defer s.wg.Done(); s.rescanTick(ctx) }()
+
+	// Re-arm durable one-shot alarms from a prior run: future ones get fresh
+	// timers; any that came due while the process was down fire now as durable
+	// bus mail, which the target drains when its loop runs. Safe at start
+	// (unlike the solo TUI) precisely because delivery is durable mail.
+	if err := s.sp.AlarmScheduler().LoadAndRearm(); err != nil {
+		s.log.Warn("swarm: alarm rearm failed", "err", err)
+	}
 }
 
 // Wait blocks until every run loop and tick goroutine started under the
@@ -133,7 +160,7 @@ func (s *Supervisor) AddMember(name string) error {
 	}
 
 	dir := filepath.Join(s.sp.Workdir, "agents", "sub", name)
-	ld, err := s.sp.loader.Build(dir, agentdef.RoleWorker)
+	ld, err := s.sp.loader.Build(dir, agentdef.RoleWorker, agentdef.SharedSkillsDir(s.sp.Workdir))
 	if err != nil {
 		return fmt.Errorf("swarm: add member %q: %w", name, err)
 	}
@@ -214,6 +241,10 @@ func (s *Supervisor) RemoveMember(name string) error {
 	s.sp.Roster.remove(name)
 	s.sp.Bus.Deregister(name)
 	s.sp.removeAgent(name)
+	// A removed member's runtime schedule override dies with it (row and
+	// tombstone alike) — a later re-add starts from the manifest, not from a
+	// cadence set against the old incarnation (RP-20).
+	_ = s.store.DeleteSchedule(name)
 	s.sp.persistRuntime()
 	return nil
 }
@@ -237,6 +268,10 @@ func (s *Supervisor) Unfreeze(name string) error {
 		return fmt.Errorf("swarm: unfreeze: unknown member %q", name)
 	}
 	s.sp.Roster.setMembership(name, MembershipActive)
+	// An unfreeze overrides the budget breaker too (RP-13): clear its mark so a
+	// still-over-budget member re-trips (once) after its next run instead of
+	// being silently held by a stale mark.
+	s.sp.clearBudgetFrozen(name)
 	s.sp.persistRuntime()
 	if m := s.memberOf(name); m != nil {
 		s.poke(m, wakeMessage)
@@ -246,19 +281,35 @@ func (s *Supervisor) Unfreeze(name string) error {
 
 // SetSchedule puts a member on (or replaces) a recurring timer schedule and
 // applies it to the running loop immediately (fixing the old "seeded once at
-// startMemberLoop" gap, RP-7 §3.4). It updates two representations in separate
-// critical sections to preserve the package lock order s.mu → sp.mu (never
-// nested): the live memberRun (read by the tick under s.mu) and sp.schedules
-// (the declared/persist source under sp.mu), then persists so a leader-set cron
-// survives a service restart. A bad cron or empty spec is rejected up front.
+// startMemberLoop" gap, RP-7 §3.4). Both runtime write paths — the leader's
+// schedule_set tool (via sp.SetMemberSchedule) and the operator's web edit
+// (via Service.SetSchedule) — converge here, so this is where the durable
+// row lands (RP-20): store first, live loop second; if the row can't be
+// written the loop is left untouched and the caller sees the error. The two
+// live representations update in separate critical sections to preserve the
+// package lock order s.mu → sp.mu (never nested): the memberRun (read by the
+// tick under s.mu) and sp.schedules + provenance (under sp.mu). A bad cron,
+// empty spec, or unknown member is rejected up front — a row for a member
+// that doesn't exist would lie dormant and apply to a future namesake.
 func (s *Supervisor) SetSchedule(name string, sch agentdef.Schedule) error {
+	if _, ok := s.sp.Roster.membership(name); !ok {
+		return fmt.Errorf("swarm: schedule: unknown member %q", name)
+	}
 	if err := sch.Validate(); err != nil {
 		return err
 	}
-	due, err := sch.Next(time.Now())
+	now := time.Now()
+	due, err := sch.Next(now)
 	if err != nil {
 		return err
 	}
+	if err := s.store.PutSchedule(store.ScheduleRow{
+		Member: name, Cron: sch.Cron, EveryNS: int64(sch.Every), Prompt: sch.Prompt,
+		UpdatedAt: now.UnixMilli(),
+	}); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	if m, ok := s.members[name]; ok {
 		cp := sch
@@ -267,19 +318,26 @@ func (s *Supervisor) SetSchedule(name string, sch agentdef.Schedule) error {
 	}
 	s.mu.Unlock()
 
-	s.sp.mu.Lock()
-	s.sp.schedules[name] = sch
-	s.sp.mu.Unlock()
-
-	s.sp.persistRuntime()
+	s.sp.setRuntimeSchedule(name, sch, now.UnixMilli())
 	return nil
 }
 
-// ClearSchedule removes a member's recurring schedule from both the running loop
-// and the declared/persist source, then persists (so the removal survives a
-// restart — a manifest-declared schedule the leader cleared stays cleared). A
-// member with no schedule is a no-op.
+// ClearSchedule removes a member's recurring schedule from the running loop
+// and writes a TOMBSTONE row (not a delete): "the leader cleared this
+// crontab" must survive a restart and beat a schedule the manifest still
+// declares (RP-20 §2.2). A member with no schedule still gets the tombstone —
+// predictable semantics: after a clear, the member has no schedule until the
+// next set or a fresh register.
 func (s *Supervisor) ClearSchedule(name string) error {
+	if _, ok := s.sp.Roster.membership(name); !ok {
+		return fmt.Errorf("swarm: schedule: unknown member %q", name)
+	}
+	if err := s.store.PutSchedule(store.ScheduleRow{
+		Member: name, Cleared: true, UpdatedAt: time.Now().UnixMilli(),
+	}); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	if m, ok := s.members[name]; ok {
 		m.schedule = nil
@@ -287,11 +345,7 @@ func (s *Supervisor) ClearSchedule(name string) error {
 	}
 	s.mu.Unlock()
 
-	s.sp.mu.Lock()
-	delete(s.sp.schedules, name)
-	s.sp.mu.Unlock()
-
-	s.sp.persistRuntime()
+	s.sp.dropScheduleEntry(name)
 	return nil
 }
 
@@ -312,14 +366,31 @@ func (s *Supervisor) ReloadMemberSkills(name string) error {
 	if m == nil {
 		return fmt.Errorf("swarm: reload skills: unknown member %q", name)
 	}
-	// skill.LoadRegistry never errors (a missing dir is the empty registry) and reads
-	// ONLY the member's own dir — no bundled/global overlay — matching construction.
-	reg, _ := skill.LoadRegistry(agentdef.SkillsDir(s.sp.Workdir, role, name), "")
+	// skill.LoadRegistry never errors (a missing dir is the empty registry).
+	// Source order (shared, member) matches construction exactly (RP-26): the
+	// space-shared dir under the member's own, member wins on collision — so a
+	// reload can also pick up a freshly dropped shared skill for this member.
+	reg, _ := skill.LoadRegistry(agentdef.SharedSkillsDir(s.sp.Workdir), agentdef.SkillsDir(s.sp.Workdir, role, name))
 	m.mu.Lock()
 	m.pendingSkills = reg
 	m.mu.Unlock()
 	s.poke(m, wakeMessage)
 	return nil
+}
+
+// ReloadAllMemberSkills runs ReloadMemberSkills over the whole roster — the
+// fan-out a shared-skill change needs (RP-26 Part B): every member re-scans
+// (shared, own) and applies at its own next run boundary. Per-member failures
+// are joined, not short-circuited, so one bad member can't strand the rest of
+// the team on a stale catalog.
+func (s *Supervisor) ReloadAllMemberSkills() error {
+	var errs []error
+	for _, mv := range s.sp.Roster.Snapshot() {
+		if err := s.ReloadMemberSkills(mv.Name); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // applyMemberSkills installs a rebuilt catalog on a member's live agent through the

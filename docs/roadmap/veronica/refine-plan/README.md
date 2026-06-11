@@ -125,3 +125,62 @@ schedule 欄位）；RP-9（Phase 2）獨立，但與 RP-7 互補（timer 驅動
 | [FE-8](fe-v2/FE-8-a11y-rwd-and-migration.md) | a11y／RWD／收尾＋遷移 | cutover | WCAG AA、RWD、四態、i18n scaffold、**parity checklist＋cutover（embed 切 web2）**。 |
 
 **架構決策（已拍板 2026-06-07）**：Vue 3 + TypeScript + Pinia｜平行新建 `web2/`、達 parity 後汰換 v1（保留並 port 已測純邏輯層）｜完整 8 份 arc。**建議落地序**：FE-1 →（FE-2 ∥ FE-3）→（FE-4 ∥ FE-5 ∥ FE-6）→ FE-7 → FE-8。
+
+---
+
+## 第四波 refine —— 運營硬化（RP-13 ~ RP-18）
+
+> 狀態：**草案 / Draft（待 Johnny 拍板，尚未實作）** ｜ 日期：2026-06-10
+> 觸發：Phase 2（Sunday trading team）24/7 運營一週後的**全面健康檢查**——`-race` 全綠、
+> 覆蓋率 71.7%–90.6%、無 correctness 問題；風險集中在「跑了幾週才會痛」的運營維度：
+> 成本看不到、卡死沒人報、ledger 只增不刪、事件看過即逝。
+> 總綱（含健康檢查結論與 explore track 索引）：[`../health-check-2026-06-10.md`](../health-check-2026-06-10.md)
+> （第三波與第四波之間另有 [RP-11](RP-11-event-routing-and-scoped-lever.md)、
+> [RP-12](RP-12-advice-loop-closure.md) 兩份已落地的獨立 refine，未列前文索引。）
+
+| # | 計畫 | 優先 | 主題 | 一句話 |
+| --- | --- | --- | --- | --- |
+| [RP-13](RP-13-member-usage-metering.md) | 成員用量儀表＋預算熔斷 | **P0** | 成本可觀測 | run 邊界計量進 roster 快照；list_members/web 顯示 per-member tokens；超日預算自動 Freeze＋通知 leader/User，跨日自動解凍（標記自帶觸發日，翻日邊緣不可偷）。**✅ 已實作 2026-06-10。** |
+| [RP-14](RP-14-stuck-run-watchdog.md) | Stuck-run watchdog | **P0** | 卡死可見 | busy 超閾值發 stall 通知（每 run 一次；等審批/提問/paused 豁免）；可選 `stall_hard_timeout` 自動 cancel——取消不丟信（unclaim 重投既有保障）。**✅ 已實作 2026-06-10。** |
+| [RP-15](RP-15-webapi-auth-hardening.md) | WebAPI 認證硬化 | P1 | 安全邊界 | 兌現 `service.go:58` minted-token TODO；非 loopback 顯式 opt-in＋強制 token；webhook 可選 secret（向後相容）。**✅ 已實作 2026-06-10。** |
+| [RP-16](RP-16-ledger-retention.md) | Ledger retention | P1 | 只增不刪 | 已讀且過期的 messages / completed tasks 先歸檔（jsonl.gz）再清；`evva swarm vacuum` ＋ 每日自動；活資料絕不動。**✅ 已實作 2026-06-10。** |
+| [RP-17](RP-17-durable-event-log.md) | Durable event log ＋ metrics | P2 | 事後可查 | publish 旁路落日切 jsonl（永不回壓 pump）＋ wake/run/abort counters 與 metrics endpoint；是 EX-4 replay 的地基。**✅ 已實作 2026-06-10。** |
+| [RP-18](RP-18-ops-polish.md) | Ops 收口 | P2 | 雜項 | cron 方言文件化、launchd/systemd 自動重啟模板、`/healthz` 擴充。**✅ 已實作 2026-06-10。** |
+
+**建議落地序**：RP-13 → RP-14 →（RP-15 ∥ RP-16）→ RP-17 → RP-18。
+
+**與前三波的關係**：第一波讓團隊**不卡死**、第二波讓團隊**跑得久管得動**、第三波讓 operator
+**看得清**；第四波讓這一切**運營得起**——成本、卡死、增長、審計。另起的
+[explore track（EX-1~6）](../explore/README.md) 則把運營中長出來的模式（外部記憶、遠端
+persona、replay 評測…）以 spike 先行驗證，成功才升級成 RP。
+
+---
+
+## 第五波 refine —— swarm 即框架的成熟度（RP-19 ~ RP-28）
+
+> 狀態：**草案 / Draft（待 Johnny 拍板，尚未實作）** ｜ 日期：2026-06-11
+> 觸發：**Sunday swarm 重整**（friday/trader 決策執行分離 + 8 員 prompt/工具櫃全面重寫）。
+> 重寫過程是一次對框架的深度 audit：凡是「每個 swarm operator 都得在 persona 裡手抄一遍」
+> 的東西（工具教學、injection 警語、記憶紀律），就是框架欠的；凡是「承諾了但 source 對不上」
+> 的東西（schedule_set 不持久），就是 bug。每份皆含 file:line 證據與 Sunday 實例。
+
+| # | 計畫 | 優先 | 主題 | 一句話 |
+| --- | --- | --- | --- | --- |
+| [RP-19](RP-19-disk-persona-tool-grounding.md) | Disk persona 工具接地 | **P0** | prompt 組裝 | `ComposeDiskMainPrompt` 補 mechanics 區塊（從成員工具清單生成）＋ deferred 公告＋ deferr 非空自動掛 `tool_search`——Sunday 8 份 prompt 手寫的「工具櫃」收編進框架。 |
+| [RP-20](RP-20-runtime-schedule-durability.md) | Runtime 排程持久化 | **P0（bug）** | 重啟續跑 | `schedule_set` 只進 in-memory supervisor、無 schedule 表，重啟靜默回滾 manifest——與 alarm（durable）不對稱，違反「自然续跑」承諾。落表＋重建優先序＋來源標注。 |
+| [RP-21](RP-21-untrusted-content-framing.md) | 外部內容 untrusted 包裝 | P1 | 安全邊界 | web_fetch/search 結果包 `<untrusted-content>` ＋一行協議——prompt-injection 防線從「persona 記得抄警語」升級為框架預設（`shapeEvent` 已有先例）。 |
+| [RP-22](RP-22-workflow-watchdog.md) | Workflow 級看門狗 | P1 | 協調品質 | RP-14 管「run 卡住」、本票管「沒人跑的卡住」：task 卡 running/verifying 超齡提醒 leader、mailbox unread 積壓告警 operator——閉環從美德變訊號。 |
+| [RP-23](RP-23-worker-task-proposals.md) | Worker 任務提案 | P2 | 協作拓樸 | 獨立 proposals 表＋`task_propose`/`proposal_accept`/`proposal_decline`——bottom-up 工作上看板、leader 單一寫者不變量零觸碰。 |
+| [RP-24](RP-24-per-member-permission-mode.md) | Per-member permission_mode | P2 | 信任分級 | manifest 成員級 mode 覆寫（RP-11 細規則之上的粗旋鈕）——「analysts default、trader bypass」表達得出來；順手定 settings 級 budget 負值語義。 |
+| [RP-25](RP-25-member-native-memory.md) | 成員原生長期記憶 | P1 | 心智持久化 | **EX-1 的畢業票**：per-member memdir ＋ wake 注入索引（前綴 bit-stable）＋寫己讀眾治理——Sunday `/api/memory` 模式收編進框架。 |
+| [RP-26](RP-26-shared-skills.md) | Space 級共享 skills | P2 | 知識去重 | **EX-6 的畢業票**：Part A 共享目錄（member 同名優先）隨時可做；Part B `skill_publish`（leader 制度化管道）gated on EX-6 spike。 |
+| [RP-27](RP-27-cli-member-send.md) | CLI 成員訊息 | P2（小件） | 控制面完整性 | `evva swarm send <ref> <member> <text>`——`SendUserMessage` 原語已在，補 CLI/API 面；persona 迭代從手點 Web 變可腳本化。 |
+| [RP-28](RP-28-long-run-context-cost.md) | 長壽成員 context 成本 | P2 | 成本可觀測 | Part A：per-run token 計量進 event log＋metrics 直方圖（RP-13 的粒度補洞）；Part B：fresh-context wake 設計方向，等數據與 EX-4 再立案。 |
+
+**建議落地序**：RP-20（bug，先止血）→ RP-19（最大槓桿，含 RP-21 的協議行掛車）→ RP-21 →
+RP-22 → RP-25（可與 EX-1 spike 並行）→（RP-24 ∥ RP-26 Part A ∥ RP-27）→ RP-23 → RP-28。
+
+**與前四波的關係**：前四波把 swarm 從「能跑」推到「運營得起」；第五波回答的是「**第二個、
+第三個 swarm 蓋起來容不容易**」——把 Sunday 當完整度 oracle 暴露出的 operator 重複勞動
+（工具教學、injection 防線、記憶紀律）與承諾缺口（排程持久化）收進框架，讓下一個 swarm
+的 persona 真的只需要寫人設。

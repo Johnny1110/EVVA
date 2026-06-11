@@ -8,6 +8,7 @@ import (
 
 	"github.com/johnny1110/evva/internal/swarm"
 	"github.com/johnny1110/evva/internal/swarm/store"
+	"github.com/johnny1110/evva/pkg/common"
 	pubtools "github.com/johnny1110/evva/pkg/tools"
 )
 
@@ -87,8 +88,9 @@ func newListMembers(mc swarm.MemberContext) pubtools.Tool {
 		schema: `{"type":"object","properties":{}}`,
 		exec: func(_ context.Context, _ json.RawMessage) (pubtools.Result, error) {
 			members := mc.Space.Roster.Snapshot()
+			pendingAlarms := mc.Space.AlarmScheduler().List()
 			var b strings.Builder
-			fmt.Fprintf(&b, "Swarm members (%d):\n", len(members))
+			fmt.Fprintf(&b, "Swarm members (%d) — times are local %s:\n", len(members), common.ZoneLabel())
 			for _, m := range members {
 				// DisplayPhase shows the fine event-derived sub-phase (e.g.
 				// "executing:bash", "waiting-approval:bash") so a teammate can see
@@ -97,18 +99,65 @@ func newListMembers(mc swarm.MemberContext) pubtools.Tool {
 				if m.CurrentTask != 0 {
 					fmt.Fprintf(&b, " task#%d", m.CurrentTask)
 				}
+				// Effective permission stance (RP-24): bypass teammates can be
+				// fire-and-forgotten, default ones park in the approval queue
+				// until a human clicks — that changes delegation strategy, so
+				// it is always shown. Empty only on hand-built test rosters.
+				if m.PermissionMode != "" {
+					fmt.Fprintf(&b, " · perm %s", m.PermissionMode)
+				}
+				// Token meter (RP-13): cumulative session spend, plus today's
+				// counter against the member's daily budget when one is set.
+				if m.Usage.InputTokens+m.Usage.OutputTokens > 0 || m.DailyTokens > 0 {
+					fmt.Fprintf(&b, " · tok in %s out %s", fmtTokens(m.Usage.InputTokens), fmtTokens(m.Usage.OutputTokens))
+					if budget := mc.Space.BudgetFor(m.Name); budget > 0 {
+						fmt.Fprintf(&b, ", today %s/%s", fmtTokens(m.DailyTokens), fmtTokens(budget))
+					} else if m.DailyTokens > 0 {
+						fmt.Fprintf(&b, ", today %s", fmtTokens(m.DailyTokens))
+					}
+				}
 				if m.WhenToUse != "" {
 					fmt.Fprintf(&b, " — %s", m.WhenToUse)
 				}
 				// Always surface the member's crontab (RP-7 §3.5): read live from
 				// the space (the schedule's owner) so a leader whose context was
-				// compacted re-learns who it put on duty every time it lists.
-				if sch, ok := mc.Space.ScheduleFor(m.Name); ok {
-					fmt.Fprintf(&b, "  ⏰ %s", formatSchedule(sch))
+				// compacted re-learns who it put on duty every time it lists. The
+				// origin tag tells a manifest cadence from a runtime-set one (RP-20).
+				if sch, origin, ok := mc.Space.ScheduleInfoFor(m.Name); ok {
+					fmt.Fprintf(&b, "  ⏰ %s %s", formatSchedule(sch), formatScheduleOrigin(origin))
 				}
 				b.WriteByte('\n')
+				// One-shot alarms aimed at this member (RP-7 sibling): surface them
+				// so the leader re-learns pending wakes after a context compaction,
+				// and so alarm_clear has an id source.
+				for _, a := range pendingAlarms {
+					if a.Target == m.Name {
+						label := ""
+						if a.Label != "" {
+							label = " " + a.Label
+						}
+						fmt.Fprintf(&b, "    ⏰ %s at %s%s\n", a.ID, common.Stamp(a.FireAt), label)
+					}
+				}
 			}
 			return pubtools.Result{Content: b.String(), Metadata: members}, nil
 		},
+	}
+}
+
+// fmtTokens renders a token count compactly for the list_members line:
+// 950 → "950", 12_340 → "12k", 1_234_000 → "1.2M".
+func fmtTokens(n int) string {
+	switch {
+	case n >= 10_000_000:
+		return fmt.Sprintf("%.0fM", float64(n)/1e6)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 10_000:
+		return fmt.Sprintf("%.0fk", float64(n)/1e3)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
 	}
 }

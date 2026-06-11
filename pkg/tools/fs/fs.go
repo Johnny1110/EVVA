@@ -103,9 +103,11 @@ func expandHome(p string) (string, error) {
 //     always wants `~` to mean their *original* home, not `/root`.
 //     This was the reported bug: `~/tmp` silently became `/root/tmp`
 //     because $HOME inherited from the sudo session points at root.
-//  2. $HOME — the conventional source. Reliable in normal shells.
-//  3. user.Current().HomeDir — last-ditch lookup against /etc/passwd
-//     for environments where $HOME got unset entirely.
+//  2. $HOME — the conventional source. Reliable in normal unix shells.
+//  3. os.UserHomeDir — the platform's native notion of home; on Windows
+//     this is %USERPROFILE%, where $HOME is normally unset entirely.
+//  4. user.Current().HomeDir — last-ditch lookup against /etc/passwd
+//     for environments where the env got stripped.
 //
 // The chain returns an error only when every source fails, which
 // shouldn't happen on any well-formed system.
@@ -116,6 +118,9 @@ func resolveUserHome() (string, error) {
 		}
 	}
 	if home := os.Getenv("HOME"); home != "" {
+		return home, nil
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		return home, nil
 	}
 	if u, err := user.Current(); err == nil && u.HomeDir != "" {

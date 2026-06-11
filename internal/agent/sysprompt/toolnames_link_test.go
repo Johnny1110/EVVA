@@ -69,6 +69,10 @@ func TestToolNamesAppearInMainPrompt(t *testing.T) {
 		tools.MONITOR,
 		tools.LSP_REQUEST,
 		tools.REPL,
+		tools.ALARM_CREATE,
+		tools.ALARM_LIST,
+		tools.ALARM_CANCEL,
+		tools.SCHEDULE_WAKEUP,
 	}
 	for _, name := range required {
 		if !contains(prompt, string(name)) {

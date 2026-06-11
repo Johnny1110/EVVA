@@ -3,8 +3,11 @@ package agentdef
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/johnny1110/evva/pkg/permission"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,13 +29,94 @@ type Manifest struct {
 type Member struct {
 	Agent    string
 	Schedule *Schedule // nil when the manifest declares none for this member
+	// BudgetTokens overrides the space-wide daily token budget for this member
+	// (RP-13): >0 = own daily cap, <0 = unlimited (exempt even when the space
+	// sets a default), 0 = inherit Settings.DailyBudgetTokens.
+	BudgetTokens int
+	// PermissionMode overrides the space-wide permission stance for this
+	// member (RP-24): default | accept_edits | plan | bypass; "" = inherit
+	// Settings.PermissionMode. The coarse trust knob layered over the
+	// member's fine-grained permissions.json rules (RP-11): the mode decides
+	// the broad stance, allow rules open holes in `default`, and deny rules
+	// bind in EVERY mode — bypass included.
+	PermissionMode string
 }
 
 // Settings are space-wide knobs from the manifest.
 type Settings struct {
 	PermissionMode string
 	MaxIterations  int
+	// DailyBudgetTokens is the per-member daily token cap (input+output, local
+	// day) — the RP-13 budget breaker. 0 = unlimited. A member that crosses it
+	// is frozen until the day rolls over (or the operator unfreezes it).
+	// Negative values normalize to 0 at manifest load (RP-24 §5): unlike the
+	// member-level knob there is nothing at space level to be exempt FROM, so
+	// any non-positive value just means "no cap".
+	DailyBudgetTokens int
+	// BudgetStayFrozen keeps a budget-frozen member frozen across the day
+	// rollover, requiring a manual unfreeze (default false = auto-unfreeze).
+	BudgetStayFrozen bool
+	// StallThreshold is the RP-14 watchdog alert line: a member busy longer
+	// than this (and not waiting on a human) raises a one-per-run stall notice
+	// to the operator and the leader. 0 = disabled; a manifest that omits the
+	// knob gets DefaultStallThreshold.
+	StallThreshold time.Duration
+	// StallHardTimeout, when set, auto-cancels a run busy longer than this —
+	// the non-clean exit unclaims the run's mail so it retries on the next
+	// wake. 0 = disabled (the default: alert-only until thresholds are tuned).
+	StallHardTimeout time.Duration
+	// WebhookSecret, when set, is required on every external-event POST for
+	// this space (header X-Evva-Webhook-Secret, RP-15). Unset keeps the RP-9
+	// loopback trust: local callers post freely, non-loopback callers are
+	// rejected outright.
+	WebhookSecret string
+	// RetentionDays drives the RP-16 ledger vacuum: messages read more than
+	// this many days ago and tasks completed at least that long ago are
+	// archived to .vero/archive/ and deleted, daily. 0 = retention disabled
+	// (the pre-RP-16 "never deletes history" behavior); a manifest that omits
+	// the knob gets DefaultRetentionDays.
+	RetentionDays int
+	// EventLog mirrors the space's event stream into .vero/events/ as daily
+	// jsonl files (RP-17 forensics). A manifest that omits the knob gets true;
+	// `event_log: false` turns the side-channel off entirely. Note the Go
+	// zero value is OFF — programmatic spaces opt in, yaml spaces opt out.
+	EventLog bool
+	// TaskStaleThreshold is the RP-22 workflow watchdog's ledger line: a task
+	// sitting in running/verifying longer than this raises one reminder to the
+	// leader (and the operator) per state entry. 0 = disabled; a manifest that
+	// omits the knob gets DefaultTaskStaleThreshold. suspended is exempt —
+	// that state IS deliberate parking.
+	TaskStaleThreshold time.Duration
+	// MailboxStaleThreshold is the RP-22 bus-health tripwire: a member whose
+	// oldest unread (unclaimed) message exceeds this age raises an alert —
+	// under the normal wake chain (level-triggered drain + rescan) it should
+	// never fire, so when it does it means a frozen/suspended member was
+	// forgotten or the wake chain regressed. 0 = disabled; omitted gets
+	// DefaultMailboxStaleThreshold.
+	MailboxStaleThreshold time.Duration
 }
+
+// DefaultStallThreshold is the alert line a manifest gets when it does not set
+// settings.stall_threshold. Long enough that legitimate tool-heavy runs don't
+// page the operator; short enough that a hung run is noticed the same hour.
+const DefaultStallThreshold = 10 * time.Minute
+
+// DefaultRetentionDays is the ledger retention window a manifest gets when it
+// does not set settings.retention_days. A month keeps the web/API working set
+// small on a 24/7 swarm while the archive retains the full history.
+const DefaultRetentionDays = 30
+
+// DefaultTaskStaleThreshold is the task-age reminder line a manifest gets when
+// it does not set settings.task_stale_threshold. A day is long enough that
+// ordinary multi-hour work never pings, short enough that a card forgotten on
+// the board is surfaced the next morning.
+const DefaultTaskStaleThreshold = 24 * time.Hour
+
+// DefaultMailboxStaleThreshold is the unread-age tripwire a manifest gets when
+// it does not set settings.mailbox_stale_threshold. Half an hour: the wake
+// chain normally drains in seconds, so anything older signals a frozen or
+// broken member, not load.
+const DefaultMailboxStaleThreshold = 30 * time.Minute
 
 // scheduleYml is the on-disk schedule block shared by the manifest's leader and
 // workers (and mirrored by profile.yml). Exactly one of cron/every is set.
@@ -44,8 +128,10 @@ type scheduleYml struct {
 
 // memberYml is one leader/worker entry in evva-swarm.yml.
 type memberYml struct {
-	Agent    string       `yaml:"agent"`
-	Schedule *scheduleYml `yaml:"schedule,omitempty"`
+	Agent          string       `yaml:"agent"`
+	Schedule       *scheduleYml `yaml:"schedule,omitempty"`
+	BudgetTokens   int          `yaml:"budget_tokens,omitempty"`
+	PermissionMode string       `yaml:"permission_mode,omitempty"` // "" = inherit settings (RP-24)
 }
 
 // manifestYml is the on-disk schema for evva-swarm.yml (design §4.4).
@@ -55,9 +141,71 @@ type manifestYml struct {
 	Leader   memberYml   `yaml:"leader"`
 	Workers  []memberYml `yaml:"workers,omitempty"`
 	Settings struct {
-		PermissionMode string `yaml:"permission_mode,omitempty"`
-		MaxIterations  int    `yaml:"max_iterations,omitempty"`
+		PermissionMode        string `yaml:"permission_mode,omitempty"`
+		MaxIterations         int    `yaml:"max_iterations,omitempty"`
+		DailyBudgetTokens     int    `yaml:"daily_budget_tokens,omitempty"`
+		BudgetStayFrozen      bool   `yaml:"budget_stay_frozen,omitempty"`
+		StallThreshold        string `yaml:"stall_threshold,omitempty"`    // duration; "" = default, "0" = off
+		StallHardTimeout      string `yaml:"stall_hard_timeout,omitempty"` // duration; "" or "0" = off
+		WebhookSecret         string `yaml:"webhook_secret,omitempty"`
+		RetentionDays         string `yaml:"retention_days,omitempty"`          // days; "" = default 30, "0" = off
+		EventLog              *bool  `yaml:"event_log,omitempty"`               // nil = default true
+		TaskStaleThreshold    string `yaml:"task_stale_threshold,omitempty"`    // duration; "" = default 24h, "0" = off
+		MailboxStaleThreshold string `yaml:"mailbox_stale_threshold,omitempty"` // duration; "" = default 30m, "0" = off
 	} `yaml:"settings,omitempty"`
+}
+
+// parseRetentionDays reads the optional retention knob: "" → DefaultRetentionDays,
+// "0" → disabled, otherwise a positive whole number of days.
+func parseRetentionDays(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return DefaultRetentionDays, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("not a whole number of days: %q", s)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("must not be negative: %q", s)
+	}
+	return n, nil
+}
+
+// parseStallDuration reads an optional duration knob: "" → def, "0" → disabled,
+// otherwise a positive time.ParseDuration value.
+func parseStallDuration(s string, def time.Duration) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return def, nil
+	}
+	if s == "0" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, err
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("must not be negative: %q", s)
+	}
+	return d, nil
+}
+
+// parsePermissionMode reads an optional permission_mode knob (settings-level
+// or member-level, RP-24): "" inherits, anything else must be one of the four
+// modes. Validated at load so a typo ("yolo") rejects the whole manifest at
+// register time instead of silently falling back to default deep inside
+// agent.New — the schedule-knob fail-fast precedent.
+func parsePermissionMode(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	if _, ok := permission.ParseMode(s); !ok {
+		return "", fmt.Errorf("invalid permission_mode %q (want default|accept_edits|plan|bypass)", s)
+	}
+	return s, nil
 }
 
 // parseScheduleYml turns an optional on-disk schedule block into a *Schedule,
@@ -90,18 +238,67 @@ func LoadManifest(path string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, fmt.Errorf("agentdef: manifest leader %q schedule: %w", y.Leader.Agent, err)
 	}
+	settingsMode, err := parsePermissionMode(y.Settings.PermissionMode)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("agentdef: manifest settings.permission_mode: %w", err)
+	}
+	leaderMode, err := parsePermissionMode(y.Leader.PermissionMode)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("agentdef: manifest leader %q permission_mode: %w", y.Leader.Agent, err)
+	}
+	stall, err := parseStallDuration(y.Settings.StallThreshold, DefaultStallThreshold)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("agentdef: manifest settings.stall_threshold: %w", err)
+	}
+	hard, err := parseStallDuration(y.Settings.StallHardTimeout, 0)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("agentdef: manifest settings.stall_hard_timeout: %w", err)
+	}
+	retention, err := parseRetentionDays(y.Settings.RetentionDays)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("agentdef: manifest settings.retention_days: %w", err)
+	}
+	taskStale, err := parseStallDuration(y.Settings.TaskStaleThreshold, DefaultTaskStaleThreshold)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("agentdef: manifest settings.task_stale_threshold: %w", err)
+	}
+	mailboxStale, err := parseStallDuration(y.Settings.MailboxStaleThreshold, DefaultMailboxStaleThreshold)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("agentdef: manifest settings.mailbox_stale_threshold: %w", err)
+	}
+	// Space-level budget: negatives normalize to 0 = unlimited (RP-24 §5).
+	// The member-level knob keeps its signed semantics (<0 = exempt); here
+	// there is no space default to be exempt from, so the sign is meaningless
+	// and an operator's `-1` plainly intends "no cap".
+	budget := max(y.Settings.DailyBudgetTokens, 0)
 	m := Manifest{
-		Name:     y.Name,
-		Workdir:  y.Workdir,
-		Leader:   Member{Agent: y.Leader.Agent, Schedule: leaderSched},
-		Settings: Settings{PermissionMode: y.Settings.PermissionMode, MaxIterations: y.Settings.MaxIterations},
+		Name:    y.Name,
+		Workdir: y.Workdir,
+		Leader:  Member{Agent: y.Leader.Agent, Schedule: leaderSched, BudgetTokens: y.Leader.BudgetTokens, PermissionMode: leaderMode},
+		Settings: Settings{
+			PermissionMode:        settingsMode,
+			MaxIterations:         y.Settings.MaxIterations,
+			DailyBudgetTokens:     budget,
+			BudgetStayFrozen:      y.Settings.BudgetStayFrozen,
+			StallThreshold:        stall,
+			StallHardTimeout:      hard,
+			WebhookSecret:         strings.TrimSpace(y.Settings.WebhookSecret),
+			RetentionDays:         retention,
+			EventLog:              y.Settings.EventLog == nil || *y.Settings.EventLog,
+			TaskStaleThreshold:    taskStale,
+			MailboxStaleThreshold: mailboxStale,
+		},
 	}
 	for _, w := range y.Workers {
 		ws, err := parseScheduleYml(w.Schedule)
 		if err != nil {
 			return Manifest{}, fmt.Errorf("agentdef: manifest worker %q schedule: %w", w.Agent, err)
 		}
-		m.Workers = append(m.Workers, Member{Agent: w.Agent, Schedule: ws})
+		wMode, err := parsePermissionMode(w.PermissionMode)
+		if err != nil {
+			return Manifest{}, fmt.Errorf("agentdef: manifest worker %q permission_mode: %w", w.Agent, err)
+		}
+		m.Workers = append(m.Workers, Member{Agent: w.Agent, Schedule: ws, BudgetTokens: w.BudgetTokens, PermissionMode: wMode})
 	}
 	if err := m.validate(); err != nil {
 		return Manifest{}, err
@@ -128,12 +325,54 @@ func toScheduleYml(s *Schedule) *scheduleYml {
 // emitted too, though runtime.json stays the live authority (RP-7).
 func WriteManifest(path string, m Manifest) error {
 	y := manifestYml{Name: m.Name, Workdir: m.Workdir}
-	y.Leader = memberYml{Agent: m.Leader.Agent, Schedule: toScheduleYml(m.Leader.Schedule)}
+	y.Leader = memberYml{Agent: m.Leader.Agent, Schedule: toScheduleYml(m.Leader.Schedule), BudgetTokens: m.Leader.BudgetTokens, PermissionMode: m.Leader.PermissionMode}
 	for _, w := range m.Workers {
-		y.Workers = append(y.Workers, memberYml{Agent: w.Agent, Schedule: toScheduleYml(w.Schedule)})
+		y.Workers = append(y.Workers, memberYml{Agent: w.Agent, Schedule: toScheduleYml(w.Schedule), BudgetTokens: w.BudgetTokens, PermissionMode: w.PermissionMode})
 	}
 	y.Settings.PermissionMode = m.Settings.PermissionMode
 	y.Settings.MaxIterations = m.Settings.MaxIterations
+	y.Settings.DailyBudgetTokens = m.Settings.DailyBudgetTokens
+	y.Settings.BudgetStayFrozen = m.Settings.BudgetStayFrozen
+	// Stall knobs round-trip losslessly: the default emits nothing (reloads as
+	// the default), an explicit off emits "0", anything else its duration.
+	switch m.Settings.StallThreshold {
+	case DefaultStallThreshold: // omit
+	case 0:
+		y.Settings.StallThreshold = "0"
+	default:
+		y.Settings.StallThreshold = m.Settings.StallThreshold.String()
+	}
+	if m.Settings.StallHardTimeout > 0 {
+		y.Settings.StallHardTimeout = m.Settings.StallHardTimeout.String()
+	}
+	y.Settings.WebhookSecret = m.Settings.WebhookSecret
+	// Retention round-trips like the stall knobs: default → omit, off → "0".
+	switch m.Settings.RetentionDays {
+	case DefaultRetentionDays: // omit
+	case 0:
+		y.Settings.RetentionDays = "0"
+	default:
+		y.Settings.RetentionDays = strconv.Itoa(m.Settings.RetentionDays)
+	}
+	if !m.Settings.EventLog { // default (true) omits; only an explicit off is written
+		off := false
+		y.Settings.EventLog = &off
+	}
+	// RP-22 stale fuses round-trip like the stall knobs: default omits, off = "0".
+	switch m.Settings.TaskStaleThreshold {
+	case DefaultTaskStaleThreshold: // omit
+	case 0:
+		y.Settings.TaskStaleThreshold = "0"
+	default:
+		y.Settings.TaskStaleThreshold = m.Settings.TaskStaleThreshold.String()
+	}
+	switch m.Settings.MailboxStaleThreshold {
+	case DefaultMailboxStaleThreshold: // omit
+	case 0:
+		y.Settings.MailboxStaleThreshold = "0"
+	default:
+		y.Settings.MailboxStaleThreshold = m.Settings.MailboxStaleThreshold.String()
+	}
 	b, err := yaml.Marshal(y)
 	if err != nil {
 		return fmt.Errorf("agentdef: marshal manifest: %w", err)

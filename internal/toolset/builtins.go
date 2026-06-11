@@ -9,7 +9,9 @@ import (
 	"github.com/johnny1110/evva/pkg/mcp"
 	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
+	"github.com/johnny1110/evva/pkg/tools/alarm"
 	"github.com/johnny1110/evva/pkg/tools/cron"
+	"github.com/johnny1110/evva/pkg/tools/excel"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/lsp"
@@ -157,6 +159,18 @@ func init() {
 	r.MustRegister(tools.CRON_DELETE, func(tools.State) (tools.Tool, error) { return cron.Delete, nil })
 	r.MustRegister(tools.REMOTE_TRIGGER, func(tools.State) (tools.Tool, error) { return cron.Trigger, nil })
 
+	// --- alarm (one-shot absolute-time wake; shares one *alarm.Scheduler per
+	// agent via ToolState — fires through the WakeupQueue + SignalAlarm) ---
+	r.MustRegister(tools.ALARM_CREATE, func(s tools.State) (tools.Tool, error) {
+		return alarm.NewCreate(s.(*ToolState).AlarmScheduler()), nil
+	})
+	r.MustRegister(tools.ALARM_LIST, func(s tools.State) (tools.Tool, error) {
+		return alarm.NewList(s.(*ToolState).AlarmScheduler()), nil
+	})
+	r.MustRegister(tools.ALARM_CANCEL, func(s tools.State) (tools.Tool, error) {
+		return alarm.NewCancel(s.(*ToolState).AlarmScheduler()), nil
+	})
+
 	// --- web (cfg-bound — read TavilyAPIKey / FetchMaxBytes through State) ---
 	r.MustRegister(tools.WEB_FETCH, func(s tools.State) (tools.Tool, error) {
 		return web.NewFetch(s.Config()), nil
@@ -190,6 +204,11 @@ func init() {
 	// --- dev (evva developer tools, gated by config.IsDevelopment) ---
 	r.MustRegister(tools.FEEDBACK, func(s tools.State) (tools.Tool, error) {
 		return dev.NewFeedback(s.Config()), nil
+	})
+
+	// --- excel (spreadsheet manipulation via excelize) ---
+	r.MustRegister(tools.EXCEL, func(s tools.State) (tools.Tool, error) {
+		return excel.NewTool(s.Workdir()), nil
 	})
 
 	// --- config (let the model read/write evva settings) ---

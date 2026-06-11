@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/johnny1110/evva/pkg/common/proc"
 	"github.com/johnny1110/evva/pkg/tools"
 )
 
@@ -37,7 +38,8 @@ const (
 	maxBashTimeout     = 10 * time.Minute
 )
 
-// BashTool runs `/bin/sh -c <command>` with cmd.Dir set to the workdir
+// BashTool runs `<shell> -c <command>` — proc.Shell() resolves the shell:
+// /bin/sh on unix, Git Bash on Windows — with cmd.Dir set to the workdir
 // captured at construction. One BashTool instance per agent — the
 // toolset factory in internal/toolset/builtins.go calls NewBashWithHost so
 // each agent (including subagents spawned with isolation: "worktree")
@@ -75,7 +77,7 @@ func NewBashWithHost(workdir string, host DaemonHost) *BashTool {
 func (t *BashTool) Name() string { return string(tools.BASH) }
 
 func (t *BashTool) Description() string {
-	return "Executes a given bash command and returns its combined stdout+stderr output.\n\n" +
+	d := "Executes a given bash command and returns its combined stdout+stderr output.\n\n" +
 		"The working directory persists between commands, but shell state (env vars, aliases) does not — " +
 		"each call runs in a fresh shell.\n\n" +
 		"Prefer dedicated tools when one fits: Read for known paths, Edit for edits, Write for new files. " +
@@ -87,6 +89,11 @@ func (t *BashTool) Description() string {
 		"You do not need to use '&' at the end of the command when using this parameter. " +
 		"The tool returns a daemon id (prefix \"b\"); use daemon_list to enumerate, daemon_output to read captured output, and daemon_stop to terminate.\n\n" +
 		"dangerouslyDisableSandbox is accepted but ignored — the permission gate now mediates execution."
+	if runtime.GOOS == "windows" {
+		d += "\n\nOn Windows, commands run via Git Bash (bash.exe from Git for Windows): write POSIX bash syntax, not PowerShell/cmd. " +
+			"Inside the shell, native paths like C:\\Users\\me appear in POSIX form as /c/Users/me; both forms are accepted by most tooling."
+	}
+	return d
 }
 
 func (t *BashTool) Schema() json.RawMessage {
@@ -152,32 +159,32 @@ func (t *BashTool) Execute(ctx context.Context, logger *slog.Logger, input json.
 		}
 	}
 
+	shell, shErr := proc.Shell()
+	if shErr != nil {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("bash: %v", shErr)}, nil
+	}
+
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cctx, "/bin/sh", "-c", in.Command)
+	cmd := exec.CommandContext(cctx, shell, "-c", in.Command)
 	cmd.Dir = t.workdir
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 
-	// Put the shell in its own process group so the timeout-driven
-	// teardown can SIGKILL the whole tree, not just the immediate
-	// child. Without this, `bash -c "node server.js"` leaves node
-	// alive — it inherited stdout, so cmd.Wait blocks indefinitely
-	// waiting for the pipe to close, and the model never sees the
-	// "timed out" result.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// Cancel hook: send SIGKILL to the entire process group when
-	// either the timeout fires or the caller cancels.
+	// Put the shell in its own kill unit (process group on unix; process
+	// group + taskkill tree on Windows) so the timeout-driven teardown
+	// takes down the whole tree, not just the immediate child. Without
+	// this, `bash -c "node server.js"` leaves node alive — it inherited
+	// stdout, so cmd.Wait blocks indefinitely waiting for the pipe to
+	// close, and the model never sees the "timed out" result.
+	proc.Group(cmd)
+	// Cancel hook: kill the entire tree when either the timeout fires or
+	// the caller cancels. Best-effort: the tree may already be gone, and
+	// we still want WaitDelay to catch any straggling pipe holders.
 	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		// Negative pid → process group. Errors are best-effort: the
-		// group may already be gone, and we still want WaitDelay to
-		// catch any straggling pipe holders.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = proc.KillTree(cmd)
 		return nil
 	}
 	// Bound how long Wait can sit on file descriptors held by killed

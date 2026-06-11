@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/johnny1110/evva/internal/swarm"
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
+	"github.com/johnny1110/evva/pkg/common"
 	pubtools "github.com/johnny1110/evva/pkg/tools"
 )
 
@@ -24,6 +26,19 @@ func formatSchedule(sch agentdef.Schedule) string {
 	return cadence
 }
 
+// formatScheduleOrigin renders a schedule's provenance so the leader (and the
+// operator reading the leader's transcript) can tell a manifest-declared
+// cadence from one set at runtime, and when (RP-20 §2.5).
+func formatScheduleOrigin(o swarm.ScheduleOrigin) string {
+	if !o.Runtime {
+		return "(manifest)"
+	}
+	if o.SetAt > 0 {
+		return fmt.Sprintf("(runtime, set %s)", time.UnixMilli(o.SetAt).Local().Format("2006-01-02"))
+	}
+	return "(runtime)"
+}
+
 // newScheduleSet builds the Leader's schedule_set tool: put a member on a
 // recurring timer schedule (or replace its existing one). The schedule wakes the
 // member on the cron cadence with a <system-reminder> carrying the current time
@@ -33,7 +48,8 @@ func newScheduleSet(mc swarm.MemberContext) pubtools.Tool {
 		name: toolScheduleSet,
 		desc: "Put a worker on a recurring schedule (crontab): it will wake on the cron cadence and run the " +
 			"given prompt, even with no new messages — use this for standing duties like periodic patrols or reviews. " +
-			"`cron` is a standard 5-field expression (minute hour day-of-month month day-of-week), e.g. \"*/30 * * * *\". " +
+			"`cron` is a standard 5-field expression (minute hour day-of-month month day-of-week), e.g. \"*/30 * * * *\", " +
+			"matched against the system's LOCAL wall clock — " + common.ZoneLabel() + ". " +
 			"Each member has at most one schedule; calling this again replaces it. You cannot schedule yourself.",
 		schema: `{"type":"object","properties":{` +
 			`"member":{"type":"string","description":"Member name to put on a schedule (see list_members)."},` +
@@ -63,7 +79,7 @@ func newScheduleSet(mc swarm.MemberContext) pubtools.Tool {
 			if err := mc.Space.SetMemberSchedule(member, sch); err != nil {
 				return errf("schedule_set: %v", err), nil
 			}
-			return okf("Scheduled %s on cron %q. It will wake on that cadence and run: %s", member, sch.Cron, in.Prompt), nil
+			return okf("Scheduled %s on cron %q (local %s). It will wake on that cadence and run: %s", member, sch.Cron, common.ZoneLabel(), in.Prompt), nil
 		},
 	}
 }

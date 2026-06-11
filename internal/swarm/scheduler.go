@@ -9,7 +9,10 @@ import (
 
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
 	"github.com/johnny1110/evva/internal/swarm/store"
+	"github.com/johnny1110/evva/pkg/common"
+	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/skill"
+	"github.com/johnny1110/evva/pkg/ui"
 )
 
 // wakeReason identifies why a member's run loop fired. The two mechanical wake
@@ -46,6 +49,14 @@ type memberRun struct {
 	// run loop installs it at the next boundary (serve) so a busy member's prompt is
 	// never swapped during an in-flight run. nil when no reload is pending.
 	pendingSkills *skill.Registry
+
+	// RP-14 stall-watchdog bookkeeping, guarded by mu: when the in-flight run
+	// claimed the slot (zero = no run in flight), and whether this run already
+	// raised its stall alert / had its hard-timeout kill notice sent — one of
+	// each per run, reset when the next run claims the slot.
+	runStartedAt  time.Time
+	stallNotified bool
+	stallKilled   bool
 }
 
 // startMemberLoop registers a member's run control (idempotent) and launches its
@@ -71,6 +82,13 @@ func (s *Supervisor) startMemberLoop(ctx context.Context, name string) {
 	m.loopCancel = loopCancel
 	s.members[name] = m
 	s.mu.Unlock()
+
+	// Seed the roster's usage snapshot (RP-13) so a resumed member shows its
+	// cumulative spend before its first run. Safe: the loop hasn't started, so
+	// no run is in flight to race the session read.
+	if ctl, ok := s.sp.Roster.Controller(name); ok {
+		s.sp.Roster.setUsage(name, ctl.Usage(), ctl.LastTurnInputTokens(), s.sp.dailyFor(name))
+	}
 
 	s.wg.Add(1)
 	go func() { defer s.wg.Done(); s.runLoop(loopCtx, name, m) }()
@@ -117,6 +135,7 @@ func (s *Supervisor) serve(ctx context.Context, name string, m *memberRun, reaso
 	if !s.isActive(name) {
 		return // frozen: never scheduled
 	}
+	s.sp.metrics.countWake(name, reason) // RP-17: one tally per served wake
 
 	if reason == wakeTimer {
 		// A standing-duty tick. runOnce still settles/unclaims any mail drain B
@@ -132,7 +151,7 @@ func (s *Supervisor) serve(ctx context.Context, name string, m *memberRun, reaso
 		// after fireDue poked, so "the time the duty actually runs" is the right
 		// value to hand a long-running agent whose static prompt holds no date — RP-5).
 		s.log.Debug("swarm serve: timer duty", "member", name)
-		if !s.runOnce(ctx, name, m, scheduledWakePrompt(time.Now(), dutyPrompt)) {
+		if !s.runOnce(ctx, name, m, scheduledWakePrompt(time.Now(), dutyPrompt, s.sp.memoryWakeReminder(name))) {
 			return // suspended/errored — stop here
 		}
 	}
@@ -150,7 +169,7 @@ func (s *Supervisor) serve(ctx context.Context, name string, m *memberRun, reaso
 			return // nothing unread — idle burns no tokens
 		}
 		s.log.Debug("swarm serve: member has mail", "member", name, "batch", len(batch))
-		if !s.runOnce(ctx, name, m, composeMailPrompt(batch)) {
+		if !s.runOnce(ctx, name, m, composeMailPrompt(time.Now(), batch, s.sp.memoryWakeReminder(name))) {
 			return // suspended/errored — runOnce already unclaimed the batch for retry
 		}
 	}
@@ -176,8 +195,18 @@ func (s *Supervisor) runOnce(ctx context.Context, name string, m *memberRun, pro
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	m.cancelRun = cancel
+	m.runStartedAt = time.Now()
+	m.stallNotified, m.stallKilled = false, false
 	s.sp.Roster.setRun(name, RunBusy)
 	m.mu.Unlock()
+
+	// Pre-run usage snapshot (RP-13): read on this goroutine, where the member's
+	// session is quiescent, so the post-run delta is race-free.
+	ctl, hasCtl := s.sp.Roster.Controller(name)
+	var preUsage llm.Usage
+	if hasCtl {
+		preUsage = ctl.Usage()
+	}
 
 	s.log.Debug("swarm run start", "member", name)
 	_, err := s.safeRun(runCtx, name, prompt)
@@ -185,6 +214,8 @@ func (s *Supervisor) runOnce(ctx context.Context, name string, m *memberRun, pro
 
 	m.mu.Lock()
 	m.cancelRun = nil
+	started := m.runStartedAt
+	m.runStartedAt = time.Time{}
 	suspended := m.suspended
 	if !suspended {
 		s.sp.Roster.setRun(name, RunIdle)
@@ -206,7 +237,173 @@ func (s *Supervisor) runOnce(ctx context.Context, name string, m *memberRun, pro
 	} else {
 		_ = s.store.UnclaimFor(name)
 	}
+
+	// Meter the run regardless of clean — tokens were burned either way (RP-13).
+	if hasCtl {
+		s.meterRun(name, preUsage, ctl)
+	}
+	s.sp.metrics.countRun(name, time.Since(started), clean) // RP-17
 	return clean
+}
+
+// meterRun folds one finished run's token delta into the member's daily
+// counter, refreshes the roster's usage snapshot, and trips the budget breaker
+// when the member crossed its daily cap (RP-13). Runs on the member's loop
+// goroutine right after the run — the only place the session is safely
+// readable while the loop owns the member.
+func (s *Supervisor) meterRun(name string, pre llm.Usage, ctl ui.Controller) {
+	post := ctl.Usage()
+	delta := (post.InputTokens + post.OutputTokens) - (pre.InputTokens + pre.OutputTokens)
+	s.sp.metrics.countRunTokens(name, delta) // RP-28: same delta as the daily fold below
+	total := s.sp.addDailyUsage(name, delta, localDay(time.Now()))
+	s.sp.Roster.setUsage(name, post, ctl.LastTurnInputTokens(), total)
+
+	budget := s.sp.BudgetFor(name)
+	if budget <= 0 || total < budget {
+		return
+	}
+	// Fresh mark only: a member the operator unfroze while still over budget
+	// re-trips exactly once after its next run (Unfreeze clears the mark).
+	if !s.sp.markBudgetFrozen(name) {
+		return
+	}
+	s.tripBudget(name, total, budget)
+}
+
+// tripBudget freezes an over-budget member and notifies the operator and the
+// leader (durable mail — the leader wakes on it; the operator reads it in the
+// web). Freeze also persists the runtime snapshot, meter included.
+func (s *Supervisor) tripBudget(name string, total, budget int) {
+	if err := s.Freeze(name); err != nil {
+		s.log.Warn("swarm: budget trip could not freeze member", "member", name, "err", err)
+		return
+	}
+	s.log.Warn("swarm: daily token budget tripped — member frozen",
+		"member", name, "spent", total, "budget", budget)
+
+	subject := fmt.Sprintf("⚠️ budget breaker: %s frozen", name)
+	body := fmt.Sprintf(
+		"Member %q spent %d tokens today, crossing its daily budget of %d, and has been FROZEN by the budget breaker. "+
+			"Its mailbox keeps queuing; it runs nothing until unfrozen. It auto-unfreezes when the local day rolls over "+
+			"(unless settings.budget_stay_frozen is set). An operator may unfreeze it earlier via the web — if it is still "+
+			"over budget it will re-freeze after its next run, so raise settings.daily_budget_tokens (or the member's "+
+			"budget_tokens) to give it real headroom.",
+		name, total, budget)
+	s.notifyOps(name, subject, body)
+}
+
+// notifyOps sends one durable notice to the operator ("user" — read in the web)
+// and, when the subject member is not the leader itself, to the leader (waking
+// it so the team can react). Shared by the budget breaker and the stall
+// watchdog.
+func (s *Supervisor) notifyOps(about, subject, body string) {
+	if leader := s.sp.Roster.leaderName(); leader != "" && leader != about {
+		_, _ = s.sp.Bus.Send(store.Message{Sender: "system", Recipient: leader, Subject: subject, Body: body})
+	}
+	_, _ = s.sp.Bus.Send(store.Message{Sender: "system", Recipient: "user", Subject: subject, Body: body})
+}
+
+// sweepStalls is the RP-14 watchdog: a member whose in-flight run exceeded
+// settings.StallThreshold raises ONE stall alert per run (durable mail via
+// notifyOps), and — when settings.StallHardTimeout is set — a run past that
+// line is cancelled. The cancel is safe by construction: a non-clean runOnce
+// exit unclaims the run's mail, so the work retries on the member's next wake
+// (and alerts again if it hangs again). Members blocked on a HUMAN — waiting
+// approval or input, or paused at the iteration limit — are exempt: that wait
+// is the operator's, not a hang. Driven by the timer tick beside
+// sweepBudgetDay; zero new goroutines.
+func (s *Supervisor) sweepStalls(now time.Time) {
+	threshold := s.sp.settings.StallThreshold
+	if threshold <= 0 {
+		return
+	}
+	hard := s.sp.settings.StallHardTimeout
+
+	phases := make(map[string]RunPhase)
+	for _, mv := range s.sp.Roster.Snapshot() {
+		phases[mv.Name] = mv.Phase
+	}
+
+	s.mu.Lock()
+	type runRef struct {
+		name string
+		m    *memberRun
+	}
+	refs := make([]runRef, 0, len(s.members))
+	for name, m := range s.members {
+		refs = append(refs, runRef{name, m})
+	}
+	s.mu.Unlock()
+
+	for _, r := range refs {
+		switch phases[r.name] {
+		case PhaseWaitingApproval, PhaseWaitingInput, PhasePaused:
+			continue // waiting on a human — long is legitimate, not a hang
+		}
+
+		r.m.mu.Lock()
+		started := r.m.runStartedAt
+		inFlight := !started.IsZero()
+		elapsed := now.Sub(started)
+		alert := inFlight && elapsed >= threshold && !r.m.stallNotified
+		if alert {
+			r.m.stallNotified = true
+		}
+		kill := inFlight && hard > 0 && elapsed >= hard && !r.m.stallKilled
+		var cancel context.CancelFunc
+		if kill {
+			r.m.stallKilled = true
+			cancel = r.m.cancelRun
+		}
+		r.m.mu.Unlock()
+
+		if alert {
+			s.notifyStall(r.name, elapsed, string(phases[r.name]))
+		}
+		if kill && cancel != nil {
+			s.log.Warn("swarm: stall hard-timeout — cancelling run", "member", r.name, "elapsed", elapsed.Round(time.Second))
+			s.notifyStallKilled(r.name, elapsed)
+			cancel()
+		}
+	}
+}
+
+// notifyStall raises the one-per-run stall alert.
+func (s *Supervisor) notifyStall(name string, elapsed time.Duration, phase string) {
+	s.log.Warn("swarm: member run stalled", "member", name, "elapsed", elapsed.Round(time.Second), "phase", phase)
+	subject := fmt.Sprintf("⏳ stall: %s busy for %s", name, elapsed.Round(time.Second))
+	body := fmt.Sprintf(
+		"Member %q has been busy for %s (phase: %s) — past the stall threshold of %s. "+
+			"This may be a hung LLM call or tool, or a legitimately long task. You can suspend it from the web "+
+			"(its claimed mail is unclaimed and retries), raise settings.stall_threshold if long runs are expected "+
+			"here, or set settings.stall_hard_timeout to auto-cancel runs like this one.",
+		name, elapsed.Round(time.Second), phase, s.sp.settings.StallThreshold)
+	s.notifyOps(name, subject, body)
+}
+
+// notifyStallKilled announces a hard-timeout cancel.
+func (s *Supervisor) notifyStallKilled(name string, elapsed time.Duration) {
+	subject := fmt.Sprintf("⏱️ stall: %s run cancelled after %s", name, elapsed.Round(time.Second))
+	body := fmt.Sprintf(
+		"Member %q exceeded settings.stall_hard_timeout (%s); its run was cancelled. The mail it was working is "+
+			"unclaimed and retries on its next wake — if the same work hangs again you will be alerted again. "+
+			"Raise the timeout if this was a legitimate long task.",
+		name, s.sp.settings.StallHardTimeout)
+	s.notifyOps(name, subject, body)
+}
+
+// sweepBudgetDay advances the meter day and unfreezes members whose breaker
+// mark is from an earlier day (unless the space pins them with
+// budget_stay_frozen). Driven by the timer tick — a frozen member never runs,
+// so its release cannot depend on a run happening.
+func (s *Supervisor) sweepBudgetDay(now time.Time) {
+	for _, name := range s.sp.sweepMeter(localDay(now), s.sp.settings.BudgetStayFrozen) {
+		if err := s.Unfreeze(name); err != nil {
+			s.log.Warn("swarm: budget rollover unfreeze failed", "member", name, "err", err)
+			continue
+		}
+		s.log.Info("swarm: budget day rolled over — member unfrozen", "member", name)
+	}
 }
 
 // safeRun calls Controller.Run inside a recover guard so one agent's panic
@@ -229,10 +426,15 @@ func (s *Supervisor) safeRun(ctx context.Context, name, prompt string) (out stri
 // composeMailPrompt renders a claimed batch of unread mail (store.ClaimUnread,
 // already oldest-first) as the synthetic run-start prompt. The rows come from the
 // store — the single source of truth — so this naturally absorbs dropped or
-// over-delivered chan hints.
-func composeMailPrompt(batch []store.Message) string {
+// over-delivered chan hints. Like the timer wake, it opens with a currenttime
+// reminder (offset-stamped) so a mail-woken member knows what time it is, and
+// each message carries its sent stamp so stale mail is visible as stale.
+// memIndex, when non-empty, is the member's memory index block (RP-25) — it
+// rides INSIDE the same reminder, so the model reads it as harness context.
+func composeMailPrompt(now time.Time, batch []store.Message, memIndex string) string {
 	var b strings.Builder
-	b.WriteString("You have unread messages from your teammates. Read each one and take whatever action it asks for; use send_message to reply or report back.\n")
+	fmt.Fprintf(&b, "<system-reminder>currenttime: %s%s</system-reminder>\n", common.Stamp(now), wakeMemoryBlock(memIndex))
+	b.WriteString("You have unread messages from teammates. Reply to each with send_message — your output text goes to the operator, not your teammates. Keep your output text brief (e.g., \"Replied to analyst\"). Do NOT use send_message to \"user\".\n")
 	for _, msg := range batch {
 		b.WriteString("\n--- Message from ")
 		b.WriteString(msg.Sender)
@@ -240,6 +442,11 @@ func composeMailPrompt(batch []store.Message) string {
 			b.WriteString(" (re: ")
 			b.WriteString(msg.Subject)
 			b.WriteString(")")
+		}
+		if msg.CreatedAt > 0 {
+			b.WriteString(" [sent ")
+			b.WriteString(common.Stamp(time.UnixMilli(msg.CreatedAt)))
+			b.WriteString("]")
 		}
 		b.WriteString(" ---\n")
 		b.WriteString(msg.Body)
@@ -250,19 +457,33 @@ func composeMailPrompt(batch []store.Message) string {
 
 const scheduledDutyPrompt = "[Scheduled duty] Your recurring schedule fired. Carry out your standing responsibilities now: check the state you are responsible for and take any action it requires. If everything is in order, report that briefly and stand down — do not invent work."
 
-// scheduledWakePrompt builds the run-start prompt for a timer wake. It is the
-// ONE place a wall-clock time enters the conversation (the static system prompt
-// deliberately carries none — RP-5/RP-7): the agent learns "what time is it"
-// from the wake itself. A member's custom schedule Prompt becomes the body; an
-// empty one falls back to the generic standing-duty sentence. The whole thing is
-// wrapped in a <system-reminder> so the model reads it as harness context, not a
-// teammate's request.
-func scheduledWakePrompt(now time.Time, prompt string) string {
+// scheduledWakePrompt builds the run-start prompt for a timer wake. Wake
+// prompts are where wall-clock time enters the conversation (the static system
+// prompt deliberately carries no date — RP-5/RP-7): the agent learns "what time
+// is it" from the wake itself, so the stamp carries an explicit UTC offset — a
+// zone-less time reads as UTC to the model and is misread by the local offset.
+// A member's custom schedule Prompt becomes the body; an empty one falls back
+// to the generic standing-duty sentence. The whole thing is wrapped in a
+// <system-reminder> so the model reads it as harness context, not a teammate's
+// request. memIndex (RP-25) hangs the member's memory index in the same
+// reminder — wake prompts are also where MEMORY enters the conversation, for
+// exactly the bit-stable-prefix reason the date lives here.
+func scheduledWakePrompt(now time.Time, prompt, memIndex string) string {
 	body := strings.TrimSpace(prompt)
 	if body == "" {
 		body = scheduledDutyPrompt
 	}
-	return fmt.Sprintf("<system-reminder>currenttime: %s, %s</system-reminder>", now.Format("2006-01-02 15:04:05"), body)
+	return fmt.Sprintf("<system-reminder>currenttime: %s, %s%s</system-reminder>", common.Stamp(now), body, wakeMemoryBlock(memIndex))
+}
+
+// wakeMemoryBlock formats a member's memory index for in-reminder injection:
+// a blank line then the labeled index, or "" when the member has none — a
+// memory-less member's wake reminder is byte-identical to the pre-RP-25 form.
+func wakeMemoryBlock(memIndex string) string {
+	if memIndex == "" {
+		return ""
+	}
+	return "\n\n" + memIndex
 }
 
 // poke signals a member's non-message wake (timer or resume). Non-blocking: if a
@@ -323,9 +544,45 @@ func (s *Supervisor) timerTick(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
+			s.sweepBudgetDay(now)
+			s.sweepStalls(now)
+			s.sweepRetention(now)
+			s.sweepWorkflow(now)
 			s.fireDue(now)
 		}
 	}
+}
+
+// sweepRetention runs the RP-16 ledger vacuum once per local day — and once
+// right after startup, catching up a service that was down at midnight. The
+// pass runs in its own goroutine: it holds the store's write lock and may
+// VACUUM, which must not delay wakes on the tick goroutine. vacuumBusy
+// collapses overlap if a slow pass outlives the day check; vacuumDay is only
+// touched here (single tick goroutine), so it needs no lock.
+func (s *Supervisor) sweepRetention(now time.Time) {
+	days := s.sp.settings.RetentionDays // set once at construction, never mutated
+	if days <= 0 {
+		return // retention off — the pre-RP-16 "never deletes history" behavior
+	}
+	day := now.Local().Format("2006-01-02")
+	if day == s.vacuumDay || !s.vacuumBusy.CompareAndSwap(false, true) {
+		return
+	}
+	s.vacuumDay = day
+	cutoff := now.AddDate(0, 0, -days)
+	s.wg.Add(1) // tracked so teardown drains the pass BEFORE the store closes
+	go func() {
+		defer s.wg.Done()
+		defer s.vacuumBusy.Store(false)
+		stats, err := s.store.Vacuum(cutoff, false)
+		if err != nil {
+			s.log.Warn("swarm retention vacuum failed", "err", err)
+			return
+		}
+		if stats.Messages+stats.Tasks > 0 {
+			s.log.Info("swarm retention vacuum", "messages", stats.Messages, "tasks", stats.Tasks, "files", stats.Files)
+		}
+	}()
 }
 
 // fireDue pokes every scheduled, active member whose next activation has passed,

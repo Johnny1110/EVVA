@@ -9,9 +9,9 @@ import (
 	"log/slog"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 
+	"github.com/johnny1110/evva/pkg/common/proc"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 )
 
@@ -174,13 +174,26 @@ func (d *monitorDaemon) setTerminal(status daemon.DaemonStatus) {
 func (d *monitorDaemon) run() {
 	defer d.cancel()
 
-	cmd := exec.CommandContext(d.ctx, "/bin/sh", "-c", d.command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
+	shell, shErr := proc.Shell()
+	if shErr != nil {
+		if d.logger != nil {
+			d.logger.Warn("monitor_daemon.shell.err", "id", d.id, "err", shErr)
 		}
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		// Surface the reason as an event line so monitor_output explains
+		// the failure (e.g. no Git Bash on Windows) instead of going dark.
+		d.pushEvent("monitor: " + shErr.Error())
+		d.setTerminal(daemon.StatusFailed)
+		d.state.Emit(daemon.NewEventSignal(d, "", true))
+		d.state.Emit(daemon.NewLifecycleSignal(d, daemon.StatusFailed))
+		return
+	}
+
+	cmd := exec.CommandContext(d.ctx, shell, "-c", d.command)
+	proc.Group(cmd)
+	cmd.Cancel = func() error {
+		// Best-effort tree kill: the group may already be gone, and
+		// WaitDelay below picks up any surviving pipe holders.
+		_ = proc.KillTree(cmd)
 		return nil
 	}
 	cmd.WaitDelay = monitorKillGrace

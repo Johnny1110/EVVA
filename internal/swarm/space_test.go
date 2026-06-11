@@ -2,6 +2,11 @@ package swarm
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -102,6 +107,175 @@ func TestNewSpaceConstructsRoster(t *testing.T) {
 	}
 	if snap[1].Role != agentdef.RoleWorker {
 		t.Errorf("worker role = %s", snap[1].Role)
+	}
+}
+
+// RP-24: a member-level permission_mode overrides the space setting; members
+// without one inherit it; the roster carries each member's effective stance
+// (read back off the constructed agent, so it reflects what the broker will
+// actually enforce).
+func TestPerMemberPermissionMode(t *testing.T) {
+	cfg := stubConfig(t)
+	loaded := testLoaded()
+	loaded[1].PermissionMode = "default" // worker-a pinned stricter than the bypass space
+	sp, err := NewSpace("space-pm", testManifest(), loaded, nil, cfg)
+	if err != nil {
+		t.Fatalf("NewSpace: %v", err)
+	}
+	defer sp.Shutdown()
+
+	got := map[string]string{}
+	for _, v := range sp.Roster.Snapshot() {
+		got[v.Name] = v.PermissionMode
+	}
+	if got["leader"] != "bypass" || got["worker-b"] != "bypass" {
+		t.Errorf("members without an override should inherit the space mode (bypass), got %v", got)
+	}
+	if got["worker-a"] != "default" {
+		t.Errorf("worker-a mode = %q, want default (member override beats settings)", got["worker-a"])
+	}
+}
+
+// RP-24: an invalid member permission_mode fails construction loudly (the
+// programmatic-manifest guard; the yaml path already rejects at LoadManifest).
+func TestPerMemberPermissionModeInvalid(t *testing.T) {
+	cfg := stubConfig(t)
+	loaded := testLoaded()
+	loaded[2].PermissionMode = "yolo"
+	sp, err := NewSpace("space-pm-bad", testManifest(), loaded, nil, cfg)
+	if err == nil {
+		sp.Shutdown()
+		t.Fatal("NewSpace should reject an invalid member permission_mode")
+	}
+	if !strings.Contains(err.Error(), "permission_mode") {
+		t.Errorf("err = %v, want a permission_mode error", err)
+	}
+}
+
+// RP-25: every member gets its own memory dir at construction (first boot and
+// hot-add share constructMember), and the wake reminder carries exactly the
+// members' own MEMORY.md — absent index = zero wake noise.
+func TestMemberMemoryDirAndWakeReminder(t *testing.T) {
+	cfg := stubConfig(t)
+	sp, err := NewSpace("space-mem", testManifest(), testLoaded(), nil, cfg)
+	if err != nil {
+		t.Fatalf("NewSpace: %v", err)
+	}
+	defer sp.Shutdown()
+
+	leaderDir := filepath.Join(sp.Workdir, "agents", "main", "leader", "memory")
+	workerDir := filepath.Join(sp.Workdir, "agents", "sub", "worker-a", "memory")
+	for _, d := range []string{leaderDir, workerDir} {
+		if st, err := os.Stat(d); err != nil || !st.IsDir() {
+			t.Errorf("memory dir not created: %s (%v)", d, err)
+		}
+	}
+
+	// No MEMORY.md yet → empty reminder for everyone.
+	if got := sp.memoryWakeReminder("worker-a"); got != "" {
+		t.Errorf("memory-less member should wake with no index, got %q", got)
+	}
+
+	// worker-a saves an index → its wake reminder carries it, labeled with the
+	// dir-relative path; worker-b stays silent.
+	idx := "- [Exposure](exposure.md) — BTC delta as of 2026-06-11"
+	if err := os.WriteFile(filepath.Join(workerDir, "MEMORY.md"), []byte(idx+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := sp.memoryWakeReminder("worker-a")
+	if !strings.Contains(got, idx) || !strings.Contains(got, "agents/sub/worker-a/memory/MEMORY.md") {
+		t.Errorf("wake reminder missing index or path label:\n%s", got)
+	}
+	if got := sp.memoryWakeReminder("worker-b"); got != "" {
+		t.Errorf("worker-b has no memory, reminder should be empty, got %q", got)
+	}
+
+	// MemberMemoryFiles serves the same dir to the web, index first.
+	if err := os.WriteFile(filepath.Join(workerDir, "exposure.md"), []byte("---\nname: exposure\n---\n\ndelta 0.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err := sp.MemberMemoryFiles("worker-a")
+	if err != nil || len(files) != 2 || files[0].Name != "MEMORY.md" || files[1].Name != "exposure.md" {
+		t.Fatalf("MemberMemoryFiles = %+v, %v; want [MEMORY.md exposure.md]", files, err)
+	}
+	if _, err := sp.MemberMemoryFiles("ghost"); err == nil {
+		t.Error("unknown member should error")
+	}
+}
+
+// RP-25 acceptance: the static system prompt is byte-identical whether or not
+// member memory files exist — memory reaches the model ONLY via wake prompts,
+// so a weeks-long swarm keeps one cached prompt prefix (RP-5). The capture
+// provider records each member's system prompt at LLM-client build.
+func TestMemberPromptBitStableAcrossMemoryChange(t *testing.T) {
+	var (
+		capMu    sync.Mutex
+		captured []string
+	)
+	const capProvider = "swarm_cap"
+	if !llm.DefaultRegistry().Has(capProvider) {
+		_ = llm.DefaultRegistry().Register(capProvider, func(_ llm.APIConfig, model string, opts ...llm.Option) (llm.Client, error) {
+			var p llm.LLMParams
+			for _, o := range opts {
+				o(&p)
+			}
+			if p.System != "" {
+				capMu.Lock()
+				captured = append(captured, p.System)
+				capMu.Unlock()
+			}
+			return &fakeLLM{model: model}, nil
+		})
+	}
+
+	cfg := stubConfig(t)
+	cfg.LLMProviderConfig[capProvider] = config.APIConfig{ApiURL: "http://stub", ApiSecret: "x", Models: []constant.Model{stubModel}}
+	cfg.DefaultProvider = constant.LLMProvider{Name: capProvider, Models: []constant.Model{stubModel}}
+
+	snapshot := func() []string {
+		capMu.Lock()
+		captured = nil
+		capMu.Unlock()
+		sp, err := NewSpace("space-bit", testManifest(), testLoaded(), nil, cfg)
+		if err != nil {
+			t.Fatalf("NewSpace: %v", err)
+		}
+		sp.Shutdown()
+		capMu.Lock()
+		out := append([]string{}, captured...)
+		capMu.Unlock()
+		sort.Strings(out)
+		return out
+	}
+
+	before := snapshot()
+	if len(before) == 0 {
+		t.Fatal("capture provider saw no system prompts — capture seam broken")
+	}
+
+	// Grow worker-a's memory between builds; the prompts must not move a byte.
+	memDir := filepath.Join(cfg.WorkDir, "agents", "sub", "worker-a", "memory")
+	if err := os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("- [X](x.md) — drift bait"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "x.md"), []byte("drift bait body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	after := snapshot()
+	if len(before) != len(after) {
+		t.Fatalf("prompt count changed: %d → %d", len(before), len(after))
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Errorf("member prompt #%d changed after memory writes — static prefix must be memory-independent", i)
+		}
+	}
+	// And no prompt may embed the index content.
+	for _, p := range after {
+		if strings.Contains(p, "drift bait") {
+			t.Error("memory content leaked into a static system prompt")
+		}
 	}
 }
 

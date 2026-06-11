@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 
+	"github.com/johnny1110/evva/pkg/common/proc"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 )
 
@@ -148,20 +148,22 @@ func (d *bashDaemon) Output() string {
 func (d *bashDaemon) run() {
 	defer d.cancel() // release the ctx tree no matter how we exit
 
+	shell, shErr := proc.Shell()
+	if shErr != nil {
+		d.finishSpawnFailure(shErr)
+		return
+	}
+
 	w := &lockedWriter{buf: &d.output, mu: &d.mu}
-	cmd := exec.CommandContext(d.ctx, "/bin/sh", "-c", d.command)
+	cmd := exec.CommandContext(d.ctx, shell, "-c", d.command)
 	cmd.Dir = d.workdir
 	cmd.Stdout = w
 	cmd.Stderr = w
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	proc.Group(cmd)
 	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		// Negative pid → SIGKILL the entire process group; best-effort, the
-		// group may already be gone. WaitDelay below picks up any pipe
-		// holders that survived.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		// Kill the entire tree; best-effort, it may already be gone.
+		// WaitDelay below picks up any pipe holders that survived.
+		_ = proc.KillTree(cmd)
 		return nil
 	}
 	cmd.WaitDelay = bashKillGrace
@@ -197,6 +199,24 @@ func (d *bashDaemon) run() {
 		d.logger.Debug("bash_daemon.exit", "id", d.id, "status", status, "exit", exitCode)
 	}
 	d.state.Emit(daemon.NewLifecycleSignal(d, status))
+}
+
+// finishSpawnFailure records a pre-spawn failure (e.g. no usable shell on
+// this platform) so daemon_output surfaces the reason, then emits the
+// terminal lifecycle exactly like a spawn-level cmd.Run error would.
+func (d *bashDaemon) finishSpawnFailure(err error) {
+	d.mu.Lock()
+	exitCode := -1
+	d.status = daemon.StatusFailed
+	d.exitCode = &exitCode
+	d.endedAt = time.Now()
+	fmt.Fprintf(&d.output, "bg: spawn error: %v", err)
+	d.mu.Unlock()
+
+	if d.logger != nil {
+		d.logger.Debug("bash_daemon.exit", "id", d.id, "status", daemon.StatusFailed, "exit", exitCode)
+	}
+	d.state.Emit(daemon.NewLifecycleSignal(d, daemon.StatusFailed))
 }
 
 // lockedWriter wraps a bytes.Buffer with a shared mutex so concurrent

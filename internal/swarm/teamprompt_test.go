@@ -10,8 +10,8 @@ import (
 func TestInjectTeamProtocol_RoleSpecific(t *testing.T) {
 	persona := "# Backend Engineer\nYou build APIs."
 
-	leader := injectTeamProtocol(persona, "lead", "vero-tech-swarm", agentdef.RoleLeader)
-	worker := injectTeamProtocol(persona, "backend-a", "vero-tech-swarm", agentdef.RoleWorker)
+	leader := injectTeamProtocol(persona, "lead", "vero-tech-swarm", agentdef.RoleLeader, true)
+	worker := injectTeamProtocol(persona, "backend-a", "vero-tech-swarm", agentdef.RoleWorker, true)
 
 	// Persona leads in both (grounding + protocol are appended after it).
 	if !strings.HasPrefix(leader, persona) || !strings.HasPrefix(worker, persona) {
@@ -55,6 +55,15 @@ func TestInjectTeamProtocol_RoleSpecific(t *testing.T) {
 	}
 	if strings.Contains(worker, "Close the loop") {
 		t.Error("advice-loop closure is leader-only")
+	}
+
+	// RP-26 Part B: the leader is taught to institutionalize procedures via
+	// skill_publish (and only the leader — workers don't hold the tool).
+	if !strings.Contains(leader, "skill_publish") || !strings.Contains(leader, "Institutionalize") {
+		t.Error("leader protocol should teach skill_publish institutionalization")
+	}
+	if strings.Contains(worker, "skill_publish") {
+		t.Error("skill_publish guidance is leader-only")
 	}
 
 	// Worker gets the worker protocol + its read-only task tools.
@@ -106,15 +115,40 @@ func TestNewSpaceInjectsProtocol(t *testing.T) {
 	if !strings.Contains(wd.SystemPrompt, "worker-a (role: worker)") {
 		t.Errorf("worker prompt missing swarm grounding:\n%s", wd.SystemPrompt)
 	}
+	if !strings.Contains(wd.SystemPrompt, "task_propose") {
+		t.Error("worker protocol missing the proposal inlet (RP-23)")
+	}
 }
 
 // A member that authored no persona still gets a usable, protocol-only prompt.
 func TestInjectTeamProtocol_BlankPersona(t *testing.T) {
-	out := injectTeamProtocol("", "backend-a", "vero-tech-swarm", agentdef.RoleWorker)
+	out := injectTeamProtocol("", "backend-a", "vero-tech-swarm", agentdef.RoleWorker, true)
 	if strings.HasPrefix(out, "\n") {
 		t.Error("blank persona should not leave leading blank lines")
 	}
 	if !strings.Contains(out, "Working in a swarm") || !strings.Contains(out, "Your role: a worker") {
 		t.Error("protocol-only prompt should still carry the full protocol")
+	}
+}
+
+// RP-25: the memory protocol is injected only for members that can actually
+// maintain memory files (write/edit), names the member's own tier-correct dir,
+// and stays out of write-less members' prompts entirely.
+func TestInjectTeamProtocol_MemoryProtocol(t *testing.T) {
+	leader := injectTeamProtocol("p", "lead", "s", agentdef.RoleLeader, true)
+	worker := injectTeamProtocol("p", "friday", "s", agentdef.RoleWorker, true)
+	readonly := injectTeamProtocol("p", "observer", "s", agentdef.RoleWorker, false)
+
+	if !strings.Contains(leader, "## Your long-term memory") ||
+		!strings.Contains(leader, "agents/main/lead/memory") {
+		t.Errorf("leader memory protocol missing or mis-pathed:\n%s", leader)
+	}
+	if !strings.Contains(worker, "agents/sub/friday/memory") ||
+		!strings.Contains(worker, "MEMORY.md") ||
+		!strings.Contains(worker, "type: user|feedback|project|reference") {
+		t.Errorf("worker memory protocol missing the memdir conventions:\n%s", worker)
+	}
+	if strings.Contains(readonly, "## Your long-term memory") {
+		t.Error("a member without write/edit must not get the memory protocol")
 	}
 }

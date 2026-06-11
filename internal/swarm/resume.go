@@ -5,57 +5,85 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
+	"github.com/johnny1110/evva/internal/swarm/store"
 	"github.com/johnny1110/evva/pkg/agent"
 )
 
 // resume.go makes a space survive process death (SPRD-1-11). The durable state
 // is already split across three stores: the task ledger + messages live in
-// vero.db (1-2), and each agent's transcript lives in the SDK session store
-// (<AppHome>/sessions/<workdir-slug>/, keyed by persona == member name). What
-// none of them hold is membership (active vs frozen) and the live timer
-// schedules (which the leader can set at runtime via schedule_set — RP-7), so
-// runtime.json carries those. Reload stitches the pieces back on a rebuild.
+// vero.db (1-2) — which since RP-20 also holds runtime schedule overrides
+// (per-member rows + tombstones; see store/schedules.go) — and each agent's
+// transcript lives in the SDK session store (<AppHome>/sessions/<workdir-slug>/,
+// keyed by persona == member name). What none of them hold is membership
+// (active vs frozen) and the budget meter, so runtime.json carries those.
+// Reload stitches the pieces back on a rebuild.
 
 // runtimeState is the per-space volatile snapshot persisted to
-// <workdir>/.vero/runtime.json: membership so a frozen member comes back frozen,
-// and the live schedules so a leader-set (or leader-cleared) crontab survives a
-// restart. A nil Schedules (a pre-RP-7 file) means "not recorded" — keep the
-// manifest-declared schedules; a present (even empty) map is authoritative.
+// <workdir>/.vero/runtime.json: membership so a frozen member comes back
+// frozen, plus the budget meter.
 type runtimeState struct {
-	Membership map[string]string            `json:"membership"` // name -> "active" | "frozen"
-	Schedules  map[string]agentdef.Schedule `json:"schedules"`  // name -> live schedule (absent in a pre-RP-7 file → nil → keep manifest)
+	Membership map[string]string `json:"membership"` // name -> "active" | "frozen"
+
+	// Schedules is LEGACY, read-only (pre-RP-20): older builds persisted the
+	// WHOLE live schedule map here — manifest seeds included — and treated a
+	// present map as authoritative on Reload, which silently hijacked manifest
+	// authority for members the leader never touched. RP-20 moved runtime
+	// overrides into per-member store rows; Reload imports a legacy map once
+	// (diffing it against the manifest seeds to recover provenance) and
+	// rewrites the file without it. persistRuntime never writes it again.
+	Schedules map[string]agentdef.Schedule `json:"schedules,omitempty"`
+
+	// RP-13 budget meter: the local day the counters belong to, each member's
+	// spend that day, and which members the BREAKER froze mapped to the day
+	// they tripped (so a restart can tell a budget freeze from an operator
+	// freeze, and the sweep can release stale marks — only breaker freezes
+	// auto-unfreeze at rollover). Absent in a pre-RP-13 file → zero meter.
+	UsageDay     string            `json:"usage_day,omitempty"`
+	UsageDaily   map[string]int    `json:"usage_daily,omitempty"`
+	BudgetFrozen map[string]string `json:"budget_frozen,omitempty"`
 }
 
 func runtimePath(workdir string) string {
 	return filepath.Join(workdir, ".vero", "runtime.json")
 }
 
-// persistRuntime writes the current roster membership and live schedules to
-// runtime.json. Called whenever membership or a schedule changes
-// (freeze/unfreeze/add, schedule_set/clear); a best-effort write — a failure
-// only costs the restore-on-restart guarantee, never correctness. The schedules
-// map is always written (even empty) so a leader-cleared crontab stays cleared
-// across a restart rather than resurrecting from the manifest.
+// persistRuntime writes the current roster membership and budget meter to
+// runtime.json. Called whenever membership changes (freeze/unfreeze/add/
+// remove) or the meter persists; a best-effort write — a failure only costs
+// the restore-on-restart guarantee, never correctness. Schedules are NOT
+// here: runtime overrides live as store rows (RP-20), and writing the live
+// map — manifest seeds included — is exactly the hijack RP-20 removed.
 func (sp *SwarmSpace) persistRuntime() {
 	rs := runtimeState{
 		Membership: map[string]string{},
-		Schedules:  map[string]agentdef.Schedule{},
 	}
 	for _, mv := range sp.Roster.Snapshot() {
 		rs.Membership[mv.Name] = string(mv.Membership)
 	}
 	sp.mu.Lock()
-	for n, s := range sp.schedules {
-		rs.Schedules[n] = s
+	rs.UsageDay = sp.meter.day
+	if len(sp.meter.daily) > 0 {
+		rs.UsageDaily = make(map[string]int, len(sp.meter.daily))
+		maps.Copy(rs.UsageDaily, sp.meter.daily)
+	}
+	if len(sp.meter.frozen) > 0 {
+		rs.BudgetFrozen = make(map[string]string, len(sp.meter.frozen))
+		maps.Copy(rs.BudgetFrozen, sp.meter.frozen)
 	}
 	sp.mu.Unlock()
+	writeRuntime(sp.Workdir, rs)
+}
+
+// writeRuntime serialises one runtimeState to runtime.json (best-effort).
+func writeRuntime(workdir string, rs runtimeState) {
 	data, err := json.MarshalIndent(rs, "", "  ")
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(runtimePath(sp.Workdir), data, 0o644)
+	_ = os.WriteFile(runtimePath(workdir), data, 0o644)
 }
 
 // loadRuntime reads runtime.json; a missing/corrupt file yields an empty state
@@ -91,17 +119,50 @@ func (sp *SwarmSpace) Reload() {
 
 	rt := loadRuntime(sp.Workdir)
 
-	// Restore the live timer schedules the leader set/cleared at runtime (RP-7).
-	// A present map is authoritative — it overrides the manifest-seeded schedules
-	// (so a leader-cleared crontab stays cleared); a nil map (a pre-RP-7
-	// runtime.json) leaves the manifest schedules untouched. This runs before the
-	// supervisor seeds each member's timer from sp.schedules in startMemberLoop.
-	if rt.Schedules != nil {
-		sp.mu.Lock()
-		sp.schedules = make(map[string]agentdef.Schedule, len(rt.Schedules))
-		maps.Copy(sp.schedules, rt.Schedules)
-		sp.mu.Unlock()
+	// Runtime schedule overrides live in the store (RP-20); a hand-built lite
+	// space (tests) may have none — skip like the nil-safe metrics.
+	if sp.Store != nil {
+		// One-time legacy import (pre-RP-20 runtime.json carried the whole
+		// schedule map): convert it to per-member store rows BEFORE applying
+		// rows below, so old and new files rebuild through one path. The file
+		// is rewritten without the field at the end of Reload.
+		if rt.Schedules != nil {
+			sp.importLegacySchedules(rt.Schedules)
+		}
+
+		// Apply the overrides (RP-20 §2.3): per-member priority — a store row
+		// beats the manifest seed (a tombstone row means "no schedule, even
+		// though the manifest declares one"); a member without a row keeps its
+		// manifest seed, so editing the manifest takes effect for members the
+		// leader never touched. Runs before the supervisor seeds each member's
+		// timer from sp.schedules in startMemberLoop. Rows for members no
+		// longer on the roster (manifest edited while down) stay dormant.
+		if rows, err := sp.Store.ListSchedules(); err == nil {
+			for _, r := range rows {
+				if _, ok := sp.Roster.membership(r.Member); !ok {
+					continue
+				}
+				if r.Cleared {
+					sp.dropScheduleEntry(r.Member)
+					continue
+				}
+				sp.setRuntimeSchedule(r.Member, scheduleFromRow(r), r.UpdatedAt)
+			}
+		}
 	}
+
+	// Restore the budget meter (RP-13). A stale day is left as-is: the
+	// supervisor's first tick sweep rolls it over and releases budget-frozen
+	// members (their frozen MEMBERSHIP below is what keeps them parked until
+	// then). Same-day restart keeps counters and marks — no budget reset by
+	// bouncing the service.
+	sp.mu.Lock()
+	sp.meter.day = rt.UsageDay
+	sp.meter.daily = make(map[string]int, len(rt.UsageDaily))
+	maps.Copy(sp.meter.daily, rt.UsageDaily)
+	sp.meter.frozen = make(map[string]string, len(rt.BudgetFrozen))
+	maps.Copy(sp.meter.frozen, rt.BudgetFrozen)
+	sp.mu.Unlock()
 
 	for name, ag := range members {
 		if id := latestSessionFor(ag, name); id != "" {
@@ -119,6 +180,51 @@ func (sp *SwarmSpace) Reload() {
 			sp.Roster.setMembership(name, MembershipFrozen)
 		}
 	}
+
+	// Retire the legacy schedules field now that it is imported. Done LAST —
+	// persistRuntime snapshots the roster, so it must run after the frozen
+	// membership restore above or a crash right here would resurrect frozen
+	// members as active.
+	if rt.Schedules != nil {
+		sp.persistRuntime()
+	}
+}
+
+// importLegacySchedules is the one-time RP-20 upgrade for a pre-RP-20
+// runtime.json, whose schedules map held the WHOLE live state — manifest
+// seeds and runtime changes alike, indistinguishable. Provenance is recovered
+// by diffing against the fresh manifest seeds (sp.schedules holds exactly
+// those at this point in Reload): an entry equal to its seed is just the
+// snapshot — skip it, the manifest stays authoritative; a differing or extra
+// entry was a runtime set — write a row; a seeded member missing from the map
+// was runtime-cleared — write a tombstone. Best-effort: a failed row write
+// costs that member's override, never the rebuild.
+func (sp *SwarmSpace) importLegacySchedules(legacy map[string]agentdef.Schedule) {
+	now := time.Now().UnixMilli()
+	sp.mu.Lock()
+	seeds := make(map[string]agentdef.Schedule, len(sp.schedules))
+	maps.Copy(seeds, sp.schedules)
+	sp.mu.Unlock()
+
+	for name, sch := range legacy {
+		if seed, ok := seeds[name]; ok && seed == sch {
+			continue
+		}
+		_ = sp.Store.PutSchedule(store.ScheduleRow{
+			Member: name, Cron: sch.Cron, EveryNS: int64(sch.Every), Prompt: sch.Prompt,
+			UpdatedAt: now,
+		})
+	}
+	for name := range seeds {
+		if _, ok := legacy[name]; !ok {
+			_ = sp.Store.PutSchedule(store.ScheduleRow{Member: name, Cleared: true, UpdatedAt: now})
+		}
+	}
+}
+
+// scheduleFromRow converts a store row back to the scheduler's value type.
+func scheduleFromRow(r store.ScheduleRow) agentdef.Schedule {
+	return agentdef.Schedule{Cron: r.Cron, Every: time.Duration(r.EveryNS), Prompt: r.Prompt}
 }
 
 // latestSessionFor returns the id of the most recent persisted session that

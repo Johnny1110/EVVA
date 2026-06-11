@@ -101,6 +101,18 @@ func WithSkillRegistry(r *skill.Registry) Option {
 	return agent_impl.WithSkillRegistry(r)
 }
 
+// WithMemoryDir homes the agent's writable long-term memory at dir instead
+// of the global <appHome>/memory store. Writes confined to dir auto-allow
+// (the memory carve-out), and the per-turn recall — when enabled — reads
+// from dir. The MEMORY.md index inside dir is deliberately NOT injected
+// into the static system prompt: a host that re-homes memory owns surfacing
+// the index on its own channel (evva's swarm injects it into wake prompts),
+// which keeps a long-running agent's prompt prefix byte-stable. The dir is
+// not created automatically — hosts mkdir it before constructing the agent.
+func WithMemoryDir(dir string) Option {
+	return agent_impl.WithMemoryDir(dir)
+}
+
 // WithPermissionStore installs the rule store the permission gate consults.
 // Build one with permission.NewStore() (empty) or permission.Load(workdir,
 // home) to read project + user rules from disk. One Store is shared by the

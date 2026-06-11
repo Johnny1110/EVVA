@@ -14,6 +14,7 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,13 +52,23 @@ import (
 // be reachable off-box by default.
 const DefaultAddr = "127.0.0.1:8888"
 
-// DefaultToken is the fixed session token while the project is pre-1.0 and the
-// service is loopback-only: a memorable "root" the operator types once, instead
-// of copy-pasting a freshly minted UUID every restart. This is a deliberate
-// test-convenience tradeoff, safe because the host binds 127.0.0.1 (DefaultAddr).
-// TODO(security): before any non-loopback exposure, replace with a minted
-// per-start secret (or real auth) — see docs/roadmap/veronica/veronica-design-v1.md §8.3.
-const DefaultToken = "root"
+// IsLoopbackAddr reports whether a bind/peer address stays on this machine:
+// the host part must be a loopback IP or "localhost". An empty or wildcard
+// host (":8888", "0.0.0.0:8888", "[::]:8888") binds every interface and is
+// NOT loopback — exposing it requires the explicit --allow-remote opt-in
+// (RP-15), because a reachable service token is operator power over a host
+// whose agents run shell.
+func IsLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr // no port part — classify the whole string as the host
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 // manifestFile is the per-workdir swarm declaration `evva swarm .` reads.
 const manifestFile = "evva-swarm.yml"
@@ -66,7 +77,12 @@ const manifestFile = "evva-swarm.yml"
 type Service struct {
 	addr  string
 	token string
-	log   *slog.Logger
+	// allowRemote permits a non-loopback bind AND switches the loopback-trust
+	// conveniences off (no FE token bootstrap, no secretless webhooks) — see
+	// SetAllowRemote (RP-15).
+	allowRemote bool
+	started     time.Time // host start, the /healthz uptime anchor (RP-18)
+	log         *slog.Logger
 
 	hub *webapi.Hub
 	srv *http.Server
@@ -116,7 +132,9 @@ type spaceEntry struct {
 	super    *swarm.Supervisor
 	cancel   context.CancelFunc // stops the supervisor's run loops + timer tick
 	stopPump chan struct{}      // closed after Shutdown so the pump drains then exits
+	pumpDone chan struct{}      // closed BY the pump when it exits — teardown waits on it
 	pending  *gateTracker       // outstanding approval/question gates, for reconnect replay
+	events   *eventLog          // RP-17 durable event mirror; nil when event_log: false
 }
 
 // live reports whether the entry currently has a running space behind it.
@@ -189,8 +207,11 @@ func (g *gateTracker) snapshot() []event.Event {
 }
 
 // New builds the host bound (logically) to addr. An empty addr uses
-// DefaultAddr. A session token is minted now and required on every /api + /ws
-// request. Call Listen then Serve (Serve calls Listen if you skip it).
+// DefaultAddr. A session token is minted now — a fresh UUID per start (RP-15;
+// the fixed pre-1.0 "root" is gone) — and required on every /api + /ws
+// request. The daemon persists it to <stateDir>/token (0600) for the CLI;
+// loopback browsers fetch it via GET /api/auth/bootstrap; rotation = restart.
+// Call Listen then Serve (Serve calls Listen if you skip it).
 func New(addr string) *Service {
 	if addr == "" {
 		addr = DefaultAddr
@@ -198,7 +219,8 @@ func New(addr string) *Service {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	s := &Service{
 		addr:       addr,
-		token:      DefaultToken,
+		token:      common.GenUUID(),
+		started:    time.Now(),
 		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		hub:        webapi.NewHub(),
 		rootCtx:    rootCtx,
@@ -223,9 +245,21 @@ func defaultLoadConfig(workdir string) (*config.Config, error) {
 	return config.Load(config.LoadOptions{WorkDir: workdir})
 }
 
-// Token is the session token clients must present. Printed to the terminal on
-// start so a local user can authenticate the browser.
+// Token is the session token clients must present. The daemon writes it to
+// the token file on start; local clients (CLI, FE bootstrap) read it from
+// there, remote ones get it from the operator out of band.
 func (s *Service) Token() string { return s.token }
+
+// SetAllowRemote opts the host into non-loopback binds (RP-15). Without it,
+// Listen refuses any addr whose host is not loopback. With it, the loopback
+// trust conveniences shut off — the FE token bootstrap endpoint disappears and
+// webhooks from non-loopback peers demand the space's webhook_secret — so
+// every remote caller must authenticate. Call before Listen.
+func (s *Service) SetAllowRemote(v bool) { s.allowRemote = v }
+
+// AllowRemote satisfies webapi.Backend: the router uses it to gate the
+// loopback-only token bootstrap endpoint off in remote mode.
+func (s *Service) AllowRemote() bool { return s.allowRemote }
 
 // SetLogger swaps the host's structured logger (SPRD-1-9 wires the daemon log).
 func (s *Service) SetLogger(l *slog.Logger) {
@@ -247,6 +281,9 @@ func (s *Service) Listen() error {
 	defer s.mu.Unlock()
 	if s.ln != nil {
 		return nil
+	}
+	if !s.allowRemote && !IsLoopbackAddr(s.srv.Addr) {
+		return fmt.Errorf("swarm: refusing non-loopback bind %q — the service token is operator power over a host whose agents run shell (invariant #6); pass --allow-remote to expose it anyway", s.srv.Addr)
 	}
 	ln, err := net.Listen("tcp", s.srv.Addr)
 	if err != nil {
@@ -323,6 +360,14 @@ func teardownSpace(ent *spaceEntry) {
 	if ent.stopPump != nil {
 		close(ent.stopPump) // pump does a final drain, then exits
 	}
+	if ent.events != nil {
+		// Only close the event log once the pump has actually exited — Offer on
+		// a closed channel would panic, and the final drain above runs async.
+		if ent.pumpDone != nil {
+			<-ent.pumpDone
+		}
+		ent.events.Close()
+	}
 }
 
 // Addr returns the address the service is bound to. Before Listen it is the
@@ -357,7 +402,7 @@ func (s *Service) Register(workdir, name string) (string, error) {
 		return "", fmt.Errorf("swarm: name %q is already in use — pick another with --name", eff)
 	}
 	s.mu.Unlock()
-	return s.register(common.GenUUID(), eff, m, loaded, cfg)
+	return s.register(common.GenUUID(), eff, m, loaded, cfg, true)
 }
 
 // loadSpace resolves a workdir to its parsed manifest, built agent definitions,
@@ -390,10 +435,22 @@ func (s *Service) loadSpace(workdir string) (agentdef.Manifest, []agentdef.Loade
 // supervisor and event pump under a fresh child context, and add it to the
 // registry as a RUNNING entry under id+name. Split out so tests, Reconcile, and
 // RunSpace can bring a space up with a chosen id+name without re-resolving it.
-func (s *Service) register(id, name string, m agentdef.Manifest, loaded []agentdef.Loaded, cfg *config.Config) (string, error) {
+//
+// fresh marks an explicit operator registration (`evva swarm .` / web add) as
+// opposed to a restart rebuild (Reconcile, RunSpace, reset). A fresh register
+// is the operator saying "take the manifest as written", so runtime schedule
+// overrides are discarded BEFORE Reload applies them (RP-20 §2.4); a rebuild
+// keeps them — that is the durability this table exists for.
+func (s *Service) register(id, name string, m agentdef.Manifest, loaded []agentdef.Loaded, cfg *config.Config, fresh bool) (string, error) {
 	sp, err := swarm.NewSpace(id, m, loaded, swarmtools.Set{}, cfg)
 	if err != nil {
 		return "", err
+	}
+
+	if fresh {
+		if err := sp.DiscardRuntimeSchedules(); err != nil {
+			s.log.Warn("swarm: discard runtime schedules on register failed — stale overrides may apply", "id", id, "err", err)
+		}
 	}
 
 	// Restore any prior on-disk state (transcripts, unread mail, frozen
@@ -407,14 +464,23 @@ func (s *Service) register(id, name string, m agentdef.Manifest, loaded []agentd
 	super.Start(spaceCtx)
 
 	stopPump := make(chan struct{})
+	pumpDone := make(chan struct{})
+	var events *eventLog
+	if m.Settings.EventLog {
+		events = newEventLog(sp.Workdir, m.Settings.RetentionDays)
+	}
 	s.mu.Lock()
 	s.spaces[id] = &spaceEntry{
 		id: id, name: name, workdir: sp.Workdir, status: statusRunning,
-		space: sp, super: super, cancel: cancel, stopPump: stopPump, pending: newGateTracker(),
+		space: sp, super: super, cancel: cancel, stopPump: stopPump, pumpDone: pumpDone,
+		pending: newGateTracker(), events: events,
 	}
 	s.mu.Unlock()
 
-	go s.pump(sp, stopPump)
+	go func() {
+		defer close(pumpDone)
+		s.pump(sp, stopPump)
+	}()
 	s.persistSpaces()
 	s.log.Info("swarm: space registered", "id", id, "name", name, "workdir", sp.Workdir, "members", len(loaded))
 	return id, nil
@@ -438,9 +504,10 @@ func (s *Service) StopSpace(ref string) error {
 	}
 	// Flip to stopped and detach the live handles UNDER the lock, so a concurrent
 	// reader never observes a half-torn-down running space; tear them down after.
-	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space, stopPump: ent.stopPump}
+	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space,
+		stopPump: ent.stopPump, pumpDone: ent.pumpDone, events: ent.events}
 	ent.status = statusStopped
-	ent.space, ent.super, ent.cancel, ent.stopPump, ent.pending = nil, nil, nil, nil, nil
+	ent.space, ent.super, ent.cancel, ent.stopPump, ent.pumpDone, ent.pending, ent.events = nil, nil, nil, nil, nil, nil, nil
 	id, name := ent.id, ent.name
 	s.mu.Unlock()
 
@@ -479,7 +546,7 @@ func (s *Service) RunSpace(ref string) (string, error) {
 	s.mu.Lock()
 	delete(s.spaces, id)
 	s.mu.Unlock()
-	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+	if _, err := s.register(id, name, m, loaded, cfg, false); err != nil {
 		s.mu.Lock()
 		s.spaces[id] = &spaceEntry{id: id, name: name, workdir: workdir, status: statusStopped}
 		s.mu.Unlock()
@@ -503,7 +570,8 @@ func (s *Service) RemoveSpace(ref string) error {
 		return fmt.Errorf("swarm: unknown space %q", ref)
 	}
 	delete(s.spaces, ent.id)
-	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space, stopPump: ent.stopPump}
+	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space,
+		stopPump: ent.stopPump, pumpDone: ent.pumpDone, events: ent.events}
 	id, name := ent.id, ent.name
 	s.mu.Unlock()
 
@@ -543,7 +611,8 @@ func (s *Service) ResetSpace(ref string) (string, error) {
 	// DB so its files are free to delete) and drop it from the registry. Detach
 	// the live handles under the lock; teardown is a no-op when already stopped.
 	s.mu.Lock()
-	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space, stopPump: ent.stopPump}
+	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space,
+		stopPump: ent.stopPump, pumpDone: ent.pumpDone, events: ent.events}
 	delete(s.spaces, id)
 	s.mu.Unlock()
 	teardownSpace(live)
@@ -560,7 +629,7 @@ func (s *Service) ResetSpace(ref string) (string, error) {
 
 	// Rebuild fresh under the same id+name (NewSpace re-opens a migrated db;
 	// Reload finds nothing to resume, so every member starts with empty context).
-	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+	if _, err := s.register(id, name, m, loaded, cfg, false); err != nil {
 		return "", fmt.Errorf("swarm: reset %q: rebuild failed: %w", ref, err)
 	}
 	s.log.Info("swarm: space reset", "id", id, "name", name, "workdir", workdir)
@@ -701,7 +770,7 @@ func (s *Service) rebuild(rec persistedSpace) (string, string, error) {
 		name = s.genNameLocked()
 	}
 	s.mu.Unlock()
-	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+	if _, err := s.register(id, name, m, loaded, cfg, false); err != nil {
 		return "", "", err
 	}
 	return id, name, nil
@@ -729,7 +798,8 @@ func (s *Service) pump(sp *swarm.SwarmSpace, stop <-chan struct{}) {
 }
 
 // publish records gate lifecycle for reconnect replay, then marshals one spaced
-// event and fans it out by (spaceID, AgentID).
+// event, mirrors it into the durable event log, and fans it out by
+// (spaceID, AgentID).
 func (s *Service) publish(e swarm.SpacedEvent) {
 	if pending, ok := s.pendingFor(e.SpaceID); ok {
 		pending.observe(e.Event)
@@ -738,7 +808,29 @@ func (s *Service) publish(e swarm.SpacedEvent) {
 	if err != nil {
 		return
 	}
+	// RP-17: every event except token-level stream chunks — those would dwarf
+	// the file with text the member transcripts already hold. Offer never
+	// blocks, so the log can't slow this pump.
+	if e.Event.Kind != event.KindTextChunk && e.Event.Kind != event.KindThinkingChunk {
+		if log, ok := s.eventLogFor(e.SpaceID); ok {
+			log.Offer(payload)
+		}
+	}
 	s.hub.Publish(e.SpaceID, e.Event.AgentID, payload)
+}
+
+// eventLogFor returns a live space's event log, read under the registry lock
+// for the same reason as pendingFor: StopSpace detaches the field under the
+// write lock, and the returned logger is safe to use after release (teardown
+// waits for the pump to exit before closing it).
+func (s *Service) eventLogFor(ref string) (*eventLog, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e := s.resolveLocked(ref)
+	if !e.live() || e.events == nil {
+		return nil, false
+	}
+	return e.events, true
 }
 
 // wireEvent is the JSON envelope pushed over the WebSocket: the raw agent
@@ -848,18 +940,23 @@ func (s *Service) Roster(id string) ([]webapi.MemberInfo, bool) {
 			ctxLimit = constant.MODEL_CONTEXT_SIZE[constant.Model(ctl.Model())]
 		}
 		mi := webapi.MemberInfo{
-			Name:          v.Name,
-			AgentID:       agentID,
-			Role:          string(v.Role),
-			Membership:    string(v.Membership),
-			Run:           string(v.Run),
-			Phase:         string(v.Phase),
-			Tool:          v.Tool,
-			PhaseSince:    v.PhaseSince,
-			CurrentTask:   v.CurrentTask,
-			WhenToUse:     v.WhenToUse,
-			ContextTokens: ctxUsed,
-			ContextLimit:  ctxLimit,
+			Name:           v.Name,
+			AgentID:        agentID,
+			Role:           string(v.Role),
+			Membership:     string(v.Membership),
+			Run:            string(v.Run),
+			Phase:          string(v.Phase),
+			Tool:           v.Tool,
+			PhaseSince:     v.PhaseSince,
+			CurrentTask:    v.CurrentTask,
+			WhenToUse:      v.WhenToUse,
+			PermissionMode: v.PermissionMode,
+			ContextTokens:  ctxUsed,
+			ContextLimit:   ctxLimit,
+			TokensIn:       v.Usage.InputTokens,
+			TokensOut:      v.Usage.OutputTokens,
+			TokensToday:    v.DailyTokens,
+			TokensBudget:   ent.space.BudgetFor(v.Name),
 		}
 		// Schedule lives in the space's map (RP-7 didn't put it on MemberView);
 		// surface it on the wire so the roster card can show/edit the crontab (RP-8).
@@ -967,6 +1064,36 @@ func (s *Service) Messages(id string) ([]webapi.MessageInfo, bool) {
 	return out, true
 }
 
+// Proposals lists the space's worker-filed work proposals (RP-23) — every
+// status, oldest first — the web's bottom-up inbox.
+func (s *Service) Proposals(id string) ([]webapi.ProposalInfo, bool) {
+	ent, ok := s.entry(id)
+	if !ok {
+		return nil, false
+	}
+	props, err := ent.space.Store.ListProposals("")
+	if err != nil {
+		s.log.Warn("swarm: list proposals", "space", id, "err", err)
+		return []webapi.ProposalInfo{}, true
+	}
+	out := make([]webapi.ProposalInfo, 0, len(props))
+	for _, p := range props {
+		pi := webapi.ProposalInfo{
+			ID: p.ID, Proposer: p.Proposer, Title: p.Title, Spec: p.Spec,
+			SuggestedAssignee: p.SuggestedAssignee, Status: string(p.Status),
+			DecidedBy: p.DecidedBy, DecideNote: p.DecideNote, CreatedAt: p.CreatedAt,
+		}
+		if p.RefTask != nil {
+			pi.RefTask = *p.RefTask
+		}
+		if p.DecidedAt != nil {
+			pi.DecidedAt = *p.DecidedAt
+		}
+		out = append(out, pi)
+	}
+	return out, true
+}
+
 // PendingGates returns the space's outstanding approval/question gate events in
 // their raw wire shape, so a reconnecting browser re-renders overlays for members
 // still blocked (RP-2 §3.3). false when the space id is unknown.
@@ -1017,30 +1144,39 @@ func (s *Service) Run(id, agent, prompt string) error {
 // exact path inter-agent mail takes — so the supervisor's wake/drain delivers it
 // without any new orchestration: an idle member is woken (drain A), a busy one
 // folds it mid-run (drain B), and the task ledger is untouched. This is the
-// non-disruptive core of flat operator↔member comms.
-func (s *Service) SendUserMessage(id, to, subject, body string) error {
+// non-disruptive core of flat operator↔member comms. Returns the durable
+// message id (RP-27: the CLI prints it as the send receipt; broadcasts return
+// the shared broadcast id).
+func (s *Service) SendUserMessage(id, to, subject, body string) (string, error) {
 	ent, ok := s.entry(id)
 	if !ok {
-		return fmt.Errorf("swarm: unknown space %q", id)
+		return "", fmt.Errorf("swarm: unknown space %q", id)
 	}
 	if strings.TrimSpace(body) == "" {
-		return fmt.Errorf("swarm: message body is required")
+		return "", fmt.Errorf("swarm: message body is required")
 	}
 	// Role-addressing (§3.5): let an operator address "leader" without knowing
 	// its member name; "all" and exact names pass through unchanged.
 	to = ent.space.Roster.ResolveRecipient(to)
 	if to != store.RecipientAll {
 		if _, known := ent.space.Roster.Controller(to); !known {
-			return fmt.Errorf("swarm: unknown member %q", to)
+			// List the real names (the rosterHas convention): a typo from the
+			// CLI/web comes back correctable instead of a dead end. "unknown"
+			// keeps the webapi 404 mapping.
+			names := make([]string, 0)
+			for _, mv := range ent.space.Roster.Snapshot() {
+				names = append(names, mv.Name)
+			}
+			return "", fmt.Errorf("swarm: unknown member %q — valid recipients: %s (or \"leader\" / \"all\")",
+				to, strings.Join(names, ", "))
 		}
 	}
-	_, err := ent.space.Bus.Send(store.Message{
+	return ent.space.Bus.Send(store.Message{
 		Sender:    "user",
 		Recipient: to,
 		Subject:   subject,
 		Body:      body,
 	})
-	return err
 }
 
 func (s *Service) RespondPermission(id, agent, reqID, behavior, reason, ruleTool string) error {
@@ -1094,7 +1230,10 @@ func (s *Service) Unfreeze(id, agent string) error {
 // SetSchedule / ClearSchedule are the operator's schedule controls (RP-8). Unlike
 // the leader tool (RP-7), there is NO self-guard: the operator may set or clear
 // ANY member's schedule, including the leader's — the web is the one place a
-// leader's cadence can be changed. Reuses RP-7's live-apply+persist seam.
+// leader's cadence can be changed. The supervisor seam persists the change as a
+// runtime override row (RP-20); the schedule_change line lands in the RP-17
+// event log here because, unlike the leader path, an operator edit produces no
+// tool_use event to self-audit through.
 func (s *Service) SetSchedule(id, agent, cron, prompt string) error {
 	ent, ok := s.entry(id)
 	if !ok {
@@ -1103,7 +1242,12 @@ func (s *Service) SetSchedule(id, agent, cron, prompt string) error {
 	if _, known := ent.space.Roster.Controller(agent); !known {
 		return fmt.Errorf("swarm: unknown member %q", agent)
 	}
-	return ent.super.SetSchedule(agent, agentdef.Schedule{Cron: cron, Prompt: prompt})
+	if err := ent.super.SetSchedule(agent, agentdef.Schedule{Cron: cron, Prompt: prompt}); err != nil {
+		return err
+	}
+	s.log.Info("swarm: schedule set by operator", "space", ent.name, "member", agent, "cron", cron)
+	s.auditScheduleChange(ent, agent, "set", cron, prompt)
+	return nil
 }
 
 func (s *Service) ClearSchedule(id, agent string) error {
@@ -1114,7 +1258,43 @@ func (s *Service) ClearSchedule(id, agent string) error {
 	if _, known := ent.space.Roster.Controller(agent); !known {
 		return fmt.Errorf("swarm: unknown member %q", agent)
 	}
-	return ent.super.ClearSchedule(agent)
+	if err := ent.super.ClearSchedule(agent); err != nil {
+		return err
+	}
+	s.log.Info("swarm: schedule cleared by operator", "space", ent.name, "member", agent)
+	s.auditScheduleChange(ent, agent, "clear", "", "")
+	return nil
+}
+
+// scheduleChangeEvent is the synthetic event-log line for an operator schedule
+// edit — answering "who changed whose cron last night" with one grep over
+// .vero/events/ (RP-20 §5). Leader-driven changes need no synthetic line:
+// their schedule_set/schedule_clear tool_use events already carry the args.
+type scheduleChangeEvent struct {
+	Kind   string `json:"kind"` // "schedule_change"
+	Member string `json:"member"`
+	Action string `json:"action"` // "set" | "clear"
+	Cron   string `json:"cron,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	Source string `json:"source"` // "operator" — the web is the only non-tool writer
+}
+
+// auditScheduleChange mirrors one operator schedule edit into the space's
+// event log. Best-effort like every event-log write: no log (event_log off or
+// space stopping) means no line, never an error.
+func (s *Service) auditScheduleChange(ent *spaceEntry, member, action, cron, prompt string) {
+	log, ok := s.eventLogFor(ent.id)
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(wireEvent{SpaceID: ent.id, Event: scheduleChangeEvent{
+		Kind: "schedule_change", Member: member, Action: action,
+		Cron: cron, Prompt: prompt, Source: "operator",
+	}})
+	if err != nil {
+		return
+	}
+	log.Offer(payload)
 }
 
 // MemberSkills / AddSkill / DeleteSkill are the operator's agent-skills controls
@@ -1138,6 +1318,25 @@ func (s *Service) MemberSkills(id, agent string) ([]webapi.SkillInfo, bool) {
 	return out, true
 }
 
+// MemberMemory serves a member's long-term memory files read-only to the web
+// (RP-25). Thin adapter over the space's disk read — the dir the member itself
+// writes is the single source of truth, so the view is always current.
+func (s *Service) MemberMemory(id, agent string) ([]webapi.MemoryFileInfo, bool) {
+	ent, ok := s.entry(id)
+	if !ok {
+		return nil, false
+	}
+	files, err := ent.space.MemberMemoryFiles(agent)
+	if err != nil {
+		return nil, false // unknown member within a known space → 404
+	}
+	out := make([]webapi.MemoryFileInfo, 0, len(files))
+	for _, f := range files {
+		out = append(out, webapi.MemoryFileInfo{Name: f.Name, Content: f.Content})
+	}
+	return out, true
+}
+
 func (s *Service) AddSkill(id, agent string, spec webapi.SkillSpec) error {
 	ent, ok := s.entry(id)
 	if !ok {
@@ -1152,6 +1351,76 @@ func (s *Service) DeleteSkill(id, agent, skill string) error {
 		return fmt.Errorf("swarm: unknown space %q", id)
 	}
 	return ent.space.RemoveMemberSkill(agent, skill)
+}
+
+// SharedSkills / AddSharedSkill / DeleteSharedSkill are the operator's surface
+// over the space-shared skill library (RP-26): list what the team loads —
+// User-dropped files and leader skill_publish output alike — author one, or
+// exercise the final-arbiter delete. Add/delete reload every member (the space
+// owns that pairing). Operator edits get a synthetic event-log line, mirroring
+// the schedule precedent: a web write produces no tool_use event to self-audit
+// through, and "who deleted the team's skill last night" must stay answerable.
+func (s *Service) SharedSkills(id string) ([]webapi.SkillInfo, bool) {
+	ent, ok := s.entry(id)
+	if !ok {
+		return nil, false
+	}
+	skills := ent.space.SharedSkills()
+	out := make([]webapi.SkillInfo, 0, len(skills))
+	for _, sk := range skills {
+		out = append(out, webapi.SkillInfo{Name: sk.Name, Description: sk.Description})
+	}
+	return out, true
+}
+
+func (s *Service) AddSharedSkill(id string, spec webapi.SkillSpec) error {
+	ent, ok := s.entry(id)
+	if !ok {
+		return fmt.Errorf("swarm: unknown space %q", id)
+	}
+	if err := ent.space.PublishSharedSkill(spec.Name, spec.Description, spec.Body, false); err != nil {
+		return err
+	}
+	s.log.Info("swarm: shared skill added by operator", "space", ent.name, "skill", spec.Name)
+	s.auditSharedSkillChange(ent, spec.Name, "add")
+	return nil
+}
+
+func (s *Service) DeleteSharedSkill(id, skill string) error {
+	ent, ok := s.entry(id)
+	if !ok {
+		return fmt.Errorf("swarm: unknown space %q", id)
+	}
+	if err := ent.space.RemoveSharedSkill(skill); err != nil {
+		return err
+	}
+	s.log.Info("swarm: shared skill deleted by operator", "space", ent.name, "skill", skill)
+	s.auditSharedSkillChange(ent, skill, "delete")
+	return nil
+}
+
+// sharedSkillChangeEvent is the synthetic event-log line for an operator edit
+// of the shared skill library. Leader publishes need no synthetic line: the
+// skill_publish tool_use event already carries the full args (RP-17).
+type sharedSkillChangeEvent struct {
+	Kind   string `json:"kind"` // "shared_skill_change"
+	Skill  string `json:"skill"`
+	Action string `json:"action"` // "add" | "delete"
+	Source string `json:"source"` // "operator"
+}
+
+func (s *Service) auditSharedSkillChange(ent *spaceEntry, skill, action string) {
+	log, ok := s.eventLogFor(ent.id)
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(wireEvent{SpaceID: ent.id, Event: sharedSkillChangeEvent{
+		Kind: "shared_skill_change", Skill: skill, Action: action, Source: "operator",
+	}})
+	if err != nil {
+		return
+	}
+	log.Offer(payload)
 }
 
 // CreateMember authors a new worker from the web form (RP-8): hot-load it live,
@@ -1309,9 +1578,14 @@ const maxEventDataChars = 4000
 // wake/fold drives the leader (idle → drain A, busy → drain B). `to` defaults to
 // the leader; the message is sender "webhook" and time-stamped so the leader sees
 // it as an external trigger. An idempotency key collapses retries (duplicate ==
-// true, same id, no second wake). Errors carry "unknown space" / "stopped" so the
-// (unauthenticated) handler can map 404 / 409; anything else is 400.
-func (s *Service) IngestEvent(ref string, evt webapi.EventIn) (messageID string, duplicate bool, err error) {
+// true, same id, no second wake). Errors carry "unauthorized" / "unknown space" /
+// "stopped" so the handler can map 401 / 404 / 409; anything else is 400.
+//
+// Auth (RP-15): a space with settings.webhook_secret demands a matching secret
+// from EVERY caller; without one, loopback peers keep the RP-9 trust and
+// non-loopback peers are rejected — so --allow-remote can't silently expose an
+// unauthenticated wake-the-leader endpoint to the network.
+func (s *Service) IngestEvent(ref string, evt webapi.EventIn, auth webapi.EventAuth) (messageID string, duplicate bool, err error) {
 	ent, ok := s.entry(ref)
 	if !ok {
 		s.mu.RLock()
@@ -1321,6 +1595,13 @@ func (s *Service) IngestEvent(ref string, evt webapi.EventIn) (messageID string,
 			return "", false, fmt.Errorf("swarm: space %q is stopped", ref)
 		}
 		return "", false, fmt.Errorf("swarm: unknown space %q", ref)
+	}
+	if secret := ent.space.WebhookSecret(); secret != "" {
+		if subtle.ConstantTimeCompare([]byte(secret), []byte(auth.Secret)) != 1 {
+			return "", false, fmt.Errorf("swarm: unauthorized: webhook secret mismatch (header %s)", webapi.WebhookSecretHeader)
+		}
+	} else if !auth.Loopback {
+		return "", false, fmt.Errorf("swarm: unauthorized: remote event POST requires settings.webhook_secret on this space")
 	}
 	if strings.TrimSpace(evt.Body) == "" {
 		return "", false, fmt.Errorf("swarm: event body is required")
@@ -1362,7 +1643,7 @@ func (s *Service) IngestEvent(ref string, evt webapi.EventIn) (messageID string,
 func shapeEvent(source, body string, data json.RawMessage) string {
 	var b strings.Builder
 	b.WriteString("<system-reminder>\n")
-	fmt.Fprintf(&b, "external-event  source=%s  time=%s\n", source, time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&b, "external-event  source=%s  time=%s\n", source, common.Stamp(time.Now()))
 	b.WriteString(body)
 	if d := strings.TrimSpace(string(data)); d != "" && d != "null" {
 		if len(d) > maxEventDataChars {
@@ -1381,6 +1662,108 @@ func (s *Service) HaltAll(id string) error {
 		return fmt.Errorf("swarm: unknown space %q", id)
 	}
 	return ent.super.HaltAll()
+}
+
+// Health is the unauthenticated /healthz snapshot (RP-18): one curl tells
+// "alive but idle" (running spaces or active members == 0) from "in service".
+// Counts only — no names, ids, or workdirs leave this endpoint, because it
+// answers without a token (and possibly off-box under --allow-remote).
+func (s *Service) Health() webapi.HealthInfo {
+	version := config.Version // ldflags-injected tag on release builds
+	if version == "" {
+		version = config.DefaultAppVersion // dev builds: the version.go constant
+	}
+	h := webapi.HealthInfo{
+		Status:     "ok",
+		Version:    version,
+		UptimeSecs: int64(time.Since(s.started).Seconds()),
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, ent := range s.spaces {
+		if !ent.live() {
+			h.SpacesStopped++
+			continue
+		}
+		h.SpacesRunning++
+		for _, mv := range ent.space.Roster.Snapshot() {
+			if mv.Membership == swarm.MembershipFrozen {
+				h.MembersFrozen++
+			} else {
+				h.MembersActive++
+			}
+		}
+	}
+	return h
+}
+
+// Metrics snapshots a space's scheduler counters (RP-17): per-member wakes /
+// runs / aborts / run-duration buckets from the space, hint drops from the
+// bus, and the event log's logged/dropped line counts. Reads the entry's
+// fields under the registry lock (StopSpace detaches them under the write
+// lock). false when the ref is unknown or stopped.
+func (s *Service) Metrics(ref string) (webapi.MetricsInfo, bool) {
+	s.mu.RLock()
+	ent := s.resolveLocked(ref)
+	if !ent.live() {
+		s.mu.RUnlock()
+		return webapi.MetricsInfo{}, false
+	}
+	sp, events := ent.space, ent.events
+	s.mu.RUnlock()
+
+	members, started := sp.MetricsSnapshot()
+	mi := webapi.MetricsInfo{
+		HintsDropped: sp.Bus.HintsDropped(),
+		Members:      make(map[string]webapi.MemberMetricsInfo, len(members)),
+	}
+	mi.TasksStale, mi.MailboxStale = sp.WorkflowStaleCounts()
+	if !started.IsZero() {
+		mi.UptimeSecs = int64(time.Since(started).Seconds())
+	}
+	if events != nil {
+		mi.EventsLogged, mi.EventsDropped = events.Logged(), events.Dropped()
+	}
+	for name, m := range members {
+		mi.Members[name] = webapi.MemberMetricsInfo{
+			WakesMessage: m.WakesMessage,
+			WakesTimer:   m.WakesTimer,
+			Runs:         m.Runs,
+			Aborts:       m.Aborts,
+			RunSeconds: map[string]int64{
+				"lt10s": m.RunSeconds[0], "lt1m": m.RunSeconds[1],
+				"lt10m": m.RunSeconds[2], "gte10m": m.RunSeconds[3],
+			},
+			RunTokens: map[string]int64{
+				"lt1k": m.RunTokens[0], "lt10k": m.RunTokens[1],
+				"lt50k": m.RunTokens[2], "gte50k": m.RunTokens[3],
+			},
+		}
+	}
+	return mi, true
+}
+
+// Vacuum runs one RP-16 retention pass for a space right now (the manual
+// entrance — the supervisor also sweeps daily). days <= 0 resolves to the
+// space's configured retention_days, or the default when the space disabled
+// retention — an explicit operator request overrides "off". dryRun reports the
+// would-be counts without archiving or deleting anything.
+func (s *Service) Vacuum(ref string, days int, dryRun bool) (webapi.VacuumStats, error) {
+	ent, ok := s.entry(ref)
+	if !ok {
+		return webapi.VacuumStats{}, fmt.Errorf("swarm: unknown space %q", ref)
+	}
+	if days <= 0 {
+		days = ent.space.RetentionDays()
+		if days <= 0 {
+			days = agentdef.DefaultRetentionDays
+		}
+	}
+	st, err := ent.space.Store.Vacuum(time.Now().AddDate(0, 0, -days), dryRun)
+	if err != nil {
+		return webapi.VacuumStats{}, fmt.Errorf("swarm: vacuum %q: %w", ref, err)
+	}
+	return webapi.VacuumStats{Messages: st.Messages, Tasks: st.Tasks, Files: st.Files, Days: days, DryRun: dryRun}, nil
 }
 
 // superCmd routes a one-member supervisor command, surfacing an "unknown space"

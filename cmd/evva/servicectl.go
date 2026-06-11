@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/johnny1110/evva/pkg/common/proc"
 	"github.com/johnny1110/evva/pkg/config"
 )
 
@@ -26,10 +26,11 @@ import (
 // EVVA_SERVICE_HOME overrides the directory (tests point it at a temp dir);
 // EVVA_SERVICE_ADDR overrides the listen/target address.
 const (
-	daemonEnv  = "EVVA_SERVICE_DAEMON" // set on the backgrounded child
-	addrEnv    = "EVVA_SERVICE_ADDR"
-	homeEnv    = "EVVA_SERVICE_HOME"
-	defaultSvc = "127.0.0.1:8888"
+	daemonEnv      = "EVVA_SERVICE_DAEMON"       // set on the backgrounded child
+	addrEnv        = "EVVA_SERVICE_ADDR"
+	allowRemoteEnv = "EVVA_SERVICE_ALLOW_REMOTE" // "1" = non-loopback bind opt-in (RP-15)
+	homeEnv        = "EVVA_SERVICE_HOME"
+	defaultSvc     = "127.0.0.1:8888"
 
 	pidName   = "evva-service.pid"
 	tokenName = "token"
@@ -88,15 +89,11 @@ func writePid(pid int) error {
 	return os.WriteFile(pidPath(), []byte(strconv.Itoa(pid)), 0o644)
 }
 
-// processAlive reports whether pid names a live process. Signal 0 performs the
-// kernel's permission/existence check without delivering a signal: nil (or an
-// EPERM we don't expect for our own daemon) means alive; ESRCH means gone.
+// processAlive reports whether pid names a live process — proc.Alive does
+// the right thing per-OS (signal 0 on unix; a real handle probe on
+// Windows, where Signal(0) is unsupported and would always read "dead").
 func processAlive(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(syscall.Signal(0)) == nil
+	return proc.Alive(pid)
 }
 
 // readToken returns the daemon's session token, or "" if absent.

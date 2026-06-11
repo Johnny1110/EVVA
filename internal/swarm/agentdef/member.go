@@ -107,6 +107,26 @@ func PermissionsPath(workdir string, role Role, name string) string {
 	return filepath.Join(agentDir(workdir, role, name), "permissions.json")
 }
 
+// SharedSkillsDir is the space-level shared skill directory
+// (<workdir>/agents/skills/, RP-26): skills every member loads, merged UNDER
+// each member's own skills/ (a member's same-named skill wins — local
+// overrides global). Deliberately flat beside main/ and sub/ — it carries no
+// role semantics. User-authored only (drop a <skill>/SKILL.md folder in),
+// matching the RP-10 discipline: agents load skills, they don't author them.
+func SharedSkillsDir(workdir string) string {
+	return filepath.Join(workdir, "agents", "skills")
+}
+
+// MemoryDir is a member's long-term memory directory (<agentDir>/memory/,
+// RP-25): typed *.md memory files plus the MEMORY.md index, living beside the
+// persona so it rides the same git/.gitignore decision as agents/. The space
+// creates it at member construction; the member writes it with the ordinary
+// file tools (its own dir auto-allows, siblings' deny), and the supervisor
+// injects the index into wake prompts.
+func MemoryDir(workdir string, role Role, name string) string {
+	return filepath.Join(agentDir(workdir, role, name), "memory")
+}
+
 // MemberDirExists reports whether a worker's on-disk definition already exists.
 // CreateMember uses it to tell "author a new member" (no dir) from "mount an
 // existing dir by name" (the CLI add-member path).
@@ -198,6 +218,11 @@ func validSkillName(name string) error {
 	return nil
 }
 
+// ErrSkillExists marks a skill write refused because the name is already
+// taken at the target location. errors.Is-able so the leader's skill_publish
+// can offer its overwrite path without parsing message text.
+var ErrSkillExists = errors.New("skill already exists")
+
 // WriteSkill authors a skill at <member>/skills/<name>/SKILL.md in the
 // `# <name> <description>` + body shape the loader parses (skill.ParseTitleLine — the
 // first token must equal the folder name, which it does). It refuses an unsafe name,
@@ -205,15 +230,35 @@ func validSkillName(name string) error {
 // (RP-10-4) so the new skill enters the prompt + skill tool. Skills are User-authored
 // only — no agent-facing tool writes here (RP-10 discipline).
 func WriteSkill(workdir string, role Role, member, name, description, body string) error {
+	return writeSkillDir(filepath.Join(SkillsDir(workdir, role, member), name), name, description, body, false)
+}
+
+// WriteSharedSkill authors a skill in the space-shared dir (RP-26 Part B) —
+// same SKILL.md shape as WriteSkill, but every member loads it. overwrite
+// allows replacing an existing version (the leader's deliberate "publish v2");
+// without it an existing name returns ErrSkillExists. The caller reloads ALL
+// members after.
+func WriteSharedSkill(workdir, name, description, body string, overwrite bool) error {
+	return writeSkillDir(filepath.Join(SharedSkillsDir(workdir), name), name, description, body, overwrite)
+}
+
+// writeSkillDir is the shared core of WriteSkill / WriteSharedSkill: validate,
+// then write <dir>/SKILL.md. An overwrite replaces the folder WHOLESALE so no
+// file of the old version survives into the new one.
+func writeSkillDir(dir, name, description, body string, overwrite bool) error {
 	if err := validSkillName(name); err != nil {
 		return err
 	}
 	if strings.TrimSpace(body) == "" {
 		return errors.New("agentdef: skill body is required")
 	}
-	dir := filepath.Join(SkillsDir(workdir, role, member), name)
 	if _, err := os.Stat(dir); err == nil {
-		return fmt.Errorf("agentdef: skill %q already exists", name)
+		if !overwrite {
+			return fmt.Errorf("agentdef: %w: %q", ErrSkillExists, name)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("agentdef: replace skill dir: %w", err)
+		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("agentdef: create skill dir: %w", err)
@@ -237,6 +282,16 @@ func RemoveSkill(workdir string, role Role, member, name string) error {
 		return err
 	}
 	return os.RemoveAll(filepath.Join(SkillsDir(workdir, role, member), name))
+}
+
+// RemoveSharedSkill deletes a skill folder under the space-shared dir (the
+// User's final-arbiter delete, RP-26 Part B). Safe on a missing dir; the
+// caller reloads all members afterwards.
+func RemoveSharedSkill(workdir, name string) error {
+	if err := validSkillName(name); err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(SharedSkillsDir(workdir), name))
 }
 
 // writeToolList serialises a flat tool-name list (the shape readToolList parses).

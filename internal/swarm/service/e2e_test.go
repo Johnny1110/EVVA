@@ -299,7 +299,7 @@ func TestE2E_RestartContinuity(t *testing.T) {
 	// (b) The reconciled swarm is live: a fresh operator message to a worker is
 	// delivered, the worker is woken, and the message is drained (marked read) —
 	// proving Reconcile → Reload → supervisor → bus → drain all work post-restart.
-	if err := svc2.SendUserMessage(id2, "worker-a", "", "are you back online?"); err != nil {
+	if _, err := svc2.SendUserMessage(id2, "worker-a", "", "are you back online?"); err != nil {
 		t.Fatalf("post-restart message: %v", err)
 	}
 	pollUntil(t, "post-restart operator message processed", 25*time.Second, func() bool {

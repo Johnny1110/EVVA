@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -65,7 +66,11 @@ type Agent struct {
 	ID     string
 	Name   string
 	logger *slog.Logger
-	status constant.AgentStatus
+	// logClose owns the per-agent log file when the logger opened one
+	// (nil otherwise). Closed in Shutdown — on Windows an open log file
+	// blocks deletion of its directory.
+	logClose io.Closer
+	status   constant.AgentStatus
 
 	profile Profile
 
@@ -104,6 +109,13 @@ type Agent struct {
 	// doesn't have to call memdir.Load itself.
 	memSnap    memdir.Snapshot
 	memSnapSet bool
+
+	// memDirOverride, when set (WithMemoryDir), re-homes the agent's writable
+	// auto-memory: after the snapshot is resolved, MemoryDir is forced to this
+	// path (write carve-out + recall target) and MemoryIndex is cleared — the
+	// host owns surfacing that store's index (e.g. the swarm injects it into
+	// wake prompts, RP-25), so it must never enter the static system prompt.
+	memDirOverride string
 
 	// permissionMode is the active stance the gate enforces. Subagents
 	// inherit the parent's mode (CLAUDE.md). Set via WithPermissionMode at
@@ -202,6 +214,12 @@ type Agent struct {
 	// assistant tool_calls turn followed by a new user message is an
 	// invalid request shape every provider rejects).
 	running atomic.Bool
+
+	// runStartUsage is the session-usage snapshot taken when runLoop entered
+	// (RP-28): done() reports the run's own token cost as the delta from it
+	// on the RunEnd event. Written and read only by the goroutine holding
+	// the `running` CAS.
+	runStartUsage llm.Usage
 
 	// sessionOnce ensures SessionStart fires exactly once per agent
 	// lifetime — the first Run() call triggers it; Continue() (resume,
@@ -307,11 +325,12 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	a.toolState.SetConfig(a.cfg)
 
 	// Logger picks up LogDir / LogLevel / LogFormat from a.cfg.
-	lgr, err := logger.OfAgent(a.cfg, parentID, ID)
+	lgr, logClose, err := logger.OfAgent(a.cfg, parentID, ID)
 	if err != nil {
 		return nil, fmt.Errorf("agent: init logger: %w", err)
 	}
 	a.logger = lgr
+	a.logClose = logClose
 
 	// Auto-load the skill registry from disk if no override was injected
 	// via WithSkillRegistry. Downstream apps that want a programmatic-only
@@ -375,6 +394,15 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 		for _, w := range a.memSnap.Warnings {
 			lgr.Warn("memory: load", "msg", w)
 		}
+	}
+	// Re-home the writable memory store when the host asked for it
+	// (WithMemoryDir). Applied to BOTH snapshot paths — auto-loaded and
+	// host-injected — and after them, so the override always wins. Clearing
+	// MemoryIndex keeps the re-homed store's index out of the static prompt:
+	// the host surfaces it on its own channel (cache discipline, RP-25).
+	if a.memDirOverride != "" {
+		a.memSnap.MemoryDir = a.memDirOverride
+		a.memSnap.MemoryIndex = ""
 	}
 
 	// Auto-load the MCP manager (settings.json) unless a host injected one
@@ -451,6 +479,7 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	// as a narrow callback set; the agent owns the chan.
 	a.toolState.SetSignalSender(toolset.SignalSender{
 		NotifyDaemon: func() { a.SendSignal(AgentSignal{Kind: SignalDaemon}) },
+		NotifyAlarm:  func() { a.SendSignal(AgentSignal{Kind: SignalAlarm}) },
 		RootCtx:      func() context.Context { return a.rootCtx },
 		AgentID:      func() string { return a.ID },
 	})
@@ -459,6 +488,26 @@ func New(parent *Agent, profile Profile, opts ...Option) (*Agent, error) {
 	// lifetime; cancelled via Shutdown() or by the caller cancelling
 	// the ctx threaded via WithRootContext.
 	go a.signalPump()
+
+	// Re-arm durable alarms from a previous session (root agent only, and only
+	// when this profile admits the alarm tools). Future alarms get fresh timers;
+	// alarms missed while the process was down are Enqueue'd on the WakeupQueue
+	// so they surface on the NEXT run rather than autonomously starting one
+	// before the host's UI is live. Done here — after the signal pump is up, so
+	// a future alarm that fires can wake the loop. Errors are non-fatal.
+	if !a.IsSubagent() && profileAllowsAlarm(a.profile) {
+		sched := a.toolState.AlarmScheduler()
+		if pastDue, err := sched.Rearm(); err != nil {
+			a.logger.Warn("alarm.rearm", "err", err)
+		} else {
+			for _, f := range pastDue {
+				a.toolState.WakeupQueue().Enqueue(f.Message())
+			}
+			if len(pastDue) > 0 {
+				a.logger.Info("alarm.rearm.pastdue", "count", len(pastDue))
+			}
+		}
+	}
 
 	// Install ourselves as the subagent spawner and the deferred-tool
 	// lookup. Only the root agent does this — subagents leave the slots
@@ -539,8 +588,19 @@ func (a *Agent) Shutdown() {
 			mgr.Shutdown()
 		}
 	}
+	// Stop pending alarm timers so none fires mid-teardown. Durable alarms stay
+	// on disk and are re-armed next start; only allocated when alarms were used.
+	if a.toolState.HasAlarmScheduler() {
+		a.toolState.AlarmScheduler().Stop()
+	}
 	if a.rootCancel != nil {
 		a.rootCancel()
+	}
+	// Last: release the log file so its directory is deletable (Windows
+	// refuses while open). A background goroutine that logs after this
+	// hits a closed-file write error, which slog swallows.
+	if a.logClose != nil {
+		_ = a.logClose.Close()
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
+	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/ui"
 )
 
@@ -68,7 +69,15 @@ type rosterEntry struct {
 	phaseSince  int64     // unix millis the current phase was entered (for "stuck for N" timing)
 	currentTask int64
 	whenToUse   string
+	permMode    string // effective permission stance, fixed at construction (RP-24)
 	ctl         ui.Controller
+
+	// Token metering (RP-13), pushed by the supervisor at run boundaries (the
+	// member's own loop goroutine reads the controller; the roster only stores
+	// the snapshot — no concurrent session reads from display goroutines).
+	usage         llm.Usage // cumulative session usage as of the last run boundary
+	lastTurnInput int       // input tokens of the most recent turn (context pressure)
+	dailyTokens   int       // input+output tokens spent today (meter day)
 }
 
 // MemberView is a read-only snapshot of one member, the shape served to the
@@ -83,6 +92,14 @@ type MemberView struct {
 	PhaseSince  int64 // unix millis the current phase was entered
 	CurrentTask int64
 	WhenToUse   string
+	// PermissionMode is the member's effective permission stance (manifest
+	// member override > space setting; RP-24) — "bypass" runs fully
+	// autonomous, "default" queues approvals for a human.
+	PermissionMode string
+
+	Usage         llm.Usage // cumulative session tokens as of the last run boundary (RP-13)
+	LastTurnInput int       // most recent turn's input tokens (context pressure)
+	DailyTokens   int       // tokens spent today (the budget breaker's counter)
 }
 
 // DisplayPhase composes the coarse run status and the fine event-derived phase
@@ -118,7 +135,7 @@ func newRoster() *Roster {
 
 // add inserts a member as active+idle. Names are unique within the space
 // (invariant #2 — per-space name scoping); a collision errors.
-func (r *Roster) add(name string, role agentdef.Role, whenToUse string, ctl ui.Controller) error {
+func (r *Roster) add(name string, role agentdef.Role, whenToUse, permMode string, ctl ui.Controller) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.entries[name]; dup {
@@ -132,6 +149,7 @@ func (r *Roster) add(name string, role agentdef.Role, whenToUse string, ctl ui.C
 		phase:      PhaseReady,
 		phaseSince: time.Now().UnixMilli(),
 		whenToUse:  whenToUse,
+		permMode:   permMode,
 		ctl:        ctl,
 	}
 	r.entries[name] = e
@@ -223,15 +241,19 @@ func (r *Roster) Snapshot() []MemberView {
 	for _, name := range r.order {
 		e := r.entries[name]
 		out = append(out, MemberView{
-			Name:        e.name,
-			Role:        e.role,
-			Membership:  e.membership,
-			Run:         e.run,
-			Phase:       e.phase,
-			Tool:        e.tool,
-			PhaseSince:  e.phaseSince,
-			CurrentTask: e.currentTask,
-			WhenToUse:   e.whenToUse,
+			Name:           e.name,
+			Role:           e.role,
+			Membership:     e.membership,
+			Run:            e.run,
+			Phase:          e.phase,
+			Tool:           e.tool,
+			PhaseSince:     e.phaseSince,
+			CurrentTask:    e.currentTask,
+			WhenToUse:      e.whenToUse,
+			PermissionMode: e.permMode,
+			Usage:          e.usage,
+			LastTurnInput:  e.lastTurnInput,
+			DailyTokens:    e.dailyTokens,
 		})
 	}
 	return out
@@ -365,5 +387,41 @@ func (r *Roster) setCurrentTask(name string, taskID int64) {
 	defer r.mu.Unlock()
 	if e, ok := r.entries[name]; ok {
 		e.currentTask = taskID
+	}
+}
+
+// LeaderName returns the unique leader's member name, or "" when the roster
+// has none (e.g. a store-only test space). Exported for the proposal tools
+// (RP-23), which address the leader without knowing its actual name; the
+// budget breaker and watchdog use it via the unexported alias below.
+func (r *Roster) LeaderName() string {
+	return r.leaderName()
+}
+
+// leaderName returns the unique leader's member name, or "" when the roster has
+// none (e.g. a store-only test space). Used by the budget breaker to address
+// its notification mail without the caller knowing the leader's actual name.
+func (r *Roster) leaderName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, name := range r.order {
+		if r.entries[name].role == agentdef.RoleLeader {
+			return name
+		}
+	}
+	return ""
+}
+
+// setUsage stores a member's token snapshot (RP-13). Called by the supervisor
+// at run boundaries — on the member's own loop goroutine, where reading the
+// controller's session is race-free — so every display surface (list_members,
+// web) reads this stored copy instead of touching the live session.
+func (r *Roster) setUsage(name string, u llm.Usage, lastTurnInput, dailyTokens int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.entries[name]; ok {
+		e.usage = u
+		e.lastTurnInput = lastTurnInput
+		e.dailyTokens = dailyTokens
 	}
 }

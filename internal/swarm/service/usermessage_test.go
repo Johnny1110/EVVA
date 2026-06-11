@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -14,8 +15,12 @@ func TestSendUserMessage_DeliveredAndDrained(t *testing.T) {
 	defer svc.Stop()
 	id := registerStub(t, svc)
 
-	if err := svc.SendUserMessage(id, "worker", "", "please report status"); err != nil {
+	msgID, err := svc.SendUserMessage(id, "worker", "", "please report status")
+	if err != nil {
 		t.Fatalf("SendUserMessage: %v", err)
+	}
+	if msgID == "" {
+		t.Fatal("SendUserMessage returned no message id (the CLI receipt, RP-27)")
 	}
 
 	// The supervisor wakes worker; its drain reads the message and marks it
@@ -50,13 +55,18 @@ func TestSendUserMessage_Errors(t *testing.T) {
 	defer svc.Stop()
 	id := registerStub(t, svc)
 
-	if err := svc.SendUserMessage("nope", "worker", "", "hi"); err == nil {
+	if _, err := svc.SendUserMessage("nope", "worker", "", "hi"); err == nil {
 		t.Error("unknown space should error")
 	}
-	if err := svc.SendUserMessage(id, "ghost", "", "hi"); err == nil {
+	// Unknown member: correctable — the error lists the real names (RP-27),
+	// and keeps "unknown" so the webapi still maps it to 404.
+	_, err := svc.SendUserMessage(id, "ghost", "", "hi")
+	if err == nil {
 		t.Error("unknown member should error")
+	} else if !strings.Contains(err.Error(), "unknown") || !strings.Contains(err.Error(), "worker") {
+		t.Errorf("unknown-member error should list valid recipients, got: %v", err)
 	}
-	if err := svc.SendUserMessage(id, "worker", "", "  "); err == nil {
+	if _, err := svc.SendUserMessage(id, "worker", "", "  "); err == nil {
 		t.Error("empty body should error")
 	}
 }

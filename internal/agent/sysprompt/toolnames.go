@@ -47,6 +47,14 @@ const (
 
 	// REPL — scratch Python/JS code execution.
 	nameRepl = "repl"
+
+	// Alarm — one-shot, absolute-time self-wake.
+	nameAlarmCreate = "alarm_create"
+	nameAlarmList   = "alarm_list"
+	nameAlarmCancel = "alarm_cancel"
+
+	// schedule_wakeup — blocking relative sleep (≤1h); contrasted with alarms.
+	nameScheduleWakeup = "schedule_wakeup"
 )
 
 // Subagent identifiers — the strings the main agent quotes in its

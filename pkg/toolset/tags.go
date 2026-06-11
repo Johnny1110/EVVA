@@ -45,6 +45,10 @@ var toolTags = map[tools.ToolName][]string{
 	tools.CRON_DELETE:    {"schedule", "cron", "delete", "cancel"},
 	tools.REMOTE_TRIGGER: {"remote", "trigger", "webhook", "api", "external"},
 
+	tools.ALARM_CREATE: {"alarm", "schedule", "wake", "remind", "timer", "future", "date", "time", "at", "deadline", "later"},
+	tools.ALARM_LIST:   {"alarm", "list", "pending", "scheduled", "wake"},
+	tools.ALARM_CANCEL: {"alarm", "cancel", "delete", "remove", "unset"},
+
 	tools.WEB_FETCH:    {"http", "url", "web", "fetch", "scrape", "html"},
 	tools.WEB_SEARCH:   {"web", "search", "google", "internet", "lookup", "query"},
 	tools.HTTP_REQUEST: {"http", "request", "api", "rest", "json", "curl", "get", "post", "webhook", "client"},
@@ -55,6 +59,9 @@ var toolTags = map[tools.ToolName][]string{
 	// utils
 	tools.JSON_QUERY: {"json", "query", "filter", "extract", "parse"},
 	tools.CALC:       {"math", "calculate", "sum", "product", "average"},
+
+	// excel
+	tools.EXCEL: {"excel", "spreadsheet", "xlsx", "cell", "sheet", "table", "workbook", "formula", "chart", "pivot"},
 
 	// config
 	tools.CONFIG: {"config", "setting", "settings", "configure", "preference", "option"},
@@ -111,6 +118,10 @@ var toolHints = map[tools.ToolName]string{
 	tools.CRON_DELETE:    "Remove a scheduled remote agent routine.",
 	tools.REMOTE_TRIGGER: "Trigger a remote agent run via webhook.",
 
+	tools.ALARM_CREATE: "Set a one-shot alarm to wake yourself at an absolute date/time (e.g. 2026-09-11 12:31:50), then resume with a prompt — non-blocking, durable, second-precision; use instead of schedule_wakeup for waits over an hour or at a specific time.",
+	tools.ALARM_LIST:   "List your pending one-shot alarms (fire time, prompt, durability).",
+	tools.ALARM_CANCEL: "Cancel a pending one-shot alarm by id so it never fires.",
+
 	// web
 	tools.WEB_FETCH:    "Fetch and extract readable text from a URL.",
 	tools.WEB_SEARCH:   "Search the public web via Tavily for up-to-date information.",
@@ -129,6 +140,9 @@ var toolHints = map[tools.ToolName]string{
 
 	// config
 	tools.CONFIG: "Get or set evva configuration settings (iteration cap, memory toggle, effort, provider keys).",
+
+	// excel
+	tools.EXCEL: "Read, write, create, and manipulate Excel (.xlsx) spreadsheets — cell values, formulas, sheets, charts, pivot tables, and data validation.",
 }
 
 // HintFor returns the curated search hint for a tool name, or "" if none is

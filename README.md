@@ -17,7 +17,7 @@ The architecture is small on purpose — adding a new LLM provider, panel, or UI
 
 ## Install
 
-Requires Go 1.25+. Currently **macOS and Linux only** — Windows support is not yet available.
+macOS, Linux, and Windows (10 1903+) are supported. `go install` and source builds require Go 1.25+; prebuilt binaries for every platform ship with each [GitHub Release](https://github.com/johnny1110/evva/releases).
 
 ### Quick install (recommended)
 
@@ -41,6 +41,17 @@ Override the location if you want it elsewhere:
 sudo make install PREFIX=/usr/local/bin     # system-wide
 make install PREFIX=$HOME/.local/bin        # user-local
 ```
+
+### Windows
+
+Download `evva-windows-amd64.zip` (or `-arm64`) from the [latest release](https://github.com/johnny1110/evva/releases/latest), unzip `evva.exe` somewhere on your `PATH`, and run it from Windows Terminal — or use `go install` as above (the binary lands in `%USERPROFILE%\go\bin`).
+
+Prerequisites:
+
+- **[Git for Windows](https://gitforwindows.org)** — the agent's `bash` tool runs through its bundled Git Bash. Without it evva still starts, but shell-backed tools (bash, monitor, hooks) are unavailable and a startup warning says so. Set `EVVA_SHELL` to any other `bash.exe` to override autodetection.
+- **Windows Terminal** recommended for the TUI (legacy conhost works on Windows 10 1903+, but rendering is only validated on Windows Terminal).
+
+If SmartScreen flags the downloaded exe, unblock it via file Properties → Unblock — the binaries are unsigned for now. Full details, including what `evva service` does and doesn't do on Windows: [docs/user-guide/en/windows.md](docs/user-guide/en/windows.md).
 
 ### Verify
 
@@ -133,6 +144,11 @@ day-2 ops, restart-resume:
 
 Or just try the ready-to-run [example swarm](docs/roadmap/veronica/example-swarm/) — copy
 it out, `evva swarm .`, and watch a 3-agent team build a small site.
+
+Running it 24/7? `evva service install-unit` wires the host into launchd /
+systemd so it survives crashes and reboots —
+[setup runbook (EN)](docs/user-guide/en/service-autostart.md) ·
+[正體中文](docs/user-guide/zh-tw/service-autostart.md).
 
 **CLI quick reference** (`evva swarm help` for the full list). Spaces are
 Docker-style: a stable id plus a unique **name**, and every `<ref>` below accepts

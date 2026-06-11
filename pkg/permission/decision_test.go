@@ -1,9 +1,18 @@
 package permission
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
+
+// jstr marshals s as a JSON string literal (quotes included) so Windows
+// path backslashes survive the trip into tool input.
+func jstr(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
 
 func mkCall(name, cmd string) ToolCall {
 	if cmd == "" {
@@ -13,13 +22,78 @@ func mkCall(name, cmd string) ToolCall {
 }
 
 func TestDecide_BypassAllowsEverything(t *testing.T) {
+	// No rules: bypass auto-allows whatever the model emits, dangerous or not.
+	d := Decide(mkCall("bash", "rm -rf /"), ModeBypass, NewStore(), Hint{IsDangerous: true}, "", "")
+	if d.Behavior != BehaviorAllow {
+		t.Errorf("bypass with no rules should allow; got %v (%s)", d.Behavior, d.Reason)
+	}
+}
+
+func TestDecide_DenyRulePiercesBypass(t *testing.T) {
+	// Deny rules are absolute (RP-24): bypass silences prompts, not
+	// prohibitions. This is what makes "bypass member + deny rules" a usable
+	// trust tier — fully autonomous except for the operator's hard fences.
 	store := NewStore()
 	store.ReplaceAll([]Rule{
 		{ToolName: "bash", Behavior: BehaviorDeny, Source: SourceProject},
 	})
 	d := Decide(mkCall("bash", "rm -rf /"), ModeBypass, store, Hint{}, "", "")
+	if d.Behavior != BehaviorDeny {
+		t.Errorf("deny rule should bind under bypass; got %v (%s)", d.Behavior, d.Reason)
+	}
+}
+
+func TestDecide_AskRuleDoesNotPierceBypass(t *testing.T) {
+	// Ask rules force a prompt where one is possible; bypass exists exactly so
+	// an unattended agent never blocks on one. Only deny pierces bypass.
+	store := NewStore()
+	store.ReplaceAll([]Rule{
+		{ToolName: "bash", Behavior: BehaviorAsk, Source: SourceProject},
+	})
+	d := Decide(mkCall("bash", "make deploy"), ModeBypass, store, Hint{}, "", "")
 	if d.Behavior != BehaviorAllow {
-		t.Errorf("bypass should allow even with deny rule; got %v", d.Behavior)
+		t.Errorf("ask rule should not block bypass; got %v (%s)", d.Behavior, d.Reason)
+	}
+}
+
+// RP-25 sibling-memory fence: a swarm member (memory-homed under
+// <workdir>/agents/) may never write another member's memory dir — in ANY
+// mode, bypass included — while its own dir auto-allows and solo agents
+// (memDir under appHome) are untouched.
+func TestDecide_SiblingMemoryFence(t *testing.T) {
+	wd := t.TempDir()
+	own := filepath.Join(wd, "agents", "sub", "analyst", "memory")
+	foreign := filepath.Join(wd, "agents", "main", "lead", "memory", "notes.md")
+	writeCall := func(path string) ToolCall {
+		return ToolCall{Name: "write", Input: []byte(`{"file_path":` + strconv.Quote(path) + `}`)}
+	}
+
+	for _, mode := range []Mode{ModeDefault, ModeBypass} {
+		d := Decide(writeCall(foreign), mode, NewStore(), Hint{}, wd, own)
+		if d.Behavior != BehaviorDeny {
+			t.Errorf("%s: writing a sibling's memory should deny, got %v (%s)", mode, d.Behavior, d.Reason)
+		}
+	}
+
+	// Own memory dir: the auto-mem carve-out allows without a prompt.
+	d := Decide(writeCall(filepath.Join(own, "lead.md")), ModeDefault, NewStore(), Hint{}, wd, own)
+	if d.Behavior != BehaviorAllow {
+		t.Errorf("own memory write should auto-allow, got %v (%s)", d.Behavior, d.Reason)
+	}
+
+	// Solo agent (memDir under appHome, not the workdir): fence inert — the
+	// same foreign path just asks like any ordinary write.
+	soloMem := filepath.Join(t.TempDir(), "memory")
+	d = Decide(writeCall(foreign), ModeDefault, NewStore(), Hint{}, wd, soloMem)
+	if d.Behavior != BehaviorAsk {
+		t.Errorf("solo agent writing a member memory path should ASK (fence inert), got %v (%s)", d.Behavior, d.Reason)
+	}
+
+	// Non-memory sibling files (e.g. a persona's system_prompt.md) are not
+	// the fence's business.
+	d = Decide(writeCall(filepath.Join(wd, "agents", "main", "lead", "system_prompt.md")), ModeBypass, NewStore(), Hint{}, wd, own)
+	if d.Behavior != BehaviorAllow {
+		t.Errorf("non-memory sibling write under bypass should allow, got %v (%s)", d.Behavior, d.Reason)
 	}
 }
 
@@ -77,7 +151,7 @@ func TestDecide_PlanModeAllowsPlanFileWrite(t *testing.T) {
 	wd := t.TempDir()
 	planPath := filepath.Join(wd, ".evva", "plans", "current.md")
 
-	in := []byte(`{"file_path":"` + planPath + `","content":"# Plan"}`)
+	in := []byte(`{"file_path":` + jstr(planPath) + `,"content":"# Plan"}`)
 	call := ToolCall{Name: "write", Input: in}
 	d := Decide(call, ModePlan, NewStore(), Hint{}, wd, "")
 	if d.Behavior != BehaviorAllow {
@@ -86,14 +160,14 @@ func TestDecide_PlanModeAllowsPlanFileWrite(t *testing.T) {
 
 	// Non-plan path still denies.
 	otherPath := filepath.Join(wd, "main.go")
-	in2 := []byte(`{"file_path":"` + otherPath + `","content":"package main"}`)
+	in2 := []byte(`{"file_path":` + jstr(otherPath) + `,"content":"package main"}`)
 	d = Decide(ToolCall{Name: "write", Input: in2}, ModePlan, NewStore(), Hint{}, wd, "")
 	if d.Behavior != BehaviorDeny {
 		t.Errorf("plan-mode write outside plan dir should deny; got %v", d.Behavior)
 	}
 
 	// Edit also honored.
-	in3 := []byte(`{"file_path":"` + planPath + `","old_string":"a","new_string":"b"}`)
+	in3 := []byte(`{"file_path":` + jstr(planPath) + `,"old_string":"a","new_string":"b"}`)
 	d = Decide(ToolCall{Name: "edit", Input: in3}, ModePlan, NewStore(), Hint{}, wd, "")
 	if d.Behavior != BehaviorAllow {
 		t.Errorf("plan-mode edit on plan file should allow; got %v (%s)", d.Behavior, d.Reason)
@@ -324,7 +398,7 @@ func TestDecide_ConfigNullValueIsWrite(t *testing.T) {
 // --- auto-memory write carve-out (A8) ---
 
 func memWrite(name, path string) ToolCall {
-	return ToolCall{Name: name, Input: []byte(`{"file_path":"` + path + `","content":"x"}`)}
+	return ToolCall{Name: name, Input: []byte(`{"file_path":` + jstr(path) + `,"content":"x"}`)}
 }
 
 func TestDecide_AutoMemWriteAllowsInDefaultAndAcceptEdits(t *testing.T) {

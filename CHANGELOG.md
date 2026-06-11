@@ -12,6 +12,23 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Windows support (WIN-1..8, claims the v1.7 minor).** First-class
+  windows/amd64 + windows/arm64. New `pkg/common/proc` is the single per-OS
+  process seam — `Group`/`KillTree`/`Detach`/`Alive`/`Terminate` (process
+  groups + SIGKILL on unix; `CREATE_NEW_PROCESS_GROUP` + `taskkill /T` on
+  Windows) plus `Shell()`, which resolves `/bin/sh` on unix and Git Bash on
+  Windows (`EVVA_SHELL` override; the System32 WSL launcher is never
+  picked). bash/monitor/repl/lsp/hooks and the service daemonizer all run
+  through it. repl prefers the `py` launcher on Windows; LSP emits
+  drive-letter-correct `file:///C:/...` URIs; `~` expansion consults
+  `os.UserHomeDir`. `evva update` swaps the running exe via rename-aside
+  (`.old` swept at next start). Release workflow ships
+  `evva-windows-*.zip`; CI gains a windows cross-compile gate and a
+  `windows-latest` bring-up job. PRD:
+  `docs/roadmap/PRD/windows-support.md`.
+
 ## [v1.6.0-beta.2] — 2026-06-11
 
 ### Added

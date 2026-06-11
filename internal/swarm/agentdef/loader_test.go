@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func backendDir() string { return filepath.Join("testdata", "agents", "sub", "ba
 func frontDir() string   { return filepath.Join("testdata", "agents", "sub", "frontend-dev") }
 
 func TestBuildLeaderFields(t *testing.T) {
-	got, err := (&Loader{}).Build(leaderDir(), RoleLeader)
+	got, err := (&Loader{}).Build(leaderDir(), RoleLeader, "")
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestBuildLeaderFields(t *testing.T) {
 }
 
 func TestBuildWorkerCronSchedule(t *testing.T) {
-	got, err := (&Loader{}).Build(backendDir(), RoleWorker)
+	got, err := (&Loader{}).Build(backendDir(), RoleWorker, "")
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestBuildWorkerCronSchedule(t *testing.T) {
 }
 
 func TestBuildWorkerEverySchedule(t *testing.T) {
-	got, err := (&Loader{}).Build(frontDir(), RoleWorker)
+	got, err := (&Loader{}).Build(frontDir(), RoleWorker, "")
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestBuildWorkerEverySchedule(t *testing.T) {
 
 func TestBuildMissingPrompt(t *testing.T) {
 	// A dir with no system_prompt.md must error.
-	if _, err := (&Loader{}).Build(t.TempDir(), RoleWorker); err == nil {
+	if _, err := (&Loader{}).Build(t.TempDir(), RoleWorker, ""); err == nil {
 		t.Fatal("want error when system_prompt.md is missing")
 	}
 }
@@ -107,7 +108,7 @@ func TestBuildEmptyPrompt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "system_prompt.md"), []byte("   \n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (&Loader{}).Build(dir, RoleWorker); err == nil {
+	if _, err := (&Loader{}).Build(dir, RoleWorker, ""); err == nil {
 		t.Fatal("want error when system_prompt.md is blank")
 	}
 }
@@ -116,11 +117,11 @@ func TestBuildEmptyPrompt(t *testing.T) {
 // equal results.
 func TestBuildReCallable(t *testing.T) {
 	l := &Loader{}
-	a, err := l.Build(backendDir(), RoleWorker)
+	a, err := l.Build(backendDir(), RoleWorker, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := l.Build(backendDir(), RoleWorker)
+	b, err := l.Build(backendDir(), RoleWorker, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,5 +200,71 @@ func TestBuildAllMissingAgentDir(t *testing.T) {
 	m := Manifest{Name: "x", Leader: Member{Agent: "ghost"}}
 	if _, _, err := (&Loader{}).BuildAll("testdata", m); err == nil {
 		t.Fatal("want error when an agent dir is missing")
+	}
+}
+
+// RP-26 Part A: skills under <workdir>/agents/skills/ load into EVERY member's
+// registry, and a member's own same-named skill wins over the shared copy.
+func TestBuildAllMergesSharedSkills(t *testing.T) {
+	wd := t.TempDir()
+	mkAgent := func(tier, name string) {
+		dir := filepath.Join(wd, "agents", tier, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "system_prompt.md"), []byte("You are "+name+"."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkSkill := func(dir, name, desc string) {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name, "SKILL.md"), []byte("# "+name+" "+desc+"\n\nbody"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkAgent("main", "lead")
+	mkAgent("sub", "risk")
+	mkSkill(SharedSkillsDir(wd), "query-sunday", "shared edition")
+	mkSkill(SharedSkillsDir(wd), "prd-format", "how to file a PRD")
+	// risk carries its own query-sunday — the local copy must shadow the shared one.
+	mkSkill(filepath.Join(wd, "agents", "sub", "risk", "skills"), "query-sunday", "risk's local edition")
+
+	m := Manifest{Leader: Member{Agent: "lead"}, Workers: []Member{{Agent: "risk"}}}
+	loaded, warnings, err := NewLoader().BuildAll(wd, m)
+	if err != nil {
+		t.Fatalf("BuildAll: %v", err)
+	}
+
+	skillDesc := func(ld Loaded, name string) string {
+		meta, ok := ld.Skills.Get(name)
+		if !ok {
+			return ""
+		}
+		return meta.Description
+	}
+	// Both members see the shared catalog.
+	for _, ld := range loaded {
+		if skillDesc(ld, "prd-format") != "how to file a PRD" {
+			t.Errorf("%s missing the shared skill: %v", ld.Def.Name, ld.Skills.Names())
+		}
+	}
+	// Leader (no local copy) gets the shared edition; risk's local one wins.
+	if got := skillDesc(loaded[0], "query-sunday"); got != "shared edition" {
+		t.Errorf("leader query-sunday = %q, want the shared edition", got)
+	}
+	if got := skillDesc(loaded[1], "query-sunday"); got != "risk's local edition" {
+		t.Errorf("risk query-sunday = %q, want the member-local edition (local overrides shared)", got)
+	}
+	// The shadowing surfaces as a warning so the operator can spot drift.
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w.Msg, "query-sunday") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a shadowing warning for query-sunday, got %v", warnings)
 	}
 }

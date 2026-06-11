@@ -107,6 +107,16 @@ func PermissionsPath(workdir string, role Role, name string) string {
 	return filepath.Join(agentDir(workdir, role, name), "permissions.json")
 }
 
+// SharedSkillsDir is the space-level shared skill directory
+// (<workdir>/agents/skills/, RP-26): skills every member loads, merged UNDER
+// each member's own skills/ (a member's same-named skill wins — local
+// overrides global). Deliberately flat beside main/ and sub/ — it carries no
+// role semantics. User-authored only (drop a <skill>/SKILL.md folder in),
+// matching the RP-10 discipline: agents load skills, they don't author them.
+func SharedSkillsDir(workdir string) string {
+	return filepath.Join(workdir, "agents", "skills")
+}
+
 // MemoryDir is a member's long-term memory directory (<agentDir>/memory/,
 // RP-25): typed *.md memory files plus the MEMORY.md index, living beside the
 // persona so it rides the same git/.gitignore decision as agents/. The space

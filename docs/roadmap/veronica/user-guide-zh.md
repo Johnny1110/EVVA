@@ -114,6 +114,8 @@ evva service stop
 my-team/
 ├── evva-swarm.yml                 # 清单：团队由谁组成
 └── agents/
+    ├── skills/                    # 选填：space 级共享 skills（全员可载入；成员同名私有版优先）
+    │   └── query-sunday/SKILL.md
     ├── main/                      # leader 放这里
     │   └── leader/
     │       ├── system_prompt.md   # 必填：agent 的人设/指令
@@ -358,6 +360,12 @@ Web 界面（`:8888`）针对每个 space 提供：
     （「马上停」）能立刻送达（*drain B*）。
 - **定时唤醒。** 在 `profile.yml` 里配了 `schedule` 的成员会按该节奏被运行
   （心跳 / 自检）。没有唤醒源的成员保持空闲，**不烧 token**。
+- **共享 skills。** 全队共用的 know-how（查某个端点的方法、开票格式）放**一份**在
+  `agents/skills/<名字>/SKILL.md`，所有成员的 skill 清单都会带出它 —— 不用再逐成员
+  复制贴上、改版改 N 处。成员私有 `skills/` 里的**同名 skill 优先**（局部覆写全局，
+  阴影会在注册时以 warning 提示）。共享目录由你（User）放文件维护，agent 只载入不
+  著作（RP-10 纪律不变）；新放进去的文件在**重新注册**（`evva swarm .`）后全量生效，
+  或随任一成员的 Web skill 增删触发该成员的 run 边界 reload。
 - **成员长期记忆。** 每个成员在构建时自动获得 `agents/{main,sub}/<名字>/memory/`
   —— 纯文件、跟着 agents/ 一起进 git 或被 .gitignore，重启天然不丢。带写文件工具
   （write/edit）的成员会被自动注入**记忆纪律协议**：一事一档（带 `name:` /

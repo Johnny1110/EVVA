@@ -74,7 +74,13 @@ type profileYml struct {
 //
 // system_prompt.md is required; tools/active.yml, tools/deferr.yml, profile.yml,
 // and skills/ are optional (absent → empty/zero).
-func (l *Loader) Build(dir string, role Role) (Loaded, error) {
+//
+// sharedSkills, when non-empty, is the space-level shared skill dir (RP-26)
+// merged UNDER the member's own skills/: both load into one registry, and on
+// a name collision the member's version wins (local overrides global — the
+// shadowing is surfaced as a registry warning). "" skips the merge, which is
+// also exactly the pre-RP-26 behavior.
+func (l *Loader) Build(dir string, role Role, sharedSkills string) (Loaded, error) {
 	name := filepath.Base(dir)
 
 	promptBytes, err := os.ReadFile(filepath.Join(dir, "system_prompt.md"))
@@ -106,8 +112,10 @@ func (l *Loader) Build(dir string, role Role) (Loaded, error) {
 	}
 
 	// LoadRegistry never errors (a missing skills/ dir is the normal state);
-	// per-skill problems land in skills.Warnings, surfaced by BuildAll.
-	skills, _ := skill.LoadRegistry(filepath.Join(dir, "skills"), "")
+	// per-skill problems land in skills.Warnings, surfaced by BuildAll. Source
+	// order = (shared, member): the second dir overrides the first on a name
+	// collision, which is the RP-26 precedence — member beats shared.
+	skills, _ := skill.LoadRegistry(sharedSkills, filepath.Join(dir, "skills"))
 
 	def := agent.AgentDefinition{
 		Name:            name,
@@ -130,8 +138,9 @@ func (l *Loader) BuildAll(workdir string, m Manifest) ([]Loaded, []Warning, erro
 	loaded := make([]Loaded, 0, 1+len(m.Workers))
 	var warnings []Warning
 
+	shared := SharedSkillsDir(workdir)
 	add := func(dir string, role Role, mem Member) error {
-		one, err := l.Build(dir, role)
+		one, err := l.Build(dir, role, shared)
 		if err != nil {
 			return err
 		}

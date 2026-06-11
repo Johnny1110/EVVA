@@ -14,6 +14,16 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ### Added
 
+- **Space-shared skills (RP-26 Part A).** A skill dropped at
+  `<workdir>/agents/skills/<name>/SKILL.md` loads into EVERY member's catalog
+  (initial build, hot-add, and run-boundary reload all merge it), so
+  team-wide know-how lives once instead of being copy-pasted per member. A
+  member's own same-named skill wins over the shared copy (local overrides
+  global; the shadowing surfaces as a registration warning). The shared dir
+  is User-authored — agents load skills, they don't author them (the RP-10
+  discipline unchanged); a space without `agents/skills/` behaves exactly as
+  before. Part B (`skill_publish`, the leader's authoring inlet into the
+  shared dir) stays parked on the EX-6 spike per the ticket.
 - **Member-native long-term memory (RP-25).** Every swarm member gets its own
   typed memory directory at `agents/{main,sub}/<name>/memory/` (auto-created
   at construction, hot-add included): one fact per file with frontmatter plus

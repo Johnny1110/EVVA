@@ -75,7 +75,7 @@ func TestWriteMemberDirRoundTrip(t *testing.T) {
 	if err := WriteMemberDir(wd, spec); err != nil {
 		t.Fatalf("WriteMemberDir: %v", err)
 	}
-	ld, err := (&Loader{}).Build(filepath.Join(wd, "agents", "sub", "qa-bot"), RoleWorker)
+	ld, err := (&Loader{}).Build(filepath.Join(wd, "agents", "sub", "qa-bot"), RoleWorker, "")
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

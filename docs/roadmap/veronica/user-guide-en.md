@@ -119,6 +119,8 @@ Create a project directory. The layout is fixed:
 my-team/
 ├── evva-swarm.yml                 # the manifest: who is on the team
 └── agents/
+    ├── skills/                    # optional: space-shared skills (every member loads them; a member's same-named private skill wins)
+    │   └── query-sunday/SKILL.md
     ├── main/                      # leaders live here
     │   └── leader/
     │       ├── system_prompt.md   # required: the agent's persona/instructions
@@ -395,6 +397,16 @@ pick up their tasks, report back, and the board march to **completed**.
 - **Timer wake.** A member with a `schedule` in its `profile.yml` is Run on that
   cadence (a heartbeat / self-check). Members with no wake source sit idle and
   **burn no tokens**.
+- **Shared skills.** Team-wide know-how (how to query an endpoint, the PRD
+  filing format) lives ONCE in `agents/skills/<name>/SKILL.md` and shows up in
+  every member's skill catalog — no more copy-pasting the same SKILL.md into N
+  members and syncing edits by hand. A member's own same-named skill in its
+  private `skills/` wins (local overrides global; the shadowing surfaces as a
+  registration warning). The shared dir is yours (the User's) to maintain by
+  dropping folders in — agents load skills, they don't author them (the RP-10
+  discipline unchanged). Files added there take full effect on re-register
+  (`evva swarm .`), or reach a single member at its next run-boundary reload
+  triggered by any web skill add/delete on that member.
 - **Member long-term memory.** Every member gets `agents/{main,sub}/<name>/memory/`
   at construction — plain files that ride the same git/.gitignore decision as
   agents/ and survive restarts for free. Members with a file-write tool

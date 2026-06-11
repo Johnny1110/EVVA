@@ -159,7 +159,7 @@ func (s *Supervisor) AddMember(name string) error {
 	}
 
 	dir := filepath.Join(s.sp.Workdir, "agents", "sub", name)
-	ld, err := s.sp.loader.Build(dir, agentdef.RoleWorker)
+	ld, err := s.sp.loader.Build(dir, agentdef.RoleWorker, agentdef.SharedSkillsDir(s.sp.Workdir))
 	if err != nil {
 		return fmt.Errorf("swarm: add member %q: %w", name, err)
 	}
@@ -365,9 +365,11 @@ func (s *Supervisor) ReloadMemberSkills(name string) error {
 	if m == nil {
 		return fmt.Errorf("swarm: reload skills: unknown member %q", name)
 	}
-	// skill.LoadRegistry never errors (a missing dir is the empty registry) and reads
-	// ONLY the member's own dir — no bundled/global overlay — matching construction.
-	reg, _ := skill.LoadRegistry(agentdef.SkillsDir(s.sp.Workdir, role, name), "")
+	// skill.LoadRegistry never errors (a missing dir is the empty registry).
+	// Source order (shared, member) matches construction exactly (RP-26): the
+	// space-shared dir under the member's own, member wins on collision — so a
+	// reload can also pick up a freshly dropped shared skill for this member.
+	reg, _ := skill.LoadRegistry(agentdef.SharedSkillsDir(s.sp.Workdir), agentdef.SkillsDir(s.sp.Workdir, role, name))
 	m.mu.Lock()
 	m.pendingSkills = reg
 	m.mu.Unlock()

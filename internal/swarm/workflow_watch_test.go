@@ -14,6 +14,11 @@ import (
 // directly — they are tick-goroutine-only state, and these tests never Start
 // the supervisor, so there is no tick to race.
 
+// Thresholds in these tests are 300ms with 500ms waits — wide enough that a
+// slow CI runner (Windows especially) cannot age a "fresh" row past the
+// threshold between a store write and the next sweep call. The proper fix is
+// an injected clock; until then, margins.
+//
 // watchSpace is ctlSpace plus the RP-22 settings and live metrics the
 // watchdog reads.
 func watchSpace(t *testing.T, taskStale, mailboxStale time.Duration) (*SwarmSpace, *Supervisor) {
@@ -70,7 +75,7 @@ func runningTask(t *testing.T, sp *SwarmSpace, title string) int64 {
 }
 
 func TestStaleTaskRemindsOncePerStay(t *testing.T) {
-	sp, sup := watchSpace(t, 20*time.Millisecond, 0)
+	sp, sup := watchSpace(t, 300*time.Millisecond, 0)
 	id := runningTask(t, sp, "build the API")
 
 	// Fresh task: not yet stale.
@@ -79,7 +84,7 @@ func TestStaleTaskRemindsOncePerStay(t *testing.T) {
 		t.Fatalf("fresh task should not remind; leader got %v", got)
 	}
 
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	sup.sweepStaleTasks(time.Now())
 	leaderMail := unreadBodies(t, sp, "leader")
 	if len(leaderMail) != 1 || !strings.Contains(leaderMail[0], "task #1 stale: running") {
@@ -108,7 +113,7 @@ func TestStaleTaskRemindsOncePerStay(t *testing.T) {
 	if got := unreadBodies(t, sp, "leader"); len(got) != 1 {
 		t.Fatalf("verifying within threshold should not remind yet; got %d", len(got))
 	}
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	sup.sweepStaleTasks(time.Now())
 	leaderMail = unreadBodies(t, sp, "leader")
 	if len(leaderMail) != 2 || !strings.Contains(leaderMail[1], "verifying") || !strings.Contains(leaderMail[1], "task_verify") {
@@ -121,12 +126,12 @@ func TestStaleTaskRemindsOncePerStay(t *testing.T) {
 }
 
 func TestStaleTaskSuspendedAndDisabledExempt(t *testing.T) {
-	sp, sup := watchSpace(t, 20*time.Millisecond, 0)
+	sp, sup := watchSpace(t, 300*time.Millisecond, 0)
 	id := runningTask(t, sp, "parked work")
 	if err := sp.Store.TransitionTask(id, store.StatusSuspended, store.Actor{Name: "leader", Role: store.RoleLeader}, ""); err != nil {
 		t.Fatalf("TransitionTask suspended: %v", err)
 	}
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	sup.sweepStaleTasks(time.Now())
 	if got := unreadBodies(t, sp, "leader"); len(got) != 0 {
 		t.Fatalf("suspended is deliberate parking — no reminder, got %v", got)
@@ -135,7 +140,7 @@ func TestStaleTaskSuspendedAndDisabledExempt(t *testing.T) {
 	// Threshold "0" = off: a stale running task stays silent.
 	spOff, supOff := watchSpace(t, 0, 0)
 	runningTask(t, spOff, "ignored")
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	supOff.sweepWorkflow(time.Now())
 	if got := unreadBodies(t, spOff, "leader"); len(got) != 0 {
 		t.Fatalf("disabled watchdog must change nothing, got %v", got)
@@ -143,14 +148,14 @@ func TestStaleTaskSuspendedAndDisabledExempt(t *testing.T) {
 }
 
 func TestStaleMailboxAlertsOncePerEpisode(t *testing.T) {
-	sp, sup := watchSpace(t, 0, 20*time.Millisecond)
+	sp, sup := watchSpace(t, 0, 300*time.Millisecond)
 	sp.Roster.setMembership("w", MembershipFrozen)
 
 	id, err := sp.Bus.Send(store.Message{Sender: "leader", Recipient: "w", Body: "are you alive?"})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	sup.sweepStaleMailboxes(time.Now())
 
 	userMail := unreadBodies(t, sp, "user")
@@ -182,7 +187,7 @@ func TestStaleMailboxAlertsOncePerEpisode(t *testing.T) {
 	if _, err := sp.Bus.Send(store.Message{Sender: "leader", Recipient: "w", Body: "still there?"}); err != nil {
 		t.Fatalf("Send #2: %v", err)
 	}
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	sup.sweepStaleMailboxes(time.Now())
 	if got := unreadBodies(t, sp, "user"); len(got) != 2 {
 		t.Fatalf("new episode should alert again; operator has %d", len(got))
@@ -194,13 +199,13 @@ func TestStaleMailboxAlertsOncePerEpisode(t *testing.T) {
 }
 
 func TestStaleMailboxLeaderBacklogGoesToOperatorOnly(t *testing.T) {
-	sp, sup := watchSpace(t, 0, 20*time.Millisecond)
+	sp, sup := watchSpace(t, 0, 300*time.Millisecond)
 	sp.Roster.setRun("leader", RunSuspended)
 
 	if _, err := sp.Bus.Send(store.Message{Sender: "w", Recipient: "leader", Body: "report"}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	sup.sweepStaleMailboxes(time.Now())
 
 	userMail := unreadBodies(t, sp, "user")
@@ -215,11 +220,11 @@ func TestStaleMailboxLeaderBacklogGoesToOperatorOnly(t *testing.T) {
 }
 
 func TestSweepWorkflowThrottle(t *testing.T) {
-	sp, sup := watchSpace(t, 20*time.Millisecond, 0)
+	sp, sup := watchSpace(t, 300*time.Millisecond, 0)
 	sup.workflowSweepInterval = time.Hour
 
 	runningTask(t, sp, "first")
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	now := time.Now()
 	sup.sweepWorkflow(now)
 	if got := unreadBodies(t, sp, "leader"); len(got) != 1 {
@@ -228,7 +233,7 @@ func TestSweepWorkflowThrottle(t *testing.T) {
 
 	// A second stale task appears, but the throttle holds the next pass.
 	runningTask(t, sp, "second")
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	sup.sweepWorkflow(time.Now())
 	if got := unreadBodies(t, sp, "leader"); len(got) != 1 {
 		t.Fatalf("throttled sweep must not scan; got %d", len(got))

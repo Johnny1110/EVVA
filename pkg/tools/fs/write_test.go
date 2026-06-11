@@ -18,7 +18,7 @@ func TestWrite_NewFileSkipsReadGuard(t *testing.T) {
 	tool := NewWrite(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":"hello"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":"hello"}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -40,7 +40,7 @@ func TestWrite_OverwriteBlockedWithoutPriorRead(t *testing.T) {
 	tool := NewWrite(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":"new"}`))
 
 	if !res.IsError {
 		t.Fatal("expected guard to block overwrite without prior read")
@@ -74,7 +74,7 @@ func TestWrite_OverwriteBlockedOnMtimeDrift(t *testing.T) {
 
 	tool := NewWrite(tr, "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":"new"}`))
 	if !res.IsError {
 		t.Fatal("expected mtime-drift rejection")
 	}
@@ -95,7 +95,7 @@ func TestWrite_OverwriteAllowedAfterPartialView(t *testing.T) {
 
 	tool := NewWrite(tr, "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":"new"}`))
 	if res.IsError {
 		t.Fatalf("overwrite after partial-view read should succeed; got %q", res.Content)
 	}
@@ -112,7 +112,7 @@ func TestWrite_OverwriteAllowedAfterRead(t *testing.T) {
 	tool := NewWrite(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":"new"}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -135,7 +135,7 @@ func TestWrite_AutoMkdirsMissingParents(t *testing.T) {
 	tool := NewWrite(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+deep+`","content":"x"}`))
+		json.RawMessage(`{"file_path":`+jstr(deep)+`,"content":"x"}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -151,7 +151,7 @@ func TestWrite_EmptyContent(t *testing.T) {
 	tool := NewWrite(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":""}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":""}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -198,7 +198,7 @@ func TestWrite_MissingFilePath(t *testing.T) {
 func TestWrite_MissingContent(t *testing.T) {
 	dir := t.TempDir()
 	tool := NewWrite(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+filepath.Join(dir, "f.txt")+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(filepath.Join(dir, "f.txt"))+`}`))
 	if !res.IsError {
 		t.Fatalf("expected error for missing content")
 	}
@@ -238,7 +238,7 @@ func TestWrite_PreservesUTF16LEOnOverwrite(t *testing.T) {
 
 	tool := NewWrite(tr, "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":"new"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":"new"}`))
 	if res.IsError {
 		t.Fatalf("UTF-16 overwrite should succeed: %s", res.Content)
 	}
@@ -269,7 +269,7 @@ func TestWrite_DoesNotRestoreCRLF(t *testing.T) {
 	tool := NewWrite(tr, "")
 	// Model sends LF content — Write must respect that.
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":"x\ny\n"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":"x\ny\n"}`))
 	if res.IsError {
 		t.Fatalf("overwrite should succeed: %s", res.Content)
 	}
@@ -296,7 +296,7 @@ func TestWrite_DiffUsesNormalizedPriorContent(t *testing.T) {
 
 	tool := NewWrite(tr, "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","content":"line1\nLINE2\n"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"content":"line1\nLINE2\n"}`))
 	if res.IsError {
 		t.Fatalf("overwrite should succeed: %s", res.Content)
 	}

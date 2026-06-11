@@ -64,6 +64,17 @@ func runCommand(
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr
+	// Same teardown discipline as the bash tool: kill the whole tree on
+	// timeout (a hook that spawns children would otherwise keep the output
+	// pipes open past the deadline — on Windows bash can't exec-replace
+	// itself, so even `sleep 5` is a grandchild) and bound how long Wait
+	// may sit on fds the kill missed.
+	proc.Group(c)
+	c.Cancel = func() error {
+		_ = proc.KillTree(c)
+		return nil
+	}
+	c.WaitDelay = 2 * time.Second
 
 	start := time.Now()
 	err := c.Run()

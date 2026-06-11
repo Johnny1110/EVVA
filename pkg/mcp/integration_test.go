@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,10 @@ func buildEchoServer(t *testing.T) string {
 		t.Skip("go toolchain not available; skipping stdio MCP integration test")
 	}
 	bin := filepath.Join(t.TempDir(), "echo-server")
+	if runtime.GOOS == "windows" {
+		// Without the extension Windows refuses to exec the file.
+		bin += ".exe"
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, goBin, "build", "-o", bin, "./testdata/stdio-echo-server")

@@ -25,10 +25,15 @@ type Config struct {
 //  1. cfg.Output (explicit override — useful for tests)
 //  2. file in cfg.LogDir named "{agentId}+{timestamp}.log"
 //  3. os.Stdout
-func New(cfg Config) (*slog.Logger, error) {
-	writer, err := resolveWriter(cfg)
+//
+// The returned io.Closer owns the log file when New opened one (nil
+// otherwise) — the agent must Close it on shutdown. Leaving it open
+// merely leaked an fd on unix, but on Windows an open log file blocks
+// deletion of its directory (TempDir cleanup, space removal, rotation).
+func New(cfg Config) (*slog.Logger, io.Closer, error) {
+	writer, closer, err := resolveWriter(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("logger: resolve writer: %w", err)
+		return nil, nil, fmt.Errorf("logger: resolve writer: %w", err)
 	}
 
 	opts := &slog.HandlerOptions{
@@ -46,13 +51,13 @@ func New(cfg Config) (*slog.Logger, error) {
 	// Bind agentId as a permanent attribute on every log record.
 	// slog.Logger.With() returns a child logger that prepends the
 	// given attrs to every Handle() call — zero overhead at call sites.
-	return slog.New(handler).With("AGENT_ID", cfg.AgentID), nil
+	return slog.New(handler).With("AGENT_ID", cfg.AgentID), closer, nil
 }
 
 // OfAgent constructs a logger using the supplied runtime configuration.
 // cfg may be nil — the logger falls back to stdout in that case (useful
-// for tests).
-func OfAgent(cfg *config.Config, parentID, agentID string) (*slog.Logger, error) {
+// for tests). The io.Closer follows New's contract.
+func OfAgent(cfg *config.Config, parentID, agentID string) (*slog.Logger, io.Closer, error) {
 	if cfg == nil {
 		return New(Config{AgentID: agentID})
 	}
@@ -77,24 +82,26 @@ func OfAgent(cfg *config.Config, parentID, agentID string) (*slog.Logger, error)
 	})
 }
 
-// resolveWriter decides the io.Writer for the logger.
-// Separation of concerns: writer resolution is pure I/O policy,
+// resolveWriter decides the io.Writer for the logger and, when it opens
+// a file itself, returns it as the closer the caller must eventually
+// Close. Separation of concerns: writer resolution is pure I/O policy,
 // handler construction is pure formatting policy — keep them apart.
-func resolveWriter(cfg Config) (io.Writer, error) {
-	// Explicit override wins — supports testing with bytes.Buffer.
+func resolveWriter(cfg Config) (io.Writer, io.Closer, error) {
+	// Explicit override wins — supports testing with bytes.Buffer. The
+	// caller owns its writer's lifecycle, so no closer.
 	if cfg.Output != nil {
-		return cfg.Output, nil
+		return cfg.Output, nil, nil
 	}
 
-	// No log dir → stdout.
+	// No log dir → stdout (never ours to close).
 	if cfg.LogDir == "" {
-		return os.Stdout, nil
+		return os.Stdout, nil, nil
 	}
 
 	// MkdirAll is idempotent: no-op if dir already exists,
 	// creates the full path (including parents) otherwise.
 	if err := os.MkdirAll(cfg.LogDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create log dir %q: %w", cfg.LogDir, err)
+		return nil, nil, fmt.Errorf("create log dir %q: %w", cfg.LogDir, err)
 	}
 
 	filename := buildFilename(cfg.AgentID)
@@ -104,13 +111,13 @@ func resolveWriter(cfg Config) (io.Writer, error) {
 	// (e.g. after a restart) won't truncate the existing log.
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("open log file %q: %w", path, err)
+		return nil, nil, fmt.Errorf("open log file %q: %w", path, err)
 	}
 
 	// File-only when LOG_DIR is set: stdout is reserved for user-facing output
 	// (e.g. the final answer from the CLI) so per-agent log files actually stay
 	// separated. Drop LOG_DIR to get noisy stdout-only behavior during dev.
-	return f, nil
+	return f, f, nil
 }
 
 // buildFilename produces "{agentId}+{timestamp}.log".

@@ -117,7 +117,7 @@ func TestEventLogIntegration(t *testing.T) {
 	m := stubManifest()
 	m.Settings.EventLog = true
 	cfg := stubConfig(t)
-	idOn, err := svc.register("sp-evlog-on", "evlog-on", m, stubLoaded(), cfg)
+	idOn, err := svc.register("sp-evlog-on", "evlog-on", m, stubLoaded(), cfg, false)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestEventLogIntegration(t *testing.T) {
 
 	// Toggle OFF (the plain stub): same activity, no events dir.
 	cfgOff := stubConfig(t)
-	idOff, err := svc.register("sp-evlog-off", "evlog-off", stubManifest(), stubLoaded(), cfgOff)
+	idOff, err := svc.register("sp-evlog-off", "evlog-off", stubManifest(), stubLoaded(), cfgOff, false)
 	if err != nil {
 		t.Fatalf("register off: %v", err)
 	}

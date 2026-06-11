@@ -114,9 +114,10 @@ func newListMembers(mc swarm.MemberContext) pubtools.Tool {
 				}
 				// Always surface the member's crontab (RP-7 §3.5): read live from
 				// the space (the schedule's owner) so a leader whose context was
-				// compacted re-learns who it put on duty every time it lists.
-				if sch, ok := mc.Space.ScheduleFor(m.Name); ok {
-					fmt.Fprintf(&b, "  ⏰ %s", formatSchedule(sch))
+				// compacted re-learns who it put on duty every time it lists. The
+				// origin tag tells a manifest cadence from a runtime-set one (RP-20).
+				if sch, origin, ok := mc.Space.ScheduleInfoFor(m.Name); ok {
+					fmt.Fprintf(&b, "  ⏰ %s %s", formatSchedule(sch), formatScheduleOrigin(origin))
 				}
 				b.WriteByte('\n')
 				// One-shot alarms aimed at this member (RP-7 sibling): surface them

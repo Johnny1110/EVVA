@@ -41,6 +41,16 @@ type Supervisor struct {
 	vacuumDay  string
 	vacuumBusy atomic.Bool
 
+	// RP-22 workflow-watchdog state — tick-goroutine-only, the vacuumDay
+	// pattern (tests that call the sweeps directly never Start the tick).
+	// lastWorkflowSweep throttles the ledger checks to workflowSweepInterval;
+	// the two maps are the anti-spam marks (one reminder per task stay, one
+	// alert per mailbox backlog episode) and reset on restart by design.
+	workflowSweepInterval time.Duration
+	lastWorkflowSweep     time.Time
+	staleTaskNotified     map[int64]staleTaskKey
+	mailboxAlerted        map[string]bool
+
 	// mu guards members + each member's schedule/nextDue (only the tick touches
 	// those). A member's volatile run state (suspended/cancelRun) is guarded by
 	// the member's own mutex; see memberRun.
@@ -78,10 +88,11 @@ func NewSupervisor(sp *SwarmSpace) *Supervisor {
 		// log) rather than io.Discard, so a swarm runs observable out of the
 		// box; SetLogger overrides it. The old discard default is why the
 		// run loop was invisible during debugging.
-		log:            slog.Default(),
-		tickInterval:   defaultTickInterval,
-		rescanInterval: defaultRescanInterval,
-		members:        make(map[string]*memberRun),
+		log:                   slog.Default(),
+		tickInterval:          defaultTickInterval,
+		rescanInterval:        defaultRescanInterval,
+		workflowSweepInterval: defaultWorkflowSweepInterval,
+		members:               make(map[string]*memberRun),
 	}
 	// Back-reference so the leader's schedule tools (which hold only the space)
 	// can reach this run engine via sp.SetMemberSchedule. One supervisor per
@@ -229,6 +240,10 @@ func (s *Supervisor) RemoveMember(name string) error {
 	s.sp.Roster.remove(name)
 	s.sp.Bus.Deregister(name)
 	s.sp.removeAgent(name)
+	// A removed member's runtime schedule override dies with it (row and
+	// tombstone alike) — a later re-add starts from the manifest, not from a
+	// cadence set against the old incarnation (RP-20).
+	_ = s.store.DeleteSchedule(name)
 	s.sp.persistRuntime()
 	return nil
 }
@@ -265,19 +280,35 @@ func (s *Supervisor) Unfreeze(name string) error {
 
 // SetSchedule puts a member on (or replaces) a recurring timer schedule and
 // applies it to the running loop immediately (fixing the old "seeded once at
-// startMemberLoop" gap, RP-7 §3.4). It updates two representations in separate
-// critical sections to preserve the package lock order s.mu → sp.mu (never
-// nested): the live memberRun (read by the tick under s.mu) and sp.schedules
-// (the declared/persist source under sp.mu), then persists so a leader-set cron
-// survives a service restart. A bad cron or empty spec is rejected up front.
+// startMemberLoop" gap, RP-7 §3.4). Both runtime write paths — the leader's
+// schedule_set tool (via sp.SetMemberSchedule) and the operator's web edit
+// (via Service.SetSchedule) — converge here, so this is where the durable
+// row lands (RP-20): store first, live loop second; if the row can't be
+// written the loop is left untouched and the caller sees the error. The two
+// live representations update in separate critical sections to preserve the
+// package lock order s.mu → sp.mu (never nested): the memberRun (read by the
+// tick under s.mu) and sp.schedules + provenance (under sp.mu). A bad cron,
+// empty spec, or unknown member is rejected up front — a row for a member
+// that doesn't exist would lie dormant and apply to a future namesake.
 func (s *Supervisor) SetSchedule(name string, sch agentdef.Schedule) error {
+	if _, ok := s.sp.Roster.membership(name); !ok {
+		return fmt.Errorf("swarm: schedule: unknown member %q", name)
+	}
 	if err := sch.Validate(); err != nil {
 		return err
 	}
-	due, err := sch.Next(time.Now())
+	now := time.Now()
+	due, err := sch.Next(now)
 	if err != nil {
 		return err
 	}
+	if err := s.store.PutSchedule(store.ScheduleRow{
+		Member: name, Cron: sch.Cron, EveryNS: int64(sch.Every), Prompt: sch.Prompt,
+		UpdatedAt: now.UnixMilli(),
+	}); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	if m, ok := s.members[name]; ok {
 		cp := sch
@@ -286,19 +317,26 @@ func (s *Supervisor) SetSchedule(name string, sch agentdef.Schedule) error {
 	}
 	s.mu.Unlock()
 
-	s.sp.mu.Lock()
-	s.sp.schedules[name] = sch
-	s.sp.mu.Unlock()
-
-	s.sp.persistRuntime()
+	s.sp.setRuntimeSchedule(name, sch, now.UnixMilli())
 	return nil
 }
 
-// ClearSchedule removes a member's recurring schedule from both the running loop
-// and the declared/persist source, then persists (so the removal survives a
-// restart — a manifest-declared schedule the leader cleared stays cleared). A
-// member with no schedule is a no-op.
+// ClearSchedule removes a member's recurring schedule from the running loop
+// and writes a TOMBSTONE row (not a delete): "the leader cleared this
+// crontab" must survive a restart and beat a schedule the manifest still
+// declares (RP-20 §2.2). A member with no schedule still gets the tombstone —
+// predictable semantics: after a clear, the member has no schedule until the
+// next set or a fresh register.
 func (s *Supervisor) ClearSchedule(name string) error {
+	if _, ok := s.sp.Roster.membership(name); !ok {
+		return fmt.Errorf("swarm: schedule: unknown member %q", name)
+	}
+	if err := s.store.PutSchedule(store.ScheduleRow{
+		Member: name, Cleared: true, UpdatedAt: time.Now().UnixMilli(),
+	}); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	if m, ok := s.members[name]; ok {
 		m.schedule = nil
@@ -306,11 +344,7 @@ func (s *Supervisor) ClearSchedule(name string) error {
 	}
 	s.mu.Unlock()
 
-	s.sp.mu.Lock()
-	delete(s.sp.schedules, name)
-	s.sp.mu.Unlock()
-
-	s.sp.persistRuntime()
+	s.sp.dropScheduleEntry(name)
 	return nil
 }
 

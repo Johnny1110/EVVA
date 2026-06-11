@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/johnny1110/evva/internal/swarm"
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
@@ -19,31 +20,32 @@ import (
 // read-only task views plus the common send_message/list_members.
 func TestToolNamesForRole(t *testing.T) {
 	leader := toolNamesForRole(agentdef.RoleLeader)
-	wantLeader := []string{toolSendMessage, toolListMembers, toolAlarmSet, toolAlarmClear, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList, toolScheduleSet, toolScheduleClear}
+	wantLeader := []string{toolSendMessage, toolListMembers, toolAlarmSet, toolAlarmClear, toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify, toolTaskList, toolScheduleSet, toolScheduleClear, toolProposalList, toolProposalAccept, toolProposalDecline}
 	if !reflect.DeepEqual(leader, wantLeader) {
 		t.Fatalf("leader tools = %v\nwant %v", leader, wantLeader)
 	}
 
 	worker := toolNamesForRole(agentdef.RoleWorker)
-	wantWorker := []string{toolSendMessage, toolListMembers, toolAlarmSet, toolAlarmClear, toolMyTasks, toolTaskGet}
+	wantWorker := []string{toolSendMessage, toolListMembers, toolAlarmSet, toolAlarmClear, toolMyTasks, toolTaskGet, toolTaskPropose}
 	if !reflect.DeepEqual(worker, wantWorker) {
 		t.Fatalf("worker tools = %v\nwant %v", worker, wantWorker)
 	}
 
 	for _, n := range worker {
 		switch n {
-		case toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify:
+		case toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify,
+			toolProposalAccept, toolProposalDecline:
 			t.Errorf("worker must not hold write tool %q", n)
 		}
 	}
 }
 
 func TestSetForReturnsOptionPerTool(t *testing.T) {
-	if got := len(Set{}.For("leader", agentdef.RoleLeader, nil)); got != 11 {
-		t.Errorf("leader options = %d, want 11", got)
+	if got := len(Set{}.For("leader", agentdef.RoleLeader, nil)); got != 14 {
+		t.Errorf("leader options = %d, want 14", got)
 	}
-	if got := len(Set{}.For("w", agentdef.RoleWorker, nil)); got != 6 {
-		t.Errorf("worker options = %d, want 6", got)
+	if got := len(Set{}.For("w", agentdef.RoleWorker, nil)); got != 7 {
+		t.Errorf("worker options = %d, want 7", got)
 	}
 }
 
@@ -61,6 +63,7 @@ func TestPermissionClassification(t *testing.T) {
 		toolTaskCreate, toolTaskAssign, toolTaskUpdateStatus, toolTaskVerify,
 		toolScheduleSet, toolScheduleClear,
 		toolAlarmSet, toolAlarmClear,
+		toolTaskPropose, toolProposalList, toolProposalAccept, toolProposalDecline,
 	}
 	for _, n := range autoAllow {
 		if b := decide(n); b != permission.BehaviorAllow {
@@ -453,7 +456,9 @@ func TestScheduleSetRejectsUnknownMemberAndBadCron(t *testing.T) {
 }
 
 // list_members surfaces each member's crontab inline (RP-7 §3.5) — pinned to a
-// re-queryable place so a compacted leader never loses who it scheduled.
+// re-queryable place so a compacted leader never loses who it scheduled — and
+// tags its origin (RP-20 §2.5): a runtime-set cadence reads "(runtime, set
+// <date>)" so leader and operator can tell it from a manifest seed at a glance.
 func TestListMembersShowsCrontab(t *testing.T) {
 	sp := realSpace(t)
 	_ = swarm.NewSupervisor(sp)
@@ -465,8 +470,22 @@ func TestListMembersShowsCrontab(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("list_members: %s", res.Content)
 	}
-	if !strings.Contains(res.Content, `⏰ cron "*/15 * * * *": "health check"`) {
-		t.Errorf("list_members missing worker-a's crontab line, got:\n%s", res.Content)
+	if !strings.Contains(res.Content, `⏰ cron "*/15 * * * *": "health check" (runtime, set `) {
+		t.Errorf("list_members missing worker-a's runtime-tagged crontab line, got:\n%s", res.Content)
+	}
+}
+
+// A manifest-seeded schedule is tagged "(manifest)" in list_members (RP-20).
+func TestFormatScheduleOrigin(t *testing.T) {
+	if got := formatScheduleOrigin(swarm.ScheduleOrigin{}); got != "(manifest)" {
+		t.Errorf("manifest origin = %q", got)
+	}
+	if got := formatScheduleOrigin(swarm.ScheduleOrigin{Runtime: true}); got != "(runtime)" {
+		t.Errorf("runtime origin without instant = %q", got)
+	}
+	got := formatScheduleOrigin(swarm.ScheduleOrigin{Runtime: true, SetAt: 1765429200000})
+	if !strings.HasPrefix(got, "(runtime, set 20") || !strings.HasSuffix(got, ")") {
+		t.Errorf("runtime origin = %q, want a (runtime, set YYYY-MM-DD) tag", got)
 	}
 }
 
@@ -484,5 +503,49 @@ func TestFmtTokens(t *testing.T) {
 		if got := fmtTokens(in); got != want {
 			t.Errorf("fmtTokens(%d) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// RP-22: task_list tags tasks parked in running/verifying beyond the space's
+// task_stale_threshold — the inline twin of the watchdog reminder.
+func TestTaskListMarksStaleTasks(t *testing.T) {
+	loaded := []agentdef.Loaded{
+		{Def: agent.AgentDefinition{Name: "leader", SystemPrompt: "You are leader.", Model: stubModel}, Skills: skill.NewRegistry(), Role: agentdef.RoleLeader},
+		{Def: agent.AgentDefinition{Name: "worker-a", SystemPrompt: "You are worker-a.", Model: stubModel}, Skills: skill.NewRegistry(), Role: agentdef.RoleWorker},
+	}
+	m := agentdef.Manifest{Name: "team", Settings: agentdef.Settings{
+		PermissionMode: "bypass", MaxIterations: 5, TaskStaleThreshold: 10 * time.Millisecond,
+	}}
+	sp, err := swarm.NewSpace("t-stale", m, loaded, nil, stubCfg(t))
+	if err != nil {
+		t.Fatalf("NewSpace: %v", err)
+	}
+	t.Cleanup(sp.Shutdown)
+
+	id, err := sp.Store.CreateTask(store.Task{Title: "slow work", Spec: "s", Assignee: "worker-a", CreatedBy: "leader"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := sp.Store.TransitionTask(id, store.StatusRunning, store.Actor{Name: "leader", Role: store.RoleLeader}, ""); err != nil {
+		t.Fatalf("TransitionTask: %v", err)
+	}
+	time.Sleep(25 * time.Millisecond)
+
+	res := exec(t, newTaskList(leaderMC(sp)), `{}`)
+	if res.IsError {
+		t.Fatalf("task_list: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "⏳ stale") {
+		t.Errorf("task_list missing the stale tag:\n%s", res.Content)
+	}
+
+	// A pending task — even an old one — carries no tag (only running/verifying age).
+	if _, err := sp.Store.CreateTask(store.Task{Title: "queued", Spec: "s", Assignee: "worker-a", CreatedBy: "leader"}); err != nil {
+		t.Fatalf("CreateTask #2: %v", err)
+	}
+	time.Sleep(25 * time.Millisecond)
+	res = exec(t, newTaskList(leaderMC(sp)), `{"status":"pending"}`)
+	if strings.Contains(res.Content, "⏳ stale") {
+		t.Errorf("pending tasks must not be tagged:\n%s", res.Content)
 	}
 }

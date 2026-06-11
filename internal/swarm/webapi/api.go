@@ -57,6 +57,9 @@ type Backend interface {
 	// limit/offset page the rows (completed newest-first), Total is the full count.
 	TasksByStatus(spaceID, status string, limit, offset int) (TaskPage, bool)
 	Messages(spaceID string) ([]MessageInfo, bool)
+	// Proposals lists the space's worker-filed work proposals (RP-23), every
+	// status, oldest first — the web's bottom-up inbox.
+	Proposals(spaceID string) ([]ProposalInfo, bool)
 	Transcript(spaceID, agent string) ([]TranscriptEntry, bool)
 	// PendingGates returns the space's outstanding approval/question gates as raw
 	// wire events (same shape the WS sends), so a reconnecting browser re-renders
@@ -300,11 +303,15 @@ type HealthInfo struct {
 // MetricsInfo is GET /api/swarm/{id}/metrics (RP-17): plain counters, no
 // timeseries — the user-side exporter (if any) owns history.
 type MetricsInfo struct {
-	UptimeSecs    int64                        `json:"uptimeSecs"`
-	EventsLogged  int64                        `json:"eventsLogged"`
-	EventsDropped int64                        `json:"eventsDropped"`
-	HintsDropped  int64                        `json:"hintsDropped"`
-	Members       map[string]MemberMetricsInfo `json:"members"`
+	UptimeSecs    int64 `json:"uptimeSecs"`
+	EventsLogged  int64 `json:"eventsLogged"`
+	EventsDropped int64 `json:"eventsDropped"`
+	HintsDropped  int64 `json:"hintsDropped"`
+	// TasksStale / MailboxStale count RP-22 workflow-watchdog notifications
+	// sent since the space started (stale-task reminders, backlog alerts).
+	TasksStale   int64                        `json:"tasksStale"`
+	MailboxStale int64                        `json:"mailboxStale"`
+	Members      map[string]MemberMetricsInfo `json:"members"`
 }
 
 // MemberMetricsInfo is one member's scheduler counters. RunSeconds buckets
@@ -315,6 +322,23 @@ type MemberMetricsInfo struct {
 	Runs         int64            `json:"runs"`
 	Aborts       int64            `json:"aborts"`
 	RunSeconds   map[string]int64 `json:"runSeconds"`
+}
+
+// ProposalInfo mirrors store.Proposal on the wire
+// (GET /api/swarm/{id}/proposals, RP-23). Status: open | accepted | declined;
+// RefTask is the task an accepted proposal became (0 = none yet).
+type ProposalInfo struct {
+	ID                int64  `json:"id"`
+	Proposer          string `json:"proposer"`
+	Title             string `json:"title"`
+	Spec              string `json:"spec,omitempty"`
+	SuggestedAssignee string `json:"suggestedAssignee,omitempty"`
+	Status            string `json:"status"`
+	DecidedBy         string `json:"decidedBy,omitempty"`
+	DecideNote        string `json:"decideNote,omitempty"`
+	RefTask           int64  `json:"refTask,omitempty"`
+	CreatedAt         int64  `json:"createdAt"`
+	DecidedAt         int64  `json:"decidedAt,omitempty"`
 }
 
 // MessageInfo mirrors store.Message on the wire (GET /api/messages).
@@ -501,6 +525,14 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 	mux.Handle("GET /api/swarm/{id}/pending", guard(func(w http.ResponseWriter, r *http.Request) {
 		if gates, ok := b.PendingGates(r.PathValue("id")); ok {
 			writeJSON(w, http.StatusOK, gates)
+		} else {
+			http.Error(w, "unknown space", http.StatusNotFound)
+		}
+	}))
+	// Bottom-up proposal inbox (RP-23).
+	mux.Handle("GET /api/swarm/{id}/proposals", guard(func(w http.ResponseWriter, r *http.Request) {
+		if ps, ok := b.Proposals(r.PathValue("id")); ok {
+			writeJSON(w, http.StatusOK, ps)
 		} else {
 			http.Error(w, "unknown space", http.StatusNotFound)
 		}

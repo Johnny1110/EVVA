@@ -498,9 +498,19 @@ swarm 是崩溃安全的。在 `evva service stop`（或崩溃）后重新 `evva
 - 每个成员的**对话从中断处续上**，
 - **未读消息重新入列**（不丢信），
 - **任务账本完好**（停在 `running` 的任务仍是 `running`），
-- **被冻结的成员回来时仍是冻结的**。
+- **被冻结的成员回来时仍是冻结的**，
+- **运行期改过的排程不回滚** —— leader 用 `schedule_set` 调过（或你在 web 上改过）
+  的节奏在重启后原样生效；被清掉的排程**保持清掉**，即使 manifest 还声明着它。
+  这些改动以 per-member 行存进 space 的 `.vero` 账本；`list_members` 会给每条
+  crontab 标注来源 —— `(manifest)` 与 `(runtime, set 2026-06-11)` —— 一眼可分。
 
 你什么都不用做 —— 它自然续跑。
+
+运行期没改过排程的成员始终跟随 manifest —— 停机时改 `evva-swarm.yml`，重启后新
+节奏即生效。想把**全部**运行期排程改动清空、整个 space 回到 manifest 原样，重新
+注册即可（`evva swarm rm` + `evva swarm .`）——重新注册就是这个意图的天然表达。
+operator 在 web 上的排程改动还会以 `schedule_change` 行落入 event log（leader 自
+己的 `schedule_set` 调用本来就以工具事件可见）。
 
 ---
 

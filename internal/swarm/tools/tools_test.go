@@ -453,7 +453,9 @@ func TestScheduleSetRejectsUnknownMemberAndBadCron(t *testing.T) {
 }
 
 // list_members surfaces each member's crontab inline (RP-7 §3.5) — pinned to a
-// re-queryable place so a compacted leader never loses who it scheduled.
+// re-queryable place so a compacted leader never loses who it scheduled — and
+// tags its origin (RP-20 §2.5): a runtime-set cadence reads "(runtime, set
+// <date>)" so leader and operator can tell it from a manifest seed at a glance.
 func TestListMembersShowsCrontab(t *testing.T) {
 	sp := realSpace(t)
 	_ = swarm.NewSupervisor(sp)
@@ -465,8 +467,22 @@ func TestListMembersShowsCrontab(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("list_members: %s", res.Content)
 	}
-	if !strings.Contains(res.Content, `⏰ cron "*/15 * * * *": "health check"`) {
-		t.Errorf("list_members missing worker-a's crontab line, got:\n%s", res.Content)
+	if !strings.Contains(res.Content, `⏰ cron "*/15 * * * *": "health check" (runtime, set `) {
+		t.Errorf("list_members missing worker-a's runtime-tagged crontab line, got:\n%s", res.Content)
+	}
+}
+
+// A manifest-seeded schedule is tagged "(manifest)" in list_members (RP-20).
+func TestFormatScheduleOrigin(t *testing.T) {
+	if got := formatScheduleOrigin(swarm.ScheduleOrigin{}); got != "(manifest)" {
+		t.Errorf("manifest origin = %q", got)
+	}
+	if got := formatScheduleOrigin(swarm.ScheduleOrigin{Runtime: true}); got != "(runtime)" {
+		t.Errorf("runtime origin without instant = %q", got)
+	}
+	got := formatScheduleOrigin(swarm.ScheduleOrigin{Runtime: true, SetAt: 1765429200000})
+	if !strings.HasPrefix(got, "(runtime, set 20") || !strings.HasSuffix(got, ")") {
+		t.Errorf("runtime origin = %q, want a (runtime, set YYYY-MM-DD) tag", got)
 	}
 }
 

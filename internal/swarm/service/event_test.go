@@ -22,7 +22,7 @@ func registerStubWithSecret(t *testing.T, s *Service, secret string) string {
 	t.Helper()
 	m := stubManifest()
 	m.Settings.WebhookSecret = secret
-	id, err := s.register(common.GenUUID(), "stub-"+common.GenUUID()[:6], m, stubLoaded(), stubConfig(t))
+	id, err := s.register(common.GenUUID(), "stub-"+common.GenUUID()[:6], m, stubLoaded(), stubConfig(t), false)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}

@@ -402,7 +402,7 @@ func (s *Service) Register(workdir, name string) (string, error) {
 		return "", fmt.Errorf("swarm: name %q is already in use — pick another with --name", eff)
 	}
 	s.mu.Unlock()
-	return s.register(common.GenUUID(), eff, m, loaded, cfg)
+	return s.register(common.GenUUID(), eff, m, loaded, cfg, true)
 }
 
 // loadSpace resolves a workdir to its parsed manifest, built agent definitions,
@@ -435,10 +435,22 @@ func (s *Service) loadSpace(workdir string) (agentdef.Manifest, []agentdef.Loade
 // supervisor and event pump under a fresh child context, and add it to the
 // registry as a RUNNING entry under id+name. Split out so tests, Reconcile, and
 // RunSpace can bring a space up with a chosen id+name without re-resolving it.
-func (s *Service) register(id, name string, m agentdef.Manifest, loaded []agentdef.Loaded, cfg *config.Config) (string, error) {
+//
+// fresh marks an explicit operator registration (`evva swarm .` / web add) as
+// opposed to a restart rebuild (Reconcile, RunSpace, reset). A fresh register
+// is the operator saying "take the manifest as written", so runtime schedule
+// overrides are discarded BEFORE Reload applies them (RP-20 §2.4); a rebuild
+// keeps them — that is the durability this table exists for.
+func (s *Service) register(id, name string, m agentdef.Manifest, loaded []agentdef.Loaded, cfg *config.Config, fresh bool) (string, error) {
 	sp, err := swarm.NewSpace(id, m, loaded, swarmtools.Set{}, cfg)
 	if err != nil {
 		return "", err
+	}
+
+	if fresh {
+		if err := sp.DiscardRuntimeSchedules(); err != nil {
+			s.log.Warn("swarm: discard runtime schedules on register failed — stale overrides may apply", "id", id, "err", err)
+		}
 	}
 
 	// Restore any prior on-disk state (transcripts, unread mail, frozen
@@ -534,7 +546,7 @@ func (s *Service) RunSpace(ref string) (string, error) {
 	s.mu.Lock()
 	delete(s.spaces, id)
 	s.mu.Unlock()
-	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+	if _, err := s.register(id, name, m, loaded, cfg, false); err != nil {
 		s.mu.Lock()
 		s.spaces[id] = &spaceEntry{id: id, name: name, workdir: workdir, status: statusStopped}
 		s.mu.Unlock()
@@ -617,7 +629,7 @@ func (s *Service) ResetSpace(ref string) (string, error) {
 
 	// Rebuild fresh under the same id+name (NewSpace re-opens a migrated db;
 	// Reload finds nothing to resume, so every member starts with empty context).
-	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+	if _, err := s.register(id, name, m, loaded, cfg, false); err != nil {
 		return "", fmt.Errorf("swarm: reset %q: rebuild failed: %w", ref, err)
 	}
 	s.log.Info("swarm: space reset", "id", id, "name", name, "workdir", workdir)
@@ -758,7 +770,7 @@ func (s *Service) rebuild(rec persistedSpace) (string, string, error) {
 		name = s.genNameLocked()
 	}
 	s.mu.Unlock()
-	if _, err := s.register(id, name, m, loaded, cfg); err != nil {
+	if _, err := s.register(id, name, m, loaded, cfg, false); err != nil {
 		return "", "", err
 	}
 	return id, name, nil
@@ -1178,7 +1190,10 @@ func (s *Service) Unfreeze(id, agent string) error {
 // SetSchedule / ClearSchedule are the operator's schedule controls (RP-8). Unlike
 // the leader tool (RP-7), there is NO self-guard: the operator may set or clear
 // ANY member's schedule, including the leader's — the web is the one place a
-// leader's cadence can be changed. Reuses RP-7's live-apply+persist seam.
+// leader's cadence can be changed. The supervisor seam persists the change as a
+// runtime override row (RP-20); the schedule_change line lands in the RP-17
+// event log here because, unlike the leader path, an operator edit produces no
+// tool_use event to self-audit through.
 func (s *Service) SetSchedule(id, agent, cron, prompt string) error {
 	ent, ok := s.entry(id)
 	if !ok {
@@ -1187,7 +1202,12 @@ func (s *Service) SetSchedule(id, agent, cron, prompt string) error {
 	if _, known := ent.space.Roster.Controller(agent); !known {
 		return fmt.Errorf("swarm: unknown member %q", agent)
 	}
-	return ent.super.SetSchedule(agent, agentdef.Schedule{Cron: cron, Prompt: prompt})
+	if err := ent.super.SetSchedule(agent, agentdef.Schedule{Cron: cron, Prompt: prompt}); err != nil {
+		return err
+	}
+	s.log.Info("swarm: schedule set by operator", "space", ent.name, "member", agent, "cron", cron)
+	s.auditScheduleChange(ent, agent, "set", cron, prompt)
+	return nil
 }
 
 func (s *Service) ClearSchedule(id, agent string) error {
@@ -1198,7 +1218,43 @@ func (s *Service) ClearSchedule(id, agent string) error {
 	if _, known := ent.space.Roster.Controller(agent); !known {
 		return fmt.Errorf("swarm: unknown member %q", agent)
 	}
-	return ent.super.ClearSchedule(agent)
+	if err := ent.super.ClearSchedule(agent); err != nil {
+		return err
+	}
+	s.log.Info("swarm: schedule cleared by operator", "space", ent.name, "member", agent)
+	s.auditScheduleChange(ent, agent, "clear", "", "")
+	return nil
+}
+
+// scheduleChangeEvent is the synthetic event-log line for an operator schedule
+// edit — answering "who changed whose cron last night" with one grep over
+// .vero/events/ (RP-20 §5). Leader-driven changes need no synthetic line:
+// their schedule_set/schedule_clear tool_use events already carry the args.
+type scheduleChangeEvent struct {
+	Kind   string `json:"kind"` // "schedule_change"
+	Member string `json:"member"`
+	Action string `json:"action"` // "set" | "clear"
+	Cron   string `json:"cron,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	Source string `json:"source"` // "operator" — the web is the only non-tool writer
+}
+
+// auditScheduleChange mirrors one operator schedule edit into the space's
+// event log. Best-effort like every event-log write: no log (event_log off or
+// space stopping) means no line, never an error.
+func (s *Service) auditScheduleChange(ent *spaceEntry, member, action, cron, prompt string) {
+	log, ok := s.eventLogFor(ent.id)
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(wireEvent{SpaceID: ent.id, Event: scheduleChangeEvent{
+		Kind: "schedule_change", Member: member, Action: action,
+		Cron: cron, Prompt: prompt, Source: "operator",
+	}})
+	if err != nil {
+		return
+	}
+	log.Offer(payload)
 }
 
 // MemberSkills / AddSkill / DeleteSkill are the operator's agent-skills controls

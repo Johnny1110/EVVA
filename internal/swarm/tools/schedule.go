@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/johnny1110/evva/internal/swarm"
 	"github.com/johnny1110/evva/internal/swarm/agentdef"
@@ -23,6 +24,19 @@ func formatSchedule(sch agentdef.Schedule) string {
 		return fmt.Sprintf("%s: %q", cadence, p)
 	}
 	return cadence
+}
+
+// formatScheduleOrigin renders a schedule's provenance so the leader (and the
+// operator reading the leader's transcript) can tell a manifest-declared
+// cadence from one set at runtime, and when (RP-20 §2.5).
+func formatScheduleOrigin(o swarm.ScheduleOrigin) string {
+	if !o.Runtime {
+		return "(manifest)"
+	}
+	if o.SetAt > 0 {
+		return fmt.Sprintf("(runtime, set %s)", time.UnixMilli(o.SetAt).Local().Format("2006-01-02"))
+	}
+	return "(runtime)"
 }
 
 // newScheduleSet builds the Leader's schedule_set tool: put a member on a

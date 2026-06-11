@@ -766,6 +766,7 @@ Replies: new → 202, duplicate `idempotency_key` → 200, bad/missing secret �
 | `evva swarm stop <id>` | Stop (and drop) one space. |
 | `evva swarm add <id> <member>` | Hot-load a worker (`agents/sub/<member>/`) into a space. |
 | `evva swarm vacuum <ref> [--days N] [--dry-run]` | Archive-then-delete consumed history (RP-16); dry-run previews. |
+| `evva swarm send <ref> <member> <text\|->` | Message a member as the operator (sender=`user` — identical semantics to the web composer): an idle member wakes on it, a busy one folds it into its current run; prints the durable message id as the receipt. `-` reads the body from stdin (script pipelines); `member` may be the role `leader`. A typo'd name comes back with the valid-recipient list (RP-27). |
 
 ### Environment variables
 

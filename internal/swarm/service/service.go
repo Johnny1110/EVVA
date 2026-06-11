@@ -1144,30 +1144,39 @@ func (s *Service) Run(id, agent, prompt string) error {
 // exact path inter-agent mail takes — so the supervisor's wake/drain delivers it
 // without any new orchestration: an idle member is woken (drain A), a busy one
 // folds it mid-run (drain B), and the task ledger is untouched. This is the
-// non-disruptive core of flat operator↔member comms.
-func (s *Service) SendUserMessage(id, to, subject, body string) error {
+// non-disruptive core of flat operator↔member comms. Returns the durable
+// message id (RP-27: the CLI prints it as the send receipt; broadcasts return
+// the shared broadcast id).
+func (s *Service) SendUserMessage(id, to, subject, body string) (string, error) {
 	ent, ok := s.entry(id)
 	if !ok {
-		return fmt.Errorf("swarm: unknown space %q", id)
+		return "", fmt.Errorf("swarm: unknown space %q", id)
 	}
 	if strings.TrimSpace(body) == "" {
-		return fmt.Errorf("swarm: message body is required")
+		return "", fmt.Errorf("swarm: message body is required")
 	}
 	// Role-addressing (§3.5): let an operator address "leader" without knowing
 	// its member name; "all" and exact names pass through unchanged.
 	to = ent.space.Roster.ResolveRecipient(to)
 	if to != store.RecipientAll {
 		if _, known := ent.space.Roster.Controller(to); !known {
-			return fmt.Errorf("swarm: unknown member %q", to)
+			// List the real names (the rosterHas convention): a typo from the
+			// CLI/web comes back correctable instead of a dead end. "unknown"
+			// keeps the webapi 404 mapping.
+			names := make([]string, 0)
+			for _, mv := range ent.space.Roster.Snapshot() {
+				names = append(names, mv.Name)
+			}
+			return "", fmt.Errorf("swarm: unknown member %q — valid recipients: %s (or \"leader\" / \"all\")",
+				to, strings.Join(names, ", "))
 		}
 	}
-	_, err := ent.space.Bus.Send(store.Message{
+	return ent.space.Bus.Send(store.Message{
 		Sender:    "user",
 		Recipient: to,
 		Subject:   subject,
 		Body:      body,
 	})
-	return err
 }
 
 func (s *Service) RespondPermission(id, agent, reqID, behavior, reason, ruleTool string) error {

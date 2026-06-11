@@ -127,11 +127,11 @@ func (f *fakeBackend) Run(space, agent, prompt string) error {
 	f.runs = append(f.runs, [3]string{space, agent, prompt})
 	return nil
 }
-func (f *fakeBackend) SendUserMessage(space, to, subject, body string) error {
+func (f *fakeBackend) SendUserMessage(space, to, subject, body string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.msgs = append(f.msgs, [3]string{space, to, body})
-	return nil
+	return "msg-fake-1", nil
 }
 func (f *fakeBackend) RespondPermission(space, agent, reqID, behavior, reason, ruleTool string) error {
 	f.mu.Lock()
@@ -445,10 +445,22 @@ func TestRESTCommands(t *testing.T) {
 		t.Fatalf("suspend not recorded: %+v", fake.suspends)
 	}
 
-	// Operator → member message (flat comms).
-	mbody := bytes.NewBufferString(`{"body":"status?"}`)
-	if s := post(t, srv.URL+"/api/agents/worker-a/message?space=sp-a&token=secret", mbody); s != http.StatusNoContent {
-		t.Fatalf("message status = %d, want 204", s)
+	// Operator → member message (flat comms). Replies the durable message id —
+	// the `evva swarm send` receipt (RP-27).
+	mresp, err := http.Post(srv.URL+"/api/agents/worker-a/message?space=sp-a&token=secret",
+		"application/json", bytes.NewBufferString(`{"body":"status?"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(mresp.Body).Decode(&receipt); err != nil || mresp.StatusCode != http.StatusOK {
+		t.Fatalf("message status = %d decode err = %v, want 200 + {id}", mresp.StatusCode, err)
+	}
+	mresp.Body.Close()
+	if receipt.ID != "msg-fake-1" {
+		t.Fatalf("message receipt id = %q, want the backend's message id", receipt.ID)
 	}
 	if len(fake.msgs) != 1 || fake.msgs[0] != [3]string{"sp-a", "worker-a", "status?"} {
 		t.Fatalf("user message not recorded: %+v", fake.msgs)

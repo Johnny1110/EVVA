@@ -14,6 +14,19 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ### Added
 
+- **CLI operator messaging: `evva swarm send <ref> <member> <text|->`
+  (RP-27).** The web composer's flat-comms primitive, now scriptable: POSTs
+  the existing `/api/agents/{member}/message` endpoint as sender `user`
+  (indistinguishable from a web-sent message — an idle member wakes on it, a
+  busy one folds it into its current run), prints the durable message id as
+  the receipt, and `-` reads the body from stdin for pipelines. `member` may
+  be the role `leader`. This closes the persona-iteration loop on headless
+  machines: send → wait → grep the event log. The message endpoint now
+  replies `{"id": …}` (was 204; the web client is unaffected), and an
+  unknown member comes back as a correctable error listing the valid
+  recipients. Deliberately NOT added: waiting for a reply (fire-and-forget,
+  same as the web) and a broadcast flag (operator→member stays a one-to-one
+  primitive — to broadcast, tell the leader to relay).
 - **Space-shared skills (RP-26 Part A).** A skill dropped at
   `<workdir>/agents/skills/<name>/SKILL.md` loads into EVERY member's catalog
   (initial build, hot-add, and run-boundary reload all merge it), so

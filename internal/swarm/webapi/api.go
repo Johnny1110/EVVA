@@ -70,8 +70,9 @@ type Backend interface {
 	// sender "user" (or broadcasts when to == "all"). It rides the same bus +
 	// drain path as inter-agent mail, so an idle member is woken and a busy one
 	// folds it mid-run — flat operator↔member comms without disturbing the
-	// workflow. See docs/roadmap/veronica/direction-flat-comms.md.
-	SendUserMessage(spaceID, to, subject, body string) error
+	// workflow. Returns the durable message id — the CLI's send receipt
+	// (RP-27). See docs/roadmap/veronica/direction-flat-comms.md.
+	SendUserMessage(spaceID, to, subject, body string) (string, error)
 
 	// Inbound commands. Run is asynchronous — it kicks off a turn whose events
 	// stream back over the WebSocket; the rest are immediate.
@@ -584,6 +585,8 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 		respondErr(w, b.Run(r.URL.Query().Get("space"), r.PathValue("name"), body.Prompt))
 	}))
 	// Operator → member message (mail-mode flat comms). {name} may be "all".
+	// Replies {"id": …} — the durable message id, printed by `evva swarm send`
+	// as its receipt (RP-27); the web composer ignores it.
 	mux.Handle("POST /api/agents/{name}/message", guard(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Subject string `json:"subject"`
@@ -592,7 +595,12 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 		if !decode(w, r, &body) {
 			return
 		}
-		respondErr(w, b.SendUserMessage(r.URL.Query().Get("space"), r.PathValue("name"), body.Subject, body.Body))
+		id, err := b.SendUserMessage(r.URL.Query().Get("space"), r.PathValue("name"), body.Subject, body.Body)
+		if err != nil {
+			respondErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"id": id})
 	}))
 	for verb, fn := range map[string]func(string, string) error{
 		"suspend":  b.Suspend,

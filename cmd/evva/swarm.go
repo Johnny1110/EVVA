@@ -27,6 +27,7 @@ import (
 //	evva swarm reset <ref>      wipe a space (fresh ledger + cleared context), same id
 //	evva swarm add <ref> <m>    hot-load member <m> into a space (M3)
 //	evva swarm vacuum <ref>     archive-then-delete consumed history (RP-16)
+//	evva swarm send <ref> <m> <text|->  message a member as the operator (RP-27)
 //
 // The bare `evva` (TUI) path is untouched.
 func runSwarm(args []string) {
@@ -85,6 +86,11 @@ func runSwarm(args []string) {
 			exitf(2, "usage: evva swarm vacuum <ref> [--days N] [--dry-run]")
 		}
 		err = swarmVacuum(os.Stdout, args[1], days, dryRun)
+	case "send":
+		if len(args) < 4 {
+			exitf(2, "usage: evva swarm send <ref> <member> <text> (use - to read the text from stdin)")
+		}
+		err = swarmSend(os.Stdout, args[1], args[2], args[3])
 	default:
 		exitf(2, "evva swarm: unknown subcommand %q — run `evva swarm help`", sub)
 	}
@@ -110,6 +116,10 @@ Commands:
   add   <ref> <m>    hot-load member <m> into a space
   vacuum <ref>       archive-then-delete consumed history (read mail + completed
                      tasks older than the retention window) into .vero/archive/
+  send  <ref> <m> <text>
+                     message member <m> as the operator (sender "user" — same as
+                     the web composer). <text> of - reads the body from stdin.
+                     <m> may also be "leader" (the role resolves to the member)
   help               show this help
 
 Flags:
@@ -312,5 +322,37 @@ func swarmAdd(out io.Writer, ref, member string) error {
 		return err
 	}
 	fmt.Fprintf(out, "added member %s to space %s\n", member, ref)
+	return nil
+}
+
+// swarmSend messages a member as the operator (RP-27): the same
+// POST /api/agents/{member}/message the web composer uses, so the member sees
+// sender "user" — indistinguishable from a web-sent message. Fire-and-forget
+// (an idle member wakes on it, a busy one folds it into its current run); the
+// printed message id is the durable receipt. text == "-" reads the body from
+// stdin, for long messages and script pipelines. member may also be the role
+// "leader" (the service resolves it, §3.5). The endpoint also accepts the
+// web's "all", but the CLI deliberately doesn't advertise it — the ticket
+// keeps operator→member a one-to-one primitive (broadcast = tell the leader
+// to relay).
+func swarmSend(out io.Writer, ref, member, text string) error {
+	if text == "-" {
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+		text = string(b)
+	}
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("message text is empty")
+	}
+	var reply struct {
+		ID string `json:"id"`
+	}
+	if err := serviceClient("POST", "/api/agents/"+member+"/message?space="+ref,
+		map[string]string{"body": text}, &reply); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "message %s sent to %s as \"user\" (idle members wake on it; busy ones fold it into their current run)\n", reply.ID, member)
 	return nil
 }

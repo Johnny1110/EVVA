@@ -121,7 +121,7 @@ func TestEventLogIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	if err := svc.SendUserMessage(idOn, "leader", "", "hello"); err != nil {
+	if _, err := svc.SendUserMessage(idOn, "leader", "", "hello"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	evDir := filepath.Join(cfg.WorkDir, ".vero", "events")
@@ -144,7 +144,7 @@ func TestEventLogIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register off: %v", err)
 	}
-	if err := svc.SendUserMessage(idOff, "leader", "", "hello"); err != nil {
+	if _, err := svc.SendUserMessage(idOff, "leader", "", "hello"); err != nil {
 		t.Fatalf("send off: %v", err)
 	}
 	deadline := time.Now().Add(700 * time.Millisecond)

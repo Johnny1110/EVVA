@@ -676,6 +676,7 @@ curl -X POST http://127.0.0.1:8888/api/swarm/<space-id>/event \
 | `evva swarm stop <id>` | 停止（并移除）一个 space。 |
 | `evva swarm add <id> <成员>` | 向 space 热加载一个 worker（`agents/sub/<成员>/`）。 |
 | `evva swarm vacuum <ref> [--days N] [--dry-run]` | 归档后删除已消费历史（RP-16）；dry-run 先预览。 |
+| `evva swarm send <ref> <成员> <文字\|->` | 以 operator 身份（sender=`user`，与 Web 信箱完全同语义）给成员发一条消息：idle 成员随即唤醒、busy 成员折进当前 run；打印持久 message id 作回执。`-` 从 stdin 读正文（脚本管道）；成员名可写角色 `leader`。打错名字会回有效成员清单（RP-27）。 |
 
 ### 环境变量
 

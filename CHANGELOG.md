@@ -14,6 +14,21 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ### Added
 
+- **Runtime schedule durability (RP-20).** Schedule changes made at runtime —
+  the leader's `schedule_set`/`schedule_clear` and the operator's web edits —
+  now persist as per-member rows in the space's `.vero` ledger (migration
+  `0004_schedules.sql`; a clear is a tombstone row). On a restart rebuild the
+  per-member priority is: runtime row (tombstone = no schedule) → else the
+  manifest/profile seed — which also fixes a latent hijack where ANY
+  runtime.json persist (a freeze, the budget meter) froze manifest-seeded
+  schedules and silently overrode later manifest edits. Re-registering a
+  workdir (`evva swarm .`) discards all runtime overrides — the operator's
+  explicit "take the manifest as written". `list_members` tags every crontab
+  with its origin (`(manifest)` vs `(runtime, set <date>)`); operator edits
+  land in the event log as `schedule_change` lines; schedule writes for
+  unknown members are rejected; a removed member's override dies with it.
+  A pre-RP-20 runtime.json schedule map is imported once (provenance
+  recovered by diffing against the manifest) and the legacy field retired.
 - **Disk personas are grounded in the tool system (RP-19).** A disk-loaded
   main persona's system prompt now carries a generated `# Tools` mechanics
   section gated per tool: a curated one-line usage guideline for each builtin

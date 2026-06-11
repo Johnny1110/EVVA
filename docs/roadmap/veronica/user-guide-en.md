@@ -543,9 +543,24 @@ The swarm is crash-safe. After `evva service stop` (or a crash) and a fresh
 - each member's **transcript resumes** where it left off,
 - **unread messages are re-queued** (nothing lost),
 - the **task ledger is intact** (a task left `running` is still `running`),
-- **frozen members come back frozen**.
+- **frozen members come back frozen**,
+- **runtime schedule changes hold** — a cadence the leader `schedule_set` (or
+  you edited in the web) survives the restart, and a cleared schedule **stays
+  cleared** even if the manifest still declares one. They live as per-member
+  rows in the space's `.vero` ledger; `list_members` tags each crontab with
+  its origin — `(manifest)` vs `(runtime, set 2026-06-11)` — so you can always
+  tell whose hand set a cadence.
 
 You don't do anything special — it just continues.
+
+Members whose schedule was never touched at runtime keep following the
+manifest — edit `evva-swarm.yml` while the service is down and the new cadence
+applies on restart. To wipe ALL runtime schedule overrides and return the
+whole space to the manifest as written, re-register it (`evva swarm rm` +
+`evva swarm .`): a fresh register is read as exactly that intent. Operator
+schedule edits from the web are also recorded in the event log as
+`schedule_change` lines (the leader's own `schedule_set` calls are already
+visible as tool events).
 
 ---
 

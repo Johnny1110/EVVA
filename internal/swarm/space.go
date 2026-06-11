@@ -64,6 +64,12 @@ type SwarmSpace struct {
 	mu        sync.Mutex
 	agents    map[string]agent.Agent
 	schedules map[string]agentdef.Schedule
+	// schedMeta records WHERE a live schedule came from (RP-20): an entry
+	// exists only for runtime-set schedules (schedule_set / web edit, or a
+	// store row applied at rebuild); absence means the schedule is the
+	// manifest/profile seed. Lazily allocated so hand-built test spaces
+	// need no init.
+	schedMeta map[string]ScheduleOrigin
 
 	// budgets holds manifest member-level daily-budget overrides (RP-13);
 	// members without an entry inherit settings.DailyBudgetTokens. meter is the
@@ -313,13 +319,70 @@ func (sp *SwarmSpace) RetentionDays() int {
 	return sp.settings.RetentionDays // set once at construction, never mutated
 }
 
+// ScheduleOrigin says where a member's live schedule came from: the manifest
+// (the zero value) or a runtime change, with the unix-milli instant of that
+// change so list_members can render "set 2026-06-11" (RP-20 §2.5).
+type ScheduleOrigin struct {
+	Runtime bool
+	SetAt   int64
+}
+
 // ScheduleFor returns a member's declared timer schedule, if any. Exported so
 // list_members (internal/swarm/tools) can render each member's crontab.
 func (sp *SwarmSpace) ScheduleFor(name string) (agentdef.Schedule, bool) {
+	sch, _, ok := sp.ScheduleInfoFor(name)
+	return sch, ok
+}
+
+// ScheduleInfoFor is ScheduleFor plus provenance — manifest seed vs runtime
+// override — so the leader and the operator can tell at a glance whose hand
+// set a cadence (RP-20 §2.5).
+func (sp *SwarmSpace) ScheduleInfoFor(name string) (agentdef.Schedule, ScheduleOrigin, bool) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	s, ok := sp.schedules[name]
-	return s, ok
+	return s, sp.schedMeta[name], ok
+}
+
+// setRuntimeSchedule installs a runtime-sourced schedule in the live maps.
+// Shared by the supervisor's SetSchedule and the restart rebuild (Reload
+// applying store rows) so both stamp identical provenance.
+func (sp *SwarmSpace) setRuntimeSchedule(name string, sch agentdef.Schedule, setAt int64) {
+	sp.mu.Lock()
+	sp.schedules[name] = sch
+	if sp.schedMeta == nil {
+		sp.schedMeta = map[string]ScheduleOrigin{}
+	}
+	sp.schedMeta[name] = ScheduleOrigin{Runtime: true, SetAt: setAt}
+	sp.mu.Unlock()
+}
+
+// dropScheduleEntry removes a member's live schedule (and its provenance).
+func (sp *SwarmSpace) dropScheduleEntry(name string) {
+	sp.mu.Lock()
+	delete(sp.schedules, name)
+	delete(sp.schedMeta, name)
+	sp.mu.Unlock()
+}
+
+// DiscardRuntimeSchedules wipes every runtime schedule override — the store
+// rows and the legacy runtime.json field — so the manifest is authoritative
+// again. The service calls it on a FRESH register (`evva swarm .`), the
+// operator's explicit "take the manifest as written" (RP-20 §2.4); restart
+// rebuilds (Reconcile / RunSpace / reset) never do. Must run BEFORE Reload,
+// which is what applies the rows.
+func (sp *SwarmSpace) DiscardRuntimeSchedules() error {
+	if err := sp.Store.ClearSchedules(); err != nil {
+		return err
+	}
+	// Strip only the legacy schedules field; membership/meter in runtime.json
+	// belong to Reload and must survive untouched.
+	rs := loadRuntime(sp.Workdir)
+	if rs.Schedules != nil {
+		rs.Schedules = nil
+		writeRuntime(sp.Workdir, rs)
+	}
+	return nil
 }
 
 // SetMemberSchedule / ClearMemberSchedule are the tool-facing seam onto the run
@@ -476,6 +539,7 @@ func (sp *SwarmSpace) removeAgent(name string) {
 	ag := sp.agents[name]
 	delete(sp.agents, name)
 	delete(sp.schedules, name)
+	delete(sp.schedMeta, name)
 	sp.mu.Unlock()
 	if ag != nil {
 		ag.Shutdown()

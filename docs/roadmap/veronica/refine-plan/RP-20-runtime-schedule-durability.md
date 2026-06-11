@@ -1,6 +1,17 @@
 # RP-20 — Runtime 排程持久化（schedule_set 要活過 service 重啟）
 
-> 狀態：**草案 / Draft（待 Johnny 拍板）** ｜ 階段：**第五波** ｜ 優先：**P0（bug 等級——承諾與實作矛盾）** ｜ 日期：2026-06-11
+> 狀態：**✅ 已完成（2026-06-11，feature/RP-20-runtime-schedule-durability）** ｜ 階段：**第五波** ｜ 優先：**P0** ｜ 日期：2026-06-11
+> 落地註記（含一處前提更正）：source review 寫本票時漏看了 `persistRuntime` —— RP-7 當時已把整張
+> `sp.schedules` map 連同 membership 寫進 runtime.json、`Reload` 整張還原，所以「重啟靜默回滾」**並不會**發
+> 生（`TestScheduleSetSurvivesRestart`/`TestScheduleClearSurvivesRestart` 一直是綠的）。真正的缺陷是「整張
+> map 權威」：任何 persistRuntime（freeze、budget meter）都把 **manifest 種的排程**一併凍結進檔案，重啟時蓋
+> 過 operator 後來改的 manifest——manifest 權威被靜默劫持、且無 per-member 來源可言。本票按原提案改為
+> store 表（`0004_schedules.sql`，tombstone 清除、`every_ns` 欄補上 interval 形式、`updated_at` 用 INTEGER
+> unix-millis 與其他表一致），rebuild 採 per-member 優先序，並一次性匯入舊 runtime.json（與 manifest 種子
+> diff 還原 provenance）後讓舊欄位退役。寫入點在 supervisor `SetSchedule`/`ClearSchedule`（tool 與 web 兩路
+> 的共同 chokepoint；順帶拒絕 unknown member）；`RemoveMember` 連帶刪 row；fresh `Register` 走
+> `DiscardRuntimeSchedules`（Reconcile / RunSpace / reset 不走）。event-log 稽核：operator 路徑落
+> `schedule_change` 合成行，leader 路徑本就有 tool_use 事件、不另造。
 > 觸發：Sunday swarm 重整時 source review 發現（尚未在生產咬人，但必然會）：leader 用 `schedule_set` 調過的節奏，service 一重啟就**靜默回滾到 manifest 版**。
 > 關聯：[RP-7](RP-7-leader-scheduled-wake.md)（建出 schedule_set 的那一波，本文補它的持久層）、[RP-8](RP-8-web-agent-schedule-mgmt.md)（Web 端改排程同樣受惠）、user-guide「重启与续跑」一節（目前的承諾本文使其成立）
 > 請求者：Sunday。**無 Sunday-specific code。**

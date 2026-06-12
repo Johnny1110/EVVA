@@ -12,6 +12,8 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+## [v1.7.2-beta.1] — 2026-06-13
+
 ### Added
 
 - **`/clear` starts a NEW session (TUI).** Previously `/clear` only wiped the
@@ -41,6 +43,8 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
   was rebuilt: status dot + badges (running/stopped, N busy), leader name,
   live member count, workdir, and id, with an "open →" hover affordance.
   `SpaceInfo` gains `leader` + `busy` (live-roster reads, running spaces only).
+
+## [v1.7.1-beta.1] — 2026-06-12
 
 ### Added
 
@@ -1487,7 +1491,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `EVVA.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.7.1-beta.1...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.7.2-beta.1...HEAD
+[v1.7.2-beta.1]: https://github.com/johnny1110/evva/compare/v1.7.1-beta.1...v1.7.2-beta.1
 [v1.7.1-beta.1]: https://github.com/johnny1110/evva/compare/v1.7.0...v1.7.1-beta.1
 [v1.7.0]: https://github.com/johnny1110/evva/compare/v1.4.4...v1.7.0
 [v1.6.0-beta.3]: https://github.com/johnny1110/evva/compare/v1.6.0-beta.2...v1.6.0-beta.3

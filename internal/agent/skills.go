@@ -33,6 +33,20 @@ func loadDiskSkillRegistry(cfg *config.Config) *skill.Registry {
 	return reg
 }
 
+// LoadSkillCatalog builds a persona's full skill catalog — the same
+// home+workdir+bundled set solo evva loads (loadDiskSkillRegistry) — then
+// overlays extraDirs in order (later wins), labeled SourceSwarm. The swarm
+// uses it to compose a persona member's catalog: persona-own skills plus the
+// space-shared dir plus the member-local dir (RP-29). Precedence low→high:
+// bundled < home < workdir < extraDirs in call order.
+func LoadSkillCatalog(cfg *config.Config, extraDirs ...string) *skill.Registry {
+	reg := loadDiskSkillRegistry(cfg)
+	for _, d := range extraDirs {
+		reg.LoadDir(d, skill.SourceSwarm)
+	}
+	return reg
+}
+
 // refsFromRegistry flattens a *skill.Registry into the sysprompt-facing
 // SkillRef slice. Returns nil for a nil/empty registry so the prompt
 // builder's "no skills" branch fires cleanly.

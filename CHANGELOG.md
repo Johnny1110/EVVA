@@ -12,6 +12,20 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Persona members (RP-29).** An `evva-swarm.yml` member may reference a
+  registry main-tier persona (`persona: <name>`, leader or worker) — the
+  persona joins with its full identity (internally-assembled prompt, complete
+  tool kit, installed skills, workdir `EVVA.md` briefing) plus the swarm team
+  protocol, attached via the new `AgentDefinition.PromptSuffix` so every
+  prompt re-render keeps it. Manifest members gain optional `model:` /
+  `effort:` / `when_to_use:` overrides (authoritative over profile.yml, the
+  schedule precedent). Swarm-resident (LongRunning) personas drop solo
+  self-scheduling tools (`alarm_*`, `cron_*`, `schedule_wakeup`). New public
+  seams: `pkg/agent.LoadSkillCatalog`, `pkg/agent.AgentDefinition.PromptSuffix`,
+  `pkg/skill.Registry.LoadDir`, `skill.SourceSwarm`.
+
 ## [v1.6.0-beta.3] — 2026-06-11
 
 ### Fixed

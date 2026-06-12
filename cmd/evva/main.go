@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/johnny1110/evva/pkg/agent"
+	"github.com/johnny1110/evva/pkg/common/proc"
 	config "github.com/johnny1110/evva/pkg/config"
 	"github.com/johnny1110/evva/pkg/event"
 	"github.com/johnny1110/evva/pkg/llm"
@@ -50,6 +52,11 @@ func main() {
 			return
 		}
 	}
+
+	// Sweep the "<exe>.old" leftover a Windows self-update leaves behind —
+	// the old image can be renamed while running but only deleted by a
+	// later process. No-op everywhere else.
+	update.CleanupOld()
 
 	// "evva update [version]" — self-update from GitHub Releases, no Go required.
 	if len(os.Args) > 1 && os.Args[1] == "update" {
@@ -91,6 +98,15 @@ func main() {
 		memDir := filepath.Join(cfg.AppHome, "memory")
 		if _, err := os.Stat(filepath.Join(memDir, "MEMORY.md")); errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "evva: auto-memory is enabled — the agent saves persistent, typed notes under %s and maintains a MEMORY.md index there. Disable with /config.\n", memDir)
+		}
+	}
+
+	// Windows runs the bash tool (and shell hooks) through Git Bash; surface
+	// a missing bash once at startup instead of letting the first tool call
+	// fail mysteriously mid-session.
+	if runtime.GOOS == "windows" {
+		if _, err := proc.Shell(); err != nil {
+			fmt.Fprintf(os.Stderr, "evva: warning: %v\n", err)
 		}
 	}
 

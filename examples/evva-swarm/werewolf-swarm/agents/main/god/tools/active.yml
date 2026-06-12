@@ -1,0 +1,8 @@
+# 一般 evva 工具。協作工具 (send_message, list_members, ...) 由 leader 角色
+# 自動注入 — 不要列在這裡。
+# 上帝:讀規則、維護 game/ 狀態檔;bash 只用來跑開局抽籤的隨機洗牌。
+- read
+- write
+- edit
+- glob
+- bash

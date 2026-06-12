@@ -1,0 +1,7 @@
+# 分析師要做特徵工程、建模,還要在討論階段用資料接住預測專家的挑戰 —
+# 用大杯 model + 高推理深度。
+model: deepseek-v4-pro
+effort: high
+when_to_use: "資料分析師 — 用 python 對資料集做特徵工程與 Poisson/迴歸建模,產出 work/analysis-report.md,並在討論階段以資料回應預測專家的挑戰。"
+inject_memory: false
+advertise_skills: false

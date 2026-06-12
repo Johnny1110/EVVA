@@ -14,9 +14,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
+	"github.com/johnny1110/evva/pkg/common/proc"
 	"github.com/johnny1110/evva/pkg/tools/lsp/protocol"
 )
 
@@ -50,7 +50,7 @@ func Start(ctx context.Context, command string, args []string, logger *slog.Logg
 	connCtx, connClose := context.WithCancel(ctx)
 
 	cmd := exec.CommandContext(connCtx, command, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	proc.Group(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -31,6 +32,10 @@ func openEchoManager(t *testing.T, serverName string) (*mcp.Manager, string) {
 		t.Skip("go toolchain not available; skipping agent MCP integration test")
 	}
 	bin := filepath.Join(t.TempDir(), "echo-server")
+	if runtime.GOOS == "windows" {
+		// Without the extension Windows refuses to exec the file.
+		bin += ".exe"
+	}
 	src := filepath.FromSlash("../../pkg/mcp/testdata/stdio-echo-server")
 	if _, statErr := os.Stat(src); statErr != nil {
 		t.Skipf("echo server fixture not found at %s: %v", src, statErr)

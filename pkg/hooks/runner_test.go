@@ -10,7 +10,7 @@ import (
 )
 
 func TestRunCommand_Exit0(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "hook.sh")
+	script := filepath.ToSlash(filepath.Join(t.TempDir(), "hook.sh"))
 	writeScript(t, script, `#!/bin/sh
 echo '{"continue":true}'
 exit 0
@@ -28,7 +28,7 @@ exit 0
 }
 
 func TestRunCommand_Exit1(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "hook.sh")
+	script := filepath.ToSlash(filepath.Join(t.TempDir(), "hook.sh"))
 	writeScript(t, script, `#!/bin/sh
 echo "oops" >&2
 exit 1
@@ -42,7 +42,7 @@ exit 1
 }
 
 func TestRunCommand_Exit2(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "hook.sh")
+	script := filepath.ToSlash(filepath.Join(t.TempDir(), "hook.sh"))
 	writeScript(t, script, `#!/bin/sh
 echo "block reason" >&2
 exit 2
@@ -60,7 +60,7 @@ exit 2
 }
 
 func TestRunCommand_Timeout(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "hook.sh")
+	script := filepath.ToSlash(filepath.Join(t.TempDir(), "hook.sh"))
 	writeScript(t, script, `#!/bin/sh
 sleep 10
 `)

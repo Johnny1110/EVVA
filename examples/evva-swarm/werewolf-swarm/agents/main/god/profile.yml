@@ -1,0 +1,7 @@
+# 上帝要同時追蹤 12 人的狀態、藥水、守衛紀錄與票型,並嚴格控管回合順序 —
+# 用大杯 model + 最高推理深度。
+model: deepseek-v4-pro
+effort: high
+when_to_use: "狼人殺上帝(法官)— 主持整場 12 人標準局:推動夜/日流程、私傳夜間資訊、公開宣告、執行規則、判定勝負。"
+inject_memory: false
+advertise_skills: false

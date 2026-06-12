@@ -1,0 +1,6 @@
+# 正確性審查要追控制流、邊界與並發 — 是三路中最吃推理的一路,用大杯 model。
+model: deepseek-v4-pro
+effort: high
+when_to_use: "正確性審查者 — 在指定範圍內找邏輯錯誤、邊界問題、並發問題與錯誤處理缺陷,產出 review/findings-correctness.md。"
+inject_memory: false
+advertise_skills: false

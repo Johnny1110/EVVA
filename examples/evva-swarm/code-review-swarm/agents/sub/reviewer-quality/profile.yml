@@ -1,0 +1,6 @@
+# 品質審查找重複、過度複雜與效能問題 — 模式辨識為主,medium 即可。
+model: deepseek-v4-pro
+effort: medium
+when_to_use: "品質審查者 — 在指定範圍內找重複實作、過度複雜、效能與可讀性問題,產出 review/findings-quality.md。"
+inject_memory: false
+advertise_skills: false

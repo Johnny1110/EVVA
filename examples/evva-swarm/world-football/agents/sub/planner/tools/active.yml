@@ -1,0 +1,6 @@
+# 一般 evva 工具。協作工具 (send_message, ...) 由 worker 角色自動注入。
+# 企劃師:讀流程定義、寫規格書 — 不需要 bash。
+- read
+- write
+- edit
+- glob

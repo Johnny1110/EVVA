@@ -1,6 +1,6 @@
 # setup-swarm Guide a user through creating an evva swarm from scratch
 
-Use this skill when the user wants to CREATE or SCAFFOLD a multi-agent swarm team: "set up a swarm", "create a swarm team", "scaffold a swarm", "add swarm agents", "how do I make a swarm", "I need a team of agents", "setup-swarm". Also use it when the user asks for help UNDERSTANDING swarm structure — the directory layout, the manifest, the agent definition files — or CONFIGURING a swarm's guardrails: permission modes, token budgets, watchdogs, retention, shared skills, external webhooks. Do NOT use for runtime operations (`evva swarm run/stop/rm/reset`) on an already-registered space.
+Use this skill when the user wants to CREATE or SCAFFOLD a multi-agent swarm team: "set up a swarm", "create a swarm team", "scaffold a swarm", "add swarm agents", "how do I make a swarm", "I need a team of agents", "setup-swarm". Also use it when the user asks for a ready-made swarm template ("is there a sample swarm", "swarm examples"), for help UNDERSTANDING swarm structure — the directory layout, the manifest, the agent definition files — or CONFIGURING a swarm's guardrails: permission modes, token budgets, watchdogs, retention, shared skills, external webhooks. Do NOT use for runtime operations (`evva swarm run/stop/rm/reset`) on an already-registered space.
 
 ## Before you start
 
@@ -9,6 +9,23 @@ Ask the user two questions (use `ask_user_question` if the answer isn't clear):
 1. **What should this team DO?** The answer determines the leader's role description, the worker roles, and how many workers. Examples: "a software engineering team that takes a GitHub issue and ships a PR" → lead + pm + designer + backend + frontend + qa. "a simple build-and-review pipeline" → lead + builder + reviewer. The user's answer IS the spec — don't invent members they didn't ask for.
 
 2. **Where should the swarm live?** A swarm is a directory: `<workdir>/evva-swarm.yml` + `<workdir>/agents/{main,sub}/<name>/...`. It must be a git-tracked folder (or at least a persistent one — the `.vero/` ledger is stored there). If the user doesn't have a folder yet, create one with `mkdir -p`.
+
+## Shortcut — adapt a shipped example
+
+The evva repo ships three complete, ready-to-run swarms under `examples/evva-swarm/` — each is pure config (manifest + agent definitions + one root-level shared-knowledge doc), with a per-example `README.md` and a folder-level overview README. Their shapes are deliberately different:
+
+| Example | Team | Shape | Demonstrates |
+| --- | --- | --- | --- |
+| `werewolf-swarm/` | 1 moderator + 12 players | turn-based conversation game | strict one-member-at-a-time turn control, private-message information hygiene, pure `send_message` coordination (no task board) |
+| `world-football/` | 1 director + 7 specialists | six-stage data pipeline | task-board dispatch, leader-verified stage gates, parallel collection, multi-round debate between two members |
+| `code-review-swarm/` | 1 lead + 4 members | parallel fan-out + adversarial verification | three reviewers in parallel, leader-side dedup, a verifier that re-reads the code and tries to refute every finding |
+
+If one of these shapes matches what the user described, COPY the closest folder and adapt it (rename members, rewrite personas, adjust the manifest) instead of scaffolding from scratch. Even when building from scratch, port their load-bearing patterns:
+
+- **The leader's persona is the swarm's skeleton.** The runtime injects the tool mechanics; the leader's `system_prompt.md` must carry the POLICY: the coordination discipline (who is consulted, in what order — e.g. "never query two members in parallel" for turn-based work, "previous stage fully verified before the next opens" for pipelines), and a state-file format with update triggers bound to concrete actions ("write the file BEFORE every broadcast/dispatch") — that file is the leader's only reliable memory across a long run.
+- **Shared public knowledge lives in ONE root-level `.md`** (rules, pipeline definition, output formats) that every member can `read` — don't duplicate it into each persona.
+- **Workers get the smallest tool set that does the job** (the werewolf players have only `read`) and a hard reply protocol: do the work, reply to the leader EXACTLY once via `send_message`, then stop and wait.
+- **Expect members to forget the mechanics**: every leader request/task description ends with a one-line reminder of how to reply; unresponsive members get one re-ask, then a documented downgrade (treat as abstain / mark the dimension uncovered) so one member never deadlocks the team.
 
 ## Step 1 — Create the evva-swarm.yml manifest
 

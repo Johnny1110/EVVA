@@ -101,6 +101,7 @@ func drainerAgent(t *testing.T, sink event.Sink, opts ...agent.Option) agent.Age
 	if err != nil {
 		t.Fatalf("NewWithProfile: %v", err)
 	}
+	t.Cleanup(ag.Shutdown) // releases the agent log file — Windows can't delete it open
 	return ag
 }
 

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -117,7 +118,10 @@ func (t *GlobTool) Execute(ctx context.Context, logger *slog.Logger, input json.
 		searchDir = cwd
 	}
 
-	searchPattern := in.Pattern
+	// The pattern domain is slash-canonical: doublestar treats backslash
+	// as an escape character, and on Windows that same character is the
+	// path separator — convert up front (identity on unix).
+	searchPattern := filepath.ToSlash(in.Pattern)
 
 	// Absolute-pattern handling — ref's extractGlobBaseDirectory. A
 	// pattern like "/abs/path/**/*.go" is split into searchDir="/abs/path"
@@ -241,26 +245,28 @@ func (t *GlobTool) Execute(ctx context.Context, logger *slog.Logger, input json.
 //	"/abs/dir/*"         → ("/abs/dir", "*")
 //
 // Ported from ref/src/utils/glob.ts:extractGlobBaseDirectory.
+//
+// Operates slash-canonically on every platform: the relative pattern
+// feeds doublestar (which requires '/' and treats '\' as an escape), and
+// os.DirFS accepts the slash-shaped base — including "C:/..." — on
+// Windows. ToSlash is the identity on unix, so unix behavior is
+// unchanged.
 func extractGlobBaseDirectory(pattern string) (baseDir, relativePattern string) {
-	idx := strings.IndexAny(pattern, "*?[{")
+	p := filepath.ToSlash(pattern)
+	idx := strings.IndexAny(p, "*?[{")
 	if idx < 0 {
 		// No glob chars — pattern is a literal path. Split into
 		// dirname / basename so the caller still searches the right
 		// directory.
-		return filepath.Dir(pattern), filepath.Base(pattern)
+		return path.Dir(p), path.Base(p)
 	}
-	staticPrefix := pattern[:idx]
+	staticPrefix := p[:idx]
 	lastSep := strings.LastIndexByte(staticPrefix, '/')
-	if filepath.Separator != '/' {
-		if alt := strings.LastIndexByte(staticPrefix, filepath.Separator); alt > lastSep {
-			lastSep = alt
-		}
-	}
 	if lastSep < 0 {
-		return "", pattern
+		return "", p
 	}
 	baseDir = staticPrefix[:lastSep]
-	relativePattern = pattern[lastSep+1:]
+	relativePattern = p[lastSep+1:]
 	// Root path: "/" stripped to "" — restore so we don't end up
 	// searching the cwd by accident.
 	if baseDir == "" && lastSep == 0 {
@@ -285,7 +291,9 @@ func toRelativeOrAbs(absPath, workDir string) string {
 	if strings.HasPrefix(rel, "..") {
 		return absPath
 	}
-	return rel
+	// Model-facing display is slash-canonical on every platform
+	// (filepath.Rel returns backslashes on Windows).
+	return filepath.ToSlash(rel)
 }
 
 func errorIsContextCancelled(err error) bool {

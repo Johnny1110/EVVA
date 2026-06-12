@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +66,7 @@ func TestRead_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "nope.txt")
 	tool := NewRead(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+missing+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(missing)+`}`))
 	if !res.IsError || !strings.Contains(res.Content, "not found") {
 		t.Errorf("expected not-found; got isErr=%v content=%q", res.IsError, res.Content)
 	}
@@ -77,7 +78,7 @@ func TestRead_FileNotFound(t *testing.T) {
 func TestRead_DirectoryErrors(t *testing.T) {
 	dir := t.TempDir()
 	tool := NewRead(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+dir+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(dir)+`}`))
 	if !res.IsError {
 		t.Fatalf("expected directory rejection; got content=%q", res.Content)
 	}
@@ -89,7 +90,7 @@ func TestRead_DirectoryErrors(t *testing.T) {
 func TestRead_EmptyFile(t *testing.T) {
 	path := writeTempFile(t, "")
 	tool := NewRead(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
 	}
@@ -109,7 +110,7 @@ func TestRead_HappyPath_CatNFormat(t *testing.T) {
 	tr := NewReadTracker()
 	tool := NewRead(tr, "")
 
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -139,7 +140,7 @@ func TestRead_OffsetAndLimitSlice(t *testing.T) {
 	tool := NewRead(tr, "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","offset":2,"limit":2}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"offset":2,"limit":2}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -174,7 +175,7 @@ func TestRead_OffsetPastEOF(t *testing.T) {
 	tool := NewRead(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","offset":99}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"offset":99}`))
 
 	if res.IsError {
 		t.Fatalf("offset past EOF should be a graceful message, not an error: %s", res.Content)
@@ -192,7 +193,7 @@ func TestRead_NegativeOffsetClampsToOne(t *testing.T) {
 	tool := NewRead(NewReadTracker(), "")
 
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","offset":-5}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"offset":-5}`))
 
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Content)
@@ -218,7 +219,7 @@ func TestRead_UnchangedStub(t *testing.T) {
 	tr := NewReadTracker()
 	tool := NewRead(tr, "")
 
-	first, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	first, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 	if first.IsError {
 		t.Fatalf("first read failed: %s", first.Content)
 	}
@@ -226,7 +227,7 @@ func TestRead_UnchangedStub(t *testing.T) {
 		t.Errorf("first read should contain content; got %q", first.Content)
 	}
 
-	second, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	second, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 	if second.IsError {
 		t.Fatalf("second read failed: %s", second.Content)
 	}
@@ -242,7 +243,7 @@ func TestRead_StubResetsOnMtimeBump(t *testing.T) {
 	tr := NewReadTracker()
 	tool := NewRead(tr, "")
 
-	tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 
 	// Move mtime forward and overwrite the file from underneath the
 	// tracker.
@@ -256,7 +257,7 @@ func TestRead_StubResetsOnMtimeBump(t *testing.T) {
 	// Reapply mtime since WriteFile reset it.
 	os.Chtimes(path, later, later)
 
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 	if strings.Contains(res.Content, "File unchanged since last read") {
 		t.Errorf("expected fresh content after mtime bump, got stub: %q", res.Content)
 	}
@@ -273,7 +274,7 @@ func TestRead_Image_PNG(t *testing.T) {
 	writeTempPNG(t, imgPath)
 
 	tool := NewRead(NewReadTracker(), "")
-	res, err := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+imgPath+`"}`))
+	res, err := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(imgPath)+`}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -311,7 +312,7 @@ func TestRead_Image_TooLarge(t *testing.T) {
 	f.Close()
 
 	tool := NewRead(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+imgPath+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(imgPath)+`}`))
 	if !res.IsError {
 		t.Fatalf("expected rejection for too-large image; got content=%q", res.Content)
 	}
@@ -327,7 +328,7 @@ func TestRead_SVG_ReadAsText(t *testing.T) {
 	svgPath := path + ".svg"
 
 	tool := NewRead(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+svgPath+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(svgPath)+`}`))
 	if res.IsError {
 		t.Fatalf("SVG should be read as text, not rejected; got: %s", res.Content)
 	}
@@ -341,7 +342,7 @@ func TestRead_PagesOnNonPDFRejected(t *testing.T) {
 	path := writeTempFile(t, "text\n")
 	tool := NewRead(NewReadTracker(), "")
 	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
-		json.RawMessage(`{"file_path":"`+path+`","pages":"1-5"}`))
+		json.RawMessage(`{"file_path":`+jstr(path)+`,"pages":"1-5"}`))
 	if !res.IsError {
 		t.Fatal("expected error for pages on non-PDF")
 	}
@@ -364,7 +365,7 @@ func TestRead_CRLFNormalizedToLF(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 	tool := NewRead(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 	if res.IsError {
 		t.Fatalf("CRLF read should succeed: %s", res.Content)
 	}
@@ -393,7 +394,7 @@ func TestRead_UTF16LEDecoded(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 	tool := NewRead(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 	if res.IsError {
 		t.Fatalf("UTF-16 read should succeed: %s", res.Content)
 	}
@@ -412,7 +413,7 @@ func TestRead_UTF8BOMStripped(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 	tool := NewRead(NewReadTracker(), "")
-	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 	if res.IsError {
 		t.Fatalf("BOM-prefixed read should succeed: %s", res.Content)
 	}
@@ -432,7 +433,7 @@ func TestRead_RejectsBinaryExtensions(t *testing.T) {
 		path := filepath.Join(dir, "f"+ext)
 		os.WriteFile(path, []byte("\x00\x01\x02junk"), 0o644)
 		tool := NewRead(NewReadTracker(), "")
-		res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+path+`"}`))
+		res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(path)+`}`))
 		if !res.IsError {
 			t.Errorf("expected binary rejection for %s; got: %s", ext, res.Content)
 		}
@@ -445,9 +446,12 @@ func TestRead_RejectsBinaryExtensions(t *testing.T) {
 // TestRead_BlockedDevicePathsRejected — /dev/zero etc. error before
 // any I/O so we never block on infinite output.
 func TestRead_BlockedDevicePathsRejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-only: /dev device files don't exist on windows")
+	}
 	for _, dev := range []string{"/dev/zero", "/dev/random", "/dev/urandom", "/dev/stdin", "/dev/tty"} {
 		tool := NewRead(NewReadTracker(), "")
-		res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":"`+dev+`"}`))
+		res, _ := tool.Execute(context.Background(), tools.NopLogger(), json.RawMessage(`{"file_path":`+jstr(dev)+`}`))
 		if !res.IsError {
 			t.Errorf("expected device rejection for %s", dev)
 		}

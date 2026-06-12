@@ -25,6 +25,48 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
   self-scheduling tools (`alarm_*`, `cron_*`, `schedule_wakeup`). New public
   seams: `pkg/agent.LoadSkillCatalog`, `pkg/agent.AgentDefinition.PromptSuffix`,
   `pkg/skill.Registry.LoadDir`, `skill.SourceSwarm`.
+- **Three ready-to-run swarm examples under `examples/evva-swarm/`.** Each is
+  pure config (manifest + agent definitions + one root-level shared-knowledge
+  doc) with its own README, plus a folder-level overview covering the common
+  run flow and a "build your own team" guide. The shapes are deliberately
+  different: `werewolf-swarm/` (1 moderator + 12 players — turn-based
+  conversation game: strict one-member-at-a-time turn control, private-message
+  information hygiene, no task board), `world-football/` (1 director + 7
+  specialists — six-stage data pipeline: task-board dispatch, leader-verified
+  stage gates, parallel collection, multi-round debate), and
+  `code-review-swarm/` (1 lead + 4 members — parallel fan-out + adversarial
+  verification: three reviewers in parallel, leader-side dedup, a verifier
+  that re-reads the code and tries to refute every finding).
+- **setup-swarm bundled skill: "adapt a shipped example" shortcut.** The skill
+  now points at the three examples first — copy the closest shape instead of
+  scaffolding from scratch — and distills their load-bearing patterns for
+  from-scratch builds: the leader persona as the swarm's skeleton (coordination
+  policy + a state file with action-bound update triggers), shared knowledge as
+  one root-level doc, minimal worker tool sets with a reply-exactly-once
+  protocol, and reminder/downgrade discipline so one silent member never
+  deadlocks the team.
+
+## [v1.7.0] — 2026-06-12
+
+### Added
+
+- **Windows support (WIN-1..8, claims the v1.7 minor).** First-class
+  windows/amd64 + windows/arm64. New `pkg/common/proc` is the single per-OS
+  process seam — `Group`/`KillTree`/`Detach`/`Alive`/`Terminate` (process
+  groups + SIGKILL on unix; `CREATE_NEW_PROCESS_GROUP` + `taskkill /T` on
+  Windows) plus `Shell()`, which resolves `/bin/sh` on unix and Git Bash on
+  Windows (`EVVA_SHELL` override; the System32 WSL launcher is never
+  picked). bash/monitor/repl/lsp/hooks and the service daemonizer all run
+  through it. repl prefers the `py` launcher on Windows; LSP emits
+  drive-letter-correct `file:///C:/...` URIs; `~` expansion consults
+  `os.UserHomeDir`. `evva update` swaps the running exe via rename-aside
+  (`.old` swept at next start). Release workflow ships
+  `evva-windows-*.zip`; CI gains a windows cross-compile gate and a
+  required `windows-latest` test job (full `go test ./...`). The
+  bring-up triage also fixed two latent bugs visible on every platform:
+  the per-agent log file was never closed, and the grep tool broke on
+  search roots containing spaces. PRD:
+  `docs/roadmap/PRD/windows-support.md`.
 
 ## [v1.6.0-beta.3] — 2026-06-11
 
@@ -407,7 +449,7 @@ folded in below, so this entry is cumulative since v1.4.4.
   supervisor start). Distinct from `schedule_set`, which remains recurring-cron,
   leader-only, and cannot target the caller.
 
-## [v1.4.4-beta.1] — 2026-06-09
+## [v1.4.4] — 2026-06-09
 
 Swarm HTTP tooling and comms refinements, plus a reworked self-update flow and
 a simplified two-tier release model (stable on `main`, beta on `pre-release`).
@@ -1415,14 +1457,15 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `EVVA.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.6.0-beta.3...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.7.0...HEAD
+[v1.7.0]: https://github.com/johnny1110/evva/compare/v1.4.4...v1.7.0
 [v1.6.0-beta.3]: https://github.com/johnny1110/evva/compare/v1.6.0-beta.2...v1.6.0-beta.3
 [v1.6.0-beta.2]: https://github.com/johnny1110/evva/compare/v1.5.2-beta.1...v1.6.0-beta.2
 [v1.5.2-beta.1]: https://github.com/johnny1110/evva/compare/v1.5.1-beta.2...v1.5.2-beta.1
 [v1.5.1-beta.2]: https://github.com/johnny1110/evva/compare/v1.5.1-beta.1...v1.5.1-beta.2
 [v1.5.1-beta.1]: https://github.com/johnny1110/evva/compare/v1.5.0-beta.5...v1.5.1-beta.1
 [v1.5.0-beta.5]: https://github.com/johnny1110/evva/compare/v1.5.0-beta.4...v1.5.0-beta.5
-[v1.4.4-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.3...v1.4.4-beta.1
+[v1.4.4]: https://github.com/johnny1110/evva/compare/v1.4.3...v1.4.4
 [v1.4.3]: https://github.com/johnny1110/evva/compare/v1.4.2-beta.1...v1.4.3
 [v1.4.3-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.2-beta.1...v1.4.3-beta.1
 [v1.4.2-beta.1]: https://github.com/johnny1110/evva/compare/v1.4.1-beta.1...v1.4.2-beta.1

@@ -3,6 +3,8 @@ package lsp
 import (
 	"context"
 	"log/slog"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,6 +207,15 @@ func TestNormalizeExt(t *testing.T) {
 
 func TestFileURI(t *testing.T) {
 	uri := fileURI("/project/main.go")
+	if runtime.GOOS == "windows" {
+		// filepath.Abs prefixes the current drive on Windows; pin the
+		// shape (file:///<drive>:/.../project/main.go), not the drive.
+		if !strings.HasPrefix(uri, "file:///") || !strings.Contains(uri, ":/") ||
+			!strings.HasSuffix(uri, "/project/main.go") {
+			t.Errorf("fileURI = %q, want file:///<drive>:/.../project/main.go", uri)
+		}
+		return
+	}
 	expected := "file:///project/main.go"
 	if uri != expected {
 		t.Errorf("fileURI = %q, want %q", uri, expected)

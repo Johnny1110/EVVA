@@ -10,10 +10,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/johnny1110/evva/pkg/common/proc"
 	"github.com/johnny1110/evva/pkg/tools"
 )
 
@@ -50,7 +51,7 @@ func (t *REPLTool) Name() string { return string(tools.REPL) }
 func (t *REPLTool) Description() string {
 	return "Executes a Python or JavaScript code snippet in a fresh subprocess and returns its combined stdout+stderr output.\n\n" +
 		"State does NOT persist between calls — each invocation runs a brand-new interpreter process, so variables, imports, and definitions from a previous call are gone. Put everything the snippet needs in a single `code` string.\n\n" +
-		"language selects the interpreter: \"python\" runs python3 (falling back to python), \"javascript\" runs node. Defaults to python.\n\n" +
+		"language selects the interpreter: \"python\" runs the first Python found on PATH (python3/python; the py launcher first on Windows), \"javascript\" runs node. Defaults to python.\n\n" +
 		"The snippet is passed as a single argument (python -c / node -e), so keep it reasonably sized — a very large program may hit the OS argument-length limit; in that case write a file and run it with bash instead.\n\n" +
 		"Prefer bash for shell/CLI operations and the dedicated read/write/edit tools for files. Reach for repl when a real language is the clearest way to compute or transform data.\n\n" +
 		"Timeout defaults to 120000 ms (2 min), max 600000 ms (10 min)."
@@ -121,18 +122,15 @@ func (t *REPLTool) Execute(ctx context.Context, logger *slog.Logger, input json.
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 
-	// Put the interpreter in its own process group so the timeout-driven
-	// teardown SIGKILLs the whole tree, not just the immediate child — a
+	// Put the interpreter in its own kill unit so the timeout-driven
+	// teardown takes down the whole tree, not just the immediate child — a
 	// snippet may spawn subprocesses that inherit the output pipes and
 	// would otherwise keep cmd.Wait blocked past the timeout.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	proc.Group(cmd)
 	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		// Negative pid → process group. Best-effort: the group may already
-		// be gone, and WaitDelay still catches straggling pipe holders.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		// Best-effort: the tree may already be gone, and WaitDelay still
+		// catches straggling pipe holders.
+		_ = proc.KillTree(cmd)
 		return nil
 	}
 	cmd.WaitDelay = killGrace
@@ -169,12 +167,20 @@ func (t *REPLTool) Execute(ctx context.Context, logger *slog.Logger, input json.
 func resolveInterpreter(language string) (bin, codeFlag string, err error) {
 	switch language {
 	case "python", "py":
-		for _, c := range []string{"python3", "python"} {
+		// Order matters per-platform: python3 first elsewhere; on Windows
+		// the py launcher first — it is installed by the python.org
+		// installer and is never the Microsoft Store stub that a bare
+		// `python` on PATH can resolve to.
+		candidates := []string{"python3", "python"}
+		if runtime.GOOS == "windows" {
+			candidates = []string{"py", "python", "python3"}
+		}
+		for _, c := range candidates {
 			if p, e := exec.LookPath(c); e == nil {
 				return p, "-c", nil
 			}
 		}
-		return "", "", fmt.Errorf("no Python interpreter found on PATH (looked for python3, python)")
+		return "", "", fmt.Errorf("no Python interpreter found on PATH (looked for %s)", strings.Join(candidates, ", "))
 	case "javascript", "js", "node":
 		if p, e := exec.LookPath("node"); e == nil {
 			return p, "-e", nil

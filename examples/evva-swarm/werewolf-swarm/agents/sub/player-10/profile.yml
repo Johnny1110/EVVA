@@ -1,0 +1,7 @@
+# 身分開局抽籤 — 任何座位都可能抽到狼人/預言家,所以玩家統一用大杯;
+# 想省成本可全改 deepseek-v4-flash(代價是說謊與推理品質下降)。
+model: deepseek-v4-pro
+effort: medium
+when_to_use: "狼人殺玩家 10 號 — 由上帝指揮參與 12 人標準局,身分開局抽籤決定。"
+inject_memory: false
+advertise_skills: false

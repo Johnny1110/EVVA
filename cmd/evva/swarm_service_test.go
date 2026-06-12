@@ -392,6 +392,13 @@ func TestUnitFor(t *testing.T) {
 // RP-18: install-unit writes the unit under $HOME, refuses a second write
 // without --force, and prints the activation command.
 func TestServiceInstallUnit(t *testing.T) {
+	// Probe for a template BEFORE installing — platforms without one
+	// (windows) make serviceInstallUnit error by design.
+	rel, _, _, err := unitFor(runtime.GOOS, "x", "y")
+	if err != nil {
+		t.Skipf("no unit template on %s", runtime.GOOS)
+	}
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	useServiceHome(t)
@@ -399,10 +406,6 @@ func TestServiceInstallUnit(t *testing.T) {
 	var buf bytes.Buffer
 	if err := serviceInstallUnit(&buf, false); err != nil {
 		t.Fatalf("install-unit: %v", err)
-	}
-	rel, _, _, err := unitFor(runtime.GOOS, "x", "y")
-	if err != nil {
-		t.Skipf("no unit template on %s", runtime.GOOS)
 	}
 	path := filepath.Join(home, rel)
 	b, err := os.ReadFile(path)

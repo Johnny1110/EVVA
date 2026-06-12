@@ -28,7 +28,9 @@ func echoScript(t *testing.T, dir, name, jsonOutput string) string {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\necho '"+jsonOutput+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	// Slash-shaped: the path is interpolated into a bash command line,
+	// where windows backslashes would be eaten as escapes.
+	return filepath.ToSlash(path)
 }
 
 func TestDispatcher_FirePreToolUse_Block(t *testing.T) {

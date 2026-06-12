@@ -1,0 +1,3 @@
+# 一般 evva 工具。協作工具 (send_message, ...) 由 worker 角色自動注入。
+# 玩家是純對話參與者:只給 read,可查閱根目錄的 RULES.md。
+- read

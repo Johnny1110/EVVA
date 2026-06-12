@@ -1,0 +1,8 @@
+# 一般 evva 工具。協作工具 (send_message, ...) 由 worker 角色自動注入。
+# 分析師:讀資料集與品質報告、寫分析報告;bash 用來跑 python 做特徵
+# 工程與建模 — 所有數字都要程式算,不准心算。
+- read
+- write
+- edit
+- glob
+- bash

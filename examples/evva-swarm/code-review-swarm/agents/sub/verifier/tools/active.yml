@@ -1,0 +1,7 @@
+# 一般 evva 工具。協作工具 (send_message, ...) 由 worker 角色自動注入。
+# 驗證者:重讀目標 repo、寫判定檔;bash 只用來跑唯讀的 git 指令(diff/log/blame)。
+- read
+- write
+- glob
+- grep
+- bash

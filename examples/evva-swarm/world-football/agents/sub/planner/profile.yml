@@ -1,0 +1,7 @@
+# 企劃是一次性的規格設計工作,medium 即可;規格品質直接決定下游收集的廣度,
+# 不建議降 flash。
+model: deepseek-v4-pro
+effort: medium
+when_to_use: "分析企劃師 — 把一場比賽拆成資料需求規格書 (work/data-spec.md),定義三位收集者各自的表格、欄位、回溯窗口與優先序。"
+inject_memory: false
+advertise_skills: false

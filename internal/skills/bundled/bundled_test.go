@@ -183,6 +183,12 @@ func TestSetupSwarmSkill_Content(t *testing.T) {
 		"evva swarm send",
 		"evva swarm vacuum",
 		"evva service status",
+		// The shipped-example shortcut: the skill must keep pointing at the
+		// ready-to-run swarms under examples/evva-swarm/.
+		"examples/evva-swarm/",
+		"werewolf-swarm",
+		"world-football",
+		"code-review-swarm",
 	} {
 		if !strings.Contains(body, must) {
 			t.Errorf("setup-swarm body missing required reference %q", must)

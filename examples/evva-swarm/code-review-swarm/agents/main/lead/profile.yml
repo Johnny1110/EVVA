@@ -1,0 +1,7 @@
+# 審查長要追蹤三路審查 + 逐條驗證的進度、做去重與彙整,並嚴格控管階段順序 —
+# 用大杯 model + 最高推理深度。
+model: deepseek-v4-pro
+effort: high
+when_to_use: "程式碼審查長 — 接收審查目標、平行指派正確性/安全/品質三路審查、逐條交付對抗驗證、去重彙整最終審查報告 (review/report.md)。"
+inject_memory: false
+advertise_skills: false

@@ -1,0 +1,9 @@
+# 一般 evva 工具。協作工具 (send_message, list_members, ...) 由 leader 角色
+# 自動注入 — 不要列在這裡。
+# 總監:讀流程定義、驗收各階段產出、維護 work/ 狀態檔;bash 只用來把上一場
+# 的 work/ 與 data/ 搬進 archive/。
+- read
+- write
+- edit
+- glob
+- bash

@@ -1,0 +1,10 @@
+# 一般 evva 工具。協作工具 (send_message, list_members, ...) 由 leader 角色
+# 自動注入 — 不要列在這裡。
+# 審查長:讀面向定義與成員產出、維護 review/ 狀態檔與最終報告;
+# bash 只用來確認目標 repo 存在與抓審查範圍(git diff --stat)。
+- read
+- write
+- edit
+- glob
+- grep
+- bash

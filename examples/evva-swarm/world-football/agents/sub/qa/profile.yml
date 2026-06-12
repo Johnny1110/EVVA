@@ -1,0 +1,7 @@
+# 品管要逐表核對規格、跑 python 清洗合併、判斷哪些缺口值得補抓 —
+# medium 足夠,但不建議降 flash(缺口判斷會變粗糙)。
+model: deepseek-v4-pro
+effort: medium
+when_to_use: "資料品管員 — 驗證與清洗 data/raw 的原始表,合併成 data/dataset.xlsx,產出品質報告與關鍵缺口清單(可觸發一輪補抓)。"
+inject_memory: false
+advertise_skills: false

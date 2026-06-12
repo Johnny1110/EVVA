@@ -1,0 +1,8 @@
+# 一般 evva 工具。協作工具 (send_message, ...) 由 worker 角色自動注入。
+# 預測專家:讀分析報告與原始表、寫討論紀錄與最終預測;bash 用來跑 python
+# 驗算引用的數字(機率歸一、Poisson 加總)。
+- read
+- write
+- edit
+- glob
+- bash

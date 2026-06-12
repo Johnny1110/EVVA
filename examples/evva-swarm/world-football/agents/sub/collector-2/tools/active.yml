@@ -1,0 +1,7 @@
+# 一般 evva 工具。協作工具 (send_message, ...) 由 worker 角色自動注入。
+# 收集者:讀規格書、寫 CSV 與 notes;bash 用來跑 curl / python 抓公開資料。
+- read
+- write
+- edit
+- glob
+- bash

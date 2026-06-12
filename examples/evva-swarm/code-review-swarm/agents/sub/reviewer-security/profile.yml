@@ -1,0 +1,6 @@
+# 安全審查要辨識注入、機密外洩與權限缺口 — 用大杯 model。
+model: deepseek-v4-pro
+effort: medium
+when_to_use: "安全審查者 — 在指定範圍內找注入、硬編碼機密、權限與驗證缺口、依賴風險,產出 review/findings-security.md。"
+inject_memory: false
+advertise_skills: false

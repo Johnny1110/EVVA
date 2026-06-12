@@ -1,0 +1,7 @@
+# 收集是「照規格抓資料 + 整表」的執行工作,medium 即可;
+# 想省成本可改 deepseek-v4-flash(代價是抓取腳本與資料判讀品質下降)。
+model: deepseek-v4-pro
+effort: medium
+when_to_use: "資料收集者 1 號 — 戰績與交手:兩隊近期戰績、FIFA/聯賽排名、歷史交手 (H2H)、主客場拆分、進失球,整理成 data/raw 的 CSV。"
+inject_memory: false
+advertise_skills: false

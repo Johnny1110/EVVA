@@ -1,0 +1,6 @@
+# 驗證者要逐條重讀程式碼並嘗試推翻發現 — 對抗驗證最吃推理深度。
+model: deepseek-v4-pro
+effort: high
+when_to_use: "對抗驗證者 — 逐條重讀程式碼、以推翻為目標驗證每條審查發現,判定 confirmed/refuted/uncertain,產出 review/verdicts.md。"
+inject_memory: false
+advertise_skills: false

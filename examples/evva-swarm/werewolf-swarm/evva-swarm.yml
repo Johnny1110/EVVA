@@ -1,0 +1,35 @@
+# werewolf-swarm — 12 人標準局狼人殺(預女獵守)。
+#
+# 一位「上帝」(leader) 主持整場遊戲:推動夜晚/白天流程、私下傳遞夜間資訊、
+# 公開宣告事件、執行規則並判定勝負。12 位玩家 (workers) 各自帶著秘密身分
+# 參與遊戲 — 4 狼人、預言家、女巫、獵人、守衛、4 平民。
+name: werewolf-swarm
+workdir: .
+
+# 上帝:遊戲主持人與唯一裁判,知道所有人的身分。
+leader:
+  agent: god
+
+# 12 位玩家。座位號 = 名字尾碼;發言與投票都以座位順序進行。
+# 身分只寫在各自的 system_prompt.md 裡,玩家彼此看不到。
+workers:
+  - agent: player-1
+  - agent: player-2
+  - agent: player-3
+  - agent: player-4
+  - agent: player-5
+  - agent: player-6
+  - agent: player-7
+  - agent: player-8
+  - agent: player-9
+  - agent: player-10
+  - agent: player-11
+  - agent: player-12
+
+settings:
+  # 這是純對話遊戲:只有上帝會寫遊戲狀態檔 (game/),玩家沒有寫入工具,
+  # bypass 讓整場遊戲不需逐一點擊核准就能自己跑完。
+  permission_mode: bypass
+  # 一個回合 = 夜晚(私訊收行動)+ 白天(12 人發言 + 投票),上帝的訊息量
+  # 很大,給足空間避免回合中途停下來等推一把。
+  max_iterations: 120

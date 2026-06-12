@@ -1,0 +1,8 @@
+# 一般 evva 工具。協作工具 (send_message, ...) 由 worker 角色自動注入。
+# 品管:讀規格與原始表、寫品質報告;bash 用來跑 python 做驗證、清洗與
+# 合併輸出 xlsx。
+- read
+- write
+- edit
+- glob
+- bash

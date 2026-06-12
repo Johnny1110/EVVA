@@ -1,0 +1,27 @@
+# code-review-swarm — 程式碼審查小組。
+#
+# 一位「審查長」(leader) 主持整場審查:接收審查目標(repo 路徑 + 範圍)、
+# 平行指派三個面向的審查、把每條發現交給驗證者對抗驗證、彙整最終報告。
+# 四位成員 (workers):正確性審查、安全審查、品質審查、對抗驗證者。
+name: code-review-swarm
+workdir: .
+
+# 審查長:審查的主持人與唯一協調者,自己不找問題、不下結論。
+leader:
+  agent: lead
+
+# 四位成員。流程:reviewer ×3(平行)→ verifier 逐條對抗驗證 → lead 彙整。
+workers:
+  - agent: reviewer-correctness
+  - agent: reviewer-security
+  - agent: reviewer-quality
+  - agent: verifier
+
+settings:
+  # 審查者要跑 bash(git diff / git log / 跑測試)讀取目標 repo;
+  # bypass 讓整場審查不需逐一點擊核准就能自己跑完。
+  # 對目標 repo 不放心(例如不想讓 agent 跑它的測試)就改回 default 逐步核准。
+  permission_mode: bypass
+  # 一輪審查 = 三路平行審查 + 逐條對抗驗證 + 彙整,
+  # 驗證者每條發現都要重讀程式碼,工具呼叫量大,給足空間。
+  max_iterations: 80

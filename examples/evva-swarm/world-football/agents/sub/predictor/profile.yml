@@ -1,0 +1,7 @@
+# 預測專家要綜合模型、市場與情境做最終判斷,還要主導多輪辯證 —
+# 用大杯 model + 最高推理深度。
+model: deepseek-v4-pro
+effort: high
+when_to_use: "預測專家 — 綜合模型輸出、資料品質與情境因素,主導與分析師的 2~4 輪辯證,產出最終勝/平/負機率與比分預測 (work/prediction.md)。"
+inject_memory: false
+advertise_skills: false

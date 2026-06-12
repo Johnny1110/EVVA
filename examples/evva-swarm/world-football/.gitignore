@@ -1,0 +1,10 @@
+# 執行期產物 — 不屬於這個範例本身。
+.vero/
+# 專案 venv — qa/analyst 跑 openpyxl、pandas、scikit-learn 用。
+.venv/
+# 管線在執行中產生的規格、資料集、報告與狀態檔。
+work/
+data/
+archive/
+# 成員在執行中累積的記憶。
+agents/*/*/memory/

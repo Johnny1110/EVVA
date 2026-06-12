@@ -1,0 +1,7 @@
+# 總監要同時追蹤六個階段、七位成員的進度與產出驗收,並嚴格控管階段順序 —
+# 用大杯 model + 最高推理深度。
+model: deepseek-v4-pro
+effort: high
+when_to_use: "足球預測管線總監 — 接收預測需求、依六階段指派 planner / collector ×3 / qa / analyst / predictor、驗收每階段產出、維護管線狀態、彙報最終預測。"
+inject_memory: false
+advertise_skills: false

@@ -1,0 +1,30 @@
+# world-football-swarm — 足球賽果預測管線。
+#
+# 一位「總監」(leader) 主持整條管線:接收使用者的預測需求、依六階段
+# 指派工作、驗收產出、維護管線狀態,最後彙報預測結果。七位專家 (workers)
+# 各司其職 — 企劃、收集 ×3、品管、分析、預測。
+name: world-football-swarm
+workdir: .
+
+# 總監:管線主持人與唯一協調者,所有溝通的樞紐。
+leader:
+  agent: director
+
+# 七位專家。管線順序:planner → collector-1..3(平行)→ qa → analyst
+# → analyst ↔ predictor 多輪討論 → predictor 產出最終預測。
+workers:
+  - agent: planner
+  - agent: collector-1
+  - agent: collector-2
+  - agent: collector-3
+  - agent: qa
+  - agent: analyst
+  - agent: predictor
+
+settings:
+  # 收集者與分析師要跑 bash(curl / python)抓資料與建模,品管要寫 xlsx;
+  # bypass 讓整條管線不需逐一點擊核准就能自己跑完。想逐步監督就改回 default。
+  permission_mode: bypass
+  # 一輪預測 = 企劃 + 三路收集 + 品管(含補抓)+ 建模 + 2~4 輪討論 + 彙報,
+  # 收集與建模的工具呼叫量大,給足空間避免中途停下來等推一把。
+  max_iterations: 100

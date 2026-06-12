@@ -64,6 +64,16 @@ type AgentDefinition struct {
 	// in mainProfileFromDiskAgent). Built-in evva leaves it false; internal/swarm
 	// sets it at member registration (RP-5).
 	LongRunning bool
+
+	// PromptSuffix, when non-empty, is appended verbatim (after one blank
+	// line) to the END of the fully composed system prompt — built-in and
+	// disk-composed paths alike. It is the seam a swarm uses to attach its
+	// team protocol to a persona whose prompt is assembled internally and so
+	// cannot be pre-concatenated into a body string (RP-29). Living on the
+	// definition (not an agent option) means every prompt re-render —
+	// ReloadSkills, MCP discovery, SwitchProfile — re-reads it from the
+	// registry and keeps it.
+	PromptSuffix string
 }
 
 // IsMain reports whether this agent appears in the /profile picker (Phase 6).

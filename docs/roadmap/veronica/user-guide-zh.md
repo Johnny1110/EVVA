@@ -303,6 +303,34 @@ evva swarm ls
 
 打开那个 URL，粘贴 token，就能看到你的团队上线了。
 
+### 5.6 Persona 成员（RP-29）
+
+manifest 成员可以引用 **registry 里的 main-tier 人格**（内建 `evva`，或
+`<EVVA_HOME>/agents/` 下的自制人格），不需要 workdir 的 agent 目录。人格以
+本尊身份进驻：自己的 system prompt、完整工具组、已安装 skills、workdir
+`EVVA.md` 简报，外加 swarm teamwork 协议与角色对应的 swarm 工具。leader 与
+worker 都可用：
+
+```yaml
+workers:
+  - persona: evva            # 每个成员 agent:/persona: 恰好二选一
+    model: deepseek-v4-pro   # 可选钉选（persona 成员没有 profile.yml）
+    effort: ultra            # low|medium|high|ultra
+    when_to_use: "特派工程师" # roster 上显示的专长
+```
+
+语义：
+
+- `model:` / `effort:` / `when_to_use:` 在 `agent:` 成员上也可用，非空时
+  盖过 profile.yml（沿用 schedule 的权威规则）。
+- skills 五层合并（低→高）：bundled < home < workdir < space 共享 < 成员私有。
+- 记忆 = 标准成员记忆目录（`agents/{main,sub}/<name>/memory/`）；solo 的
+  全局 auto-memory 不桥接。
+- 驻 swarm 的人格会剥离 solo 排程工具（`alarm_create/list/cancel`、`cron_*`、
+  `schedule_wakeup`）——改用 `alarm_set`/`alarm_clear` 与 leader 的 `schedule_set`。
+- v1 范围：persona 成员写在 manifest（register/重启生效）；web 表单仅支持
+  目录成员。
+
 ---
 
 ## 6. 在 Web 工作站里驱动它

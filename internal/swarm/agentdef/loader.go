@@ -38,6 +38,10 @@ type Loaded struct {
 	// evva-swarm.yml where the whole roster's stances read in one file,
 	// not in each agent's own profile.yml.
 	PermissionMode string
+	// FromPersona marks a member synthesized from a manifest persona entry
+	// (RP-29): no disk dir was read; the space resolves the def from its
+	// persona registry at assembly time.
+	FromPersona bool
 }
 
 // Warning is a non-fatal load issue (e.g. a malformed SKILL.md). Surfaced by
@@ -140,6 +144,19 @@ func (l *Loader) BuildAll(workdir string, m Manifest) ([]Loaded, []Warning, erro
 
 	shared := SharedSkillsDir(workdir)
 	add := func(dir string, role Role, mem Member) error {
+		if mem.FromPersona {
+			// A persona member has no disk dir — the space resolves its def
+			// from the persona registry at assembly time (RP-29). Skills here
+			// is a placeholder; constructMember composes the real layered
+			// catalog (persona-own + shared + member-local).
+			loaded = append(loaded, Loaded{
+				Def:         agent.AgentDefinition{Name: mem.Agent, WhenToUse: mem.WhenToUse, Model: mem.Model},
+				FromPersona: true, Role: role, Schedule: mem.Schedule,
+				Effort: mem.Effort, PermissionMode: mem.PermissionMode,
+				Skills: skill.NewRegistry(),
+			})
+			return nil
+		}
 		one, err := l.Build(dir, role, shared)
 		if err != nil {
 			return err
@@ -148,6 +165,16 @@ func (l *Loader) BuildAll(workdir string, m Manifest) ([]Loaded, []Warning, erro
 		// §3.7) — the whole team's cadence is declared in one versioned file.
 		if mem.Schedule != nil {
 			one.Schedule = mem.Schedule
+		}
+		// Same precedence for the RP-29 manifest overrides.
+		if mem.Model != "" {
+			one.Def.Model = mem.Model
+		}
+		if mem.Effort != "" {
+			one.Effort = mem.Effort
+		}
+		if mem.WhenToUse != "" {
+			one.Def.WhenToUse = mem.WhenToUse
 		}
 		one.PermissionMode = mem.PermissionMode
 		for _, w := range one.Skills.Warnings {

@@ -57,6 +57,13 @@ type PromptContext struct {
 	// never in the static system prompt (RP-5). Driven by AgentDefinition.LongRunning.
 	OmitDate bool
 
+	// OmitSkillAuthoring drops the "How to create a skill" guidance from the
+	// main prompt's skills section. Long-running swarm-resident personas set
+	// it (via AgentDefinition.LongRunning) for the same reason disk swarm
+	// members do (RP-10-3): a member with write/bash should not be invited to
+	// author SKILL.md mid-run.
+	OmitSkillAuthoring bool
+
 	// Environment
 	OS       string // runtime.GOOS — "darwin", "linux", "windows".
 	Shell    string // basename of $SHELL — "zsh", "bash", ...

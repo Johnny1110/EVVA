@@ -164,7 +164,9 @@ func (s *Supervisor) AddMember(name string) error {
 	if err != nil {
 		return fmt.Errorf("swarm: add member %q: %w", name, err)
 	}
-	s.sp.registerDef(ld)
+	if err := s.sp.registerDef(&ld); err != nil {
+		return fmt.Errorf("swarm: add member %q: %w", name, err)
+	}
 	if err := s.sp.constructMember(ld); err != nil {
 		return fmt.Errorf("swarm: add member %q: %w", name, err)
 	}
@@ -366,11 +368,11 @@ func (s *Supervisor) ReloadMemberSkills(name string) error {
 	if m == nil {
 		return fmt.Errorf("swarm: reload skills: unknown member %q", name)
 	}
-	// skill.LoadRegistry never errors (a missing dir is the empty registry).
-	// Source order (shared, member) matches construction exactly (RP-26): the
-	// space-shared dir under the member's own, member wins on collision — so a
-	// reload can also pick up a freshly dropped shared skill for this member.
-	reg, _ := skill.LoadRegistry(agentdef.SharedSkillsDir(s.sp.Workdir), agentdef.SkillsDir(s.sp.Workdir, role, name))
+	// Source set matches construction exactly (RP-26 lockstep): dir members
+	// re-scan (shared, member); persona members re-compose their layered
+	// catalog (persona-own + shared + member-local, RP-29) — so a reload also
+	// picks up a freshly dropped shared skill for this member.
+	reg := s.sp.memberSkillRegistry(s.sp.isPersonaMember(name), role, name)
 	m.mu.Lock()
 	m.pendingSkills = reg
 	m.mu.Unlock()

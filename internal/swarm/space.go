@@ -75,6 +75,11 @@ type SwarmSpace struct {
 	// manifest/profile seed. Lazily allocated so hand-built test spaces
 	// need no init.
 	schedMeta map[string]ScheduleOrigin
+	// personaMembers marks members sourced from a registry persona (RP-29):
+	// their skill catalog merges the persona's own dirs with the space's, so
+	// construction and skill reload must agree on the source set. Lazily
+	// allocated in registerPersonaDef.
+	personaMembers map[string]bool
 
 	// budgets holds manifest member-level daily-budget overrides (RP-13);
 	// members without an entry inherit settings.DailyBudgetTokens. meter is the
@@ -166,8 +171,11 @@ func NewSpace(id string, m agentdef.Manifest, loaded []agentdef.Loaded, ts ToolS
 	// Two phases: register every persona first so each agent.New sees all its
 	// siblings in the subagent_type list (a leader can spawn a worker as an
 	// intra-task subagent), then construct.
-	for _, ld := range loaded {
-		sp.registerDef(ld)
+	for i := range loaded {
+		if err := sp.registerDef(&loaded[i]); err != nil {
+			sp.Shutdown()
+			return nil, fmt.Errorf("swarm: space %q: %w", id, err)
+		}
 	}
 	for _, ld := range loaded {
 		if err := sp.constructMember(ld); err != nil {
@@ -180,8 +188,13 @@ func NewSpace(id string, m agentdef.Manifest, loaded []agentdef.Loaded, ts ToolS
 }
 
 // registerDef adds one member's definition to the space persona registry,
-// forcing main-tier so agent.New can resolve it as a root agent.
-func (sp *SwarmSpace) registerDef(ld agentdef.Loaded) {
+// forcing main-tier so agent.New can resolve it as a root agent. Persona
+// members (RP-29) are composed from the registry instead and may fail when
+// the referenced persona does not exist or is not main-tier.
+func (sp *SwarmSpace) registerDef(ld *agentdef.Loaded) error {
+	if ld.FromPersona {
+		return sp.registerPersonaDef(ld)
+	}
 	def := ld.Def
 	def.As = ensureMain(def.As)
 	// Every swarm member is long-running: its system-prompt prefix must stay
@@ -209,6 +222,79 @@ func (sp *SwarmSpace) registerDef(ld agentdef.Loaded) {
 	sp.mu.Lock()
 	sp.reg.Register(def)
 	sp.mu.Unlock()
+	return nil
+}
+
+// registerPersonaDef composes a persona member's definition from the space
+// persona registry (built-ins + <appHome>/agents): swarm-harden it the same
+// way dir members are (LongRunning, AdvertiseSkills, main-tier), apply the
+// manifest's when_to_use/model overrides, and attach the team protocol as
+// PromptSuffix — the seam that survives internally-assembled prompts and
+// every re-render (RP-29). The composed def is registered space-locally
+// (solo evva is untouched — each space builds its own registry copy) and
+// written back onto ld so constructMember and the roster read the effective
+// values.
+func (sp *SwarmSpace) registerPersonaDef(ld *agentdef.Loaded) error {
+	name := ld.Def.Name
+	base, ok := sp.reg.Get(name)
+	if !ok {
+		return fmt.Errorf("persona member %q: no such persona in the registry (built-ins + <appHome>/agents)", name)
+	}
+	if !base.IsMain() {
+		return fmt.Errorf("persona member %q: not a main-tier persona", name)
+	}
+	def := base
+	def.As = ensureMain(def.As)
+	def.LongRunning = true
+	def.AdvertiseSkills = true
+	// Built-ins carry empty tool lists ("constructor defaults", which already
+	// include the skill tool); only a disk persona's explicit list needs the
+	// swarm-forced skill tool (RP-10-1).
+	if len(def.ActiveTools) > 0 {
+		def.ActiveTools = ensureTool(def.ActiveTools, tools.SKILL)
+	}
+	if w := ld.Def.WhenToUse; w != "" {
+		def.WhenToUse = w
+	}
+	if m := ld.Def.Model; m != "" {
+		def.Model = m
+	}
+	canWrite := len(def.ActiveTools) == 0 ||
+		slices.Contains(def.ActiveTools, tools.WRITE_FILE) ||
+		slices.Contains(def.ActiveTools, tools.EDIT_FILE)
+	def.PromptSuffix = teamProtocolSuffix(name, sp.Name, ld.Role, canWrite)
+	sp.mu.Lock()
+	sp.reg.Register(def)
+	if sp.personaMembers == nil {
+		sp.personaMembers = map[string]bool{}
+	}
+	sp.personaMembers[name] = true
+	sp.mu.Unlock()
+	ld.Def = def
+	return nil
+}
+
+// isPersonaMember reports whether name was assembled from a registry persona.
+func (sp *SwarmSpace) isPersonaMember(name string) bool {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	return sp.personaMembers[name]
+}
+
+// memberSkillRegistry resolves a member's full skill catalog from disk. Dir
+// members load (shared, own) — the RP-26 order. Persona members additionally
+// start from the persona's OWN catalog (bundled + appHome + workdir skills,
+// via agent.LoadSkillCatalog) with the space layers on top, precedence
+// low→high: bundled < home < workdir < shared < member-local. Construction
+// and Supervisor.ReloadMemberSkills both call this, so the two never drift.
+func (sp *SwarmSpace) memberSkillRegistry(fromPersona bool, role agentdef.Role, name string) *skill.Registry {
+	shared := agentdef.SharedSkillsDir(sp.Workdir)
+	own := agentdef.SkillsDir(sp.Workdir, role, name)
+	if fromPersona {
+		return agent.LoadSkillCatalog(sp.cfg, shared, own)
+	}
+	reg, _ := skill.LoadRegistry(shared, own)
+	return reg
 }
 
 // constructMember builds one live agent from a Loaded and wires it into the
@@ -287,9 +373,16 @@ func (sp *SwarmSpace) constructMember(ld agentdef.Loaded) error {
 		out:     sp.out,
 	}
 
+	// Persona members compose their catalog live (persona-own + shared +
+	// member-local, RP-29); dir members carry the loader's (shared, own) set.
+	skillsReg := ld.Skills
+	if ld.FromPersona {
+		skillsReg = sp.memberSkillRegistry(true, ld.Role, name)
+	}
+
 	opts := []agent.Option{
 		agent.WithSink(sink),
-		agent.WithSkillRegistry(ld.Skills),
+		agent.WithSkillRegistry(skillsReg),
 		agent.WithName(name),
 		agent.WithMemoryDir(memDir),
 		agent.WithRootContext(sp.ctx),

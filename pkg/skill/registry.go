@@ -52,6 +52,11 @@ const (
 	// (Home or WorkDir) or a Programmatic skill wins silently. Registered
 	// via Registry.AddBundled (see internal/skills/bundled).
 	SourceBundled SkillSource = "bundled"
+	// SourceSwarm marks a skill loaded from a swarm space's extra dirs (the
+	// space-shared skills dir or a member's own skills dir) when composing a
+	// persona member's catalog (RP-29). Same precedence rule as any later
+	// loadDir call: it overrides earlier-loaded tiers and records a warning.
+	SourceSwarm SkillSource = "swarm"
 )
 
 // SkillMeta is the resolved metadata for a single skill. Body content is
@@ -173,6 +178,15 @@ func LoadRegistry(homeSkillsDir, workdirSkillsDir string) (*Registry, error) {
 	r.loadDir(homeSkillsDir, SourceHome)
 	r.loadDir(workdirSkillsDir, SourceWorkDir)
 	return r, nil
+}
+
+// LoadDir scans one extra skills root into an existing registry, labeling
+// entries with src. Later calls override earlier entries of the same name
+// (the LoadRegistry precedence rule); a missing dir is a no-op. Public so a
+// host can layer extra catalogs — e.g. a swarm space overlaying its shared
+// and member-local skill dirs onto a persona's own catalog (RP-29).
+func (r *Registry) LoadDir(root string, src SkillSource) {
+	r.loadDir(root, src)
 }
 
 // loadDir walks one root, parses each child folder's SKILL.md, and inserts

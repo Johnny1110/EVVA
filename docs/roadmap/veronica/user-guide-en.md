@@ -326,6 +326,36 @@ evva swarm ls
 
 Open the URL, paste the token, and you'll see your team online.
 
+### 5.6 Persona members (RP-29)
+
+A manifest member may reference a **registry main-tier persona** instead of a
+workdir agent directory — the built-in `evva`, or any persona under
+`<EVVA_HOME>/agents/`. The persona joins with its full identity (its own
+system prompt, complete tool kit, installed skills, workdir `EVVA.md`
+briefing) plus the swarm team protocol and the role's swarm tools. Works for
+the leader and for workers:
+
+```yaml
+workers:
+  - persona: evva            # exactly one of agent:/persona: per member
+    model: deepseek-v4-pro   # optional pin (a persona member has no profile.yml)
+    effort: ultra            # low|medium|high|ultra
+    when_to_use: "resident engineer"   # roster description
+```
+
+Semantics:
+
+- `model:` / `effort:` / `when_to_use:` are also accepted on `agent:` members,
+  where a non-empty value overrides profile.yml (the schedule precedence rule).
+- Skills merge low→high: bundled < home < workdir < space-shared < member-local.
+- Memory is the standard member memory dir (`agents/{main,sub}/<name>/memory/`);
+  the persona's solo auto-memory is not bridged.
+- Swarm-resident personas drop the solo self-scheduling tools
+  (`alarm_create/list/cancel`, `cron_*`, `schedule_wakeup`) — use `alarm_set`/
+  `alarm_clear` and the leader's `schedule_set` instead.
+- v1 scope: declare persona members in the manifest (register/restart applies
+  them); the web add-member form still creates directory members only.
+
 ---
 
 ## 6. Drive it from the web workstation

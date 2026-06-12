@@ -12,6 +12,29 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Three ready-to-run swarm examples under `examples/evva-swarm/`.** Each is
+  pure config (manifest + agent definitions + one root-level shared-knowledge
+  doc) with its own README, plus a folder-level overview covering the common
+  run flow and a "build your own team" guide. The shapes are deliberately
+  different: `werewolf-swarm/` (1 moderator + 12 players — turn-based
+  conversation game: strict one-member-at-a-time turn control, private-message
+  information hygiene, no task board), `world-football/` (1 director + 7
+  specialists — six-stage data pipeline: task-board dispatch, leader-verified
+  stage gates, parallel collection, multi-round debate), and
+  `code-review-swarm/` (1 lead + 4 members — parallel fan-out + adversarial
+  verification: three reviewers in parallel, leader-side dedup, a verifier
+  that re-reads the code and tries to refute every finding).
+- **setup-swarm bundled skill: "adapt a shipped example" shortcut.** The skill
+  now points at the three examples first — copy the closest shape instead of
+  scaffolding from scratch — and distills their load-bearing patterns for
+  from-scratch builds: the leader persona as the swarm's skeleton (coordination
+  policy + a state file with action-bound update triggers), shared knowledge as
+  one root-level doc, minimal worker tool sets with a reply-exactly-once
+  protocol, and reminder/downgrade discipline so one silent member never
+  deadlocks the team.
+
 ## [v1.7.0] — 2026-06-12
 
 ### Added

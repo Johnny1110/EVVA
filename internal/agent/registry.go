@@ -25,6 +25,7 @@ type AgentSpec struct {
 	Model           string
 	SystemPrompt    string
 	LongRunning     bool
+	PromptSuffix    string
 }
 
 // DefinitionFromSpec builds a sysprompt.AgentDefinition from a closure-free
@@ -45,6 +46,7 @@ func DefinitionFromSpec(spec AgentSpec) sysprompt.AgentDefinition {
 		Model:             spec.Model,
 		PromptBody:        body,
 		LongRunning:       spec.LongRunning,
+		PromptSuffix:      spec.PromptSuffix,
 	}
 }
 
@@ -64,6 +66,7 @@ func SpecFromDefinition(def sysprompt.AgentDefinition) AgentSpec {
 		Model:           def.Model,
 		SystemPrompt:    def.PromptBody,
 		LongRunning:     def.LongRunning,
+		PromptSuffix:    def.PromptSuffix,
 	}
 }
 

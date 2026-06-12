@@ -57,6 +57,11 @@ type AgentDefinition struct {
 	// prefix — currently the "- Today:" date in the environment section. Leave
 	// false for ordinary personas; the swarm subsystem sets it for its members.
 	LongRunning bool
+
+	// PromptSuffix, when non-empty, is appended after the persona's fully
+	// composed system prompt. The swarm subsystem sets it on persona members
+	// to attach the team protocol; ordinary personas leave it empty.
+	PromptSuffix string
 }
 
 // IsMain reports whether the persona appears in the /profile picker.
@@ -86,6 +91,7 @@ func (d AgentDefinition) toSpec() agent_impl.AgentSpec {
 		Model:           d.Model,
 		SystemPrompt:    d.SystemPrompt,
 		LongRunning:     d.LongRunning,
+		PromptSuffix:    d.PromptSuffix,
 	}
 }
 
@@ -101,5 +107,6 @@ func definitionFromSpec(s agent_impl.AgentSpec) AgentDefinition {
 		Model:           s.Model,
 		SystemPrompt:    s.SystemPrompt,
 		LongRunning:     s.LongRunning,
+		PromptSuffix:    s.PromptSuffix,
 	}
 }

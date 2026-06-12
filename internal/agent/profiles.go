@@ -145,7 +145,21 @@ func Main(cfg *config.Config, provider constant.LLMProvider, model constant.Mode
 // the Profile.DeferredTools allowlist and the prompt's
 // <available-deferred-tools> block so the model can locate them via
 // tool_search. extraDeferred is nil for the plain Main path.
+//
+// Delegates to mainProfileForDef with the pristine built-in definition, so
+// the solo path stays byte-identical.
 func mainProfile(cfg *config.Config, provider constant.LLMProvider, model constant.Model, skills []sysprompt.SkillRef, mem memdir.Snapshot, options []llm.Option, extraDeferred []tools.ToolName) Profile {
+	return mainProfileForDef(sysprompt.MainAgent, cfg, provider, model, skills, mem, options, extraDeferred)
+}
+
+// mainProfileForDef builds the built-in evva profile honoring the swarm-set
+// flags on def: LongRunning (date-free prompt, no skill-authoring guidance,
+// no solo self-scheduling tools) and PromptSuffix (the swarm team protocol,
+// appended after the composed prompt). def contributes ONLY those flags —
+// the prompt fragments and tool kit are always the built-in Main ones
+// (sysprompt.MainAgent), never def's body: a swarm-registered "evva" def
+// carries an empty body by design (RP-29).
+func mainProfileForDef(def sysprompt.AgentDefinition, cfg *config.Config, provider constant.LLMProvider, model constant.Model, skills []sysprompt.SkillRef, mem memdir.Snapshot, options []llm.Option, extraDeferred []tools.ToolName) Profile {
 	// nil skills means "auto-load from cfg's skill dirs" — keeps downstream
 	// SDK callers (pkg/agent.New passes nil) and cmd/evva from having to
 	// re-implement the disk walk. An explicit empty slice still suppresses
@@ -186,8 +200,18 @@ func mainProfile(cfg *config.Config, provider constant.LLMProvider, model consta
 	// Fold MCP-discovered tool names in last so they appear in both the
 	// allowlist and the prompt's deferred catalog.
 	deferredTools = append(deferredTools, extraDeferred...)
+	// A swarm-resident persona must not carry solo self-scheduling tools —
+	// the swarm injects alarm_set/alarm_clear (and the leader's schedule_set),
+	// and a parallel solo scheduler would create wake sources the roster
+	// cannot see (RP-29).
+	if def.LongRunning {
+		activeTools = stripTools(activeTools, soloSchedulingTools())
+		deferredTools = stripTools(deferredTools, soloSchedulingTools())
+	}
 
 	ctx := detectContext(cfg)
+	ctx.OmitDate = def.LongRunning
+	ctx.OmitSkillAuthoring = def.LongRunning
 	ctx.Skills = skills
 	ctx.WorkdirMemory = mem.WorkdirMemory
 	ctx.MemoryIndex = mem.MemoryIndex
@@ -195,6 +219,9 @@ func mainProfile(cfg *config.Config, provider constant.LLMProvider, model consta
 	ctx.DeferredTools = deferredToolSpecs(deferredTools)
 	ctx.Model = string(model)
 	sp := sysprompt.MainAgent.BuildSystemPrompt(ctx)
+	if def.PromptSuffix != "" {
+		sp += "\n\n" + def.PromptSuffix
+	}
 	options = append(options, llm.WithSystem(sp))
 
 	return Profile{
@@ -261,7 +288,11 @@ func resolveMainProfileWithExtra(cfg *config.Config, reg *AgentRegistry, name st
 		return Profile{}, fmt.Errorf("agent: %q is not a main-tier persona", name)
 	}
 	if def.Name == "evva" {
-		return mainProfile(cfg, provider, model, skills, mem, options, extraDeferred), nil
+		// The registry def may be a swarm-composed copy carrying LongRunning +
+		// PromptSuffix (RP-29); pass it through so those flags reach the
+		// built-in profile builder. A pristine registry leaves both zero and
+		// this is exactly mainProfile.
+		return mainProfileForDef(def, cfg, provider, model, skills, mem, options, extraDeferred), nil
 	}
 	return mainProfileFromDiskAgent(def, cfg, provider, model, skills, mem, options, extraDeferred), nil
 }
@@ -357,6 +388,26 @@ func modeDeferredNames() []tools.ToolName {
 func profileAllowsAlarm(p Profile) bool {
 	return slices.Contains(p.ActiveTools, tools.ALARM_CREATE) ||
 		slices.Contains(p.DeferredTools, tools.ALARM_CREATE)
+}
+
+// soloSchedulingTools are the self-scheduling tools a swarm-resident persona
+// must not carry: the swarm injects alarm_set/alarm_clear (and the leader's
+// schedule_set), and a parallel solo scheduler would create wake sources the
+// roster cannot see. Keyed off AgentDefinition.LongRunning (RP-29).
+func soloSchedulingTools() []tools.ToolName {
+	out := slices.Concat(alarm.Names(), cron.Names())
+	return append(out, tools.SCHEDULE_WAKEUP)
+}
+
+// stripTools returns list minus drop, always as a fresh slice.
+func stripTools(list, drop []tools.ToolName) []tools.ToolName {
+	out := make([]tools.ToolName, 0, len(list))
+	for _, t := range list {
+		if !slices.Contains(drop, t) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // deferredToolSpecs converts a list of deferred tool names into the prompt

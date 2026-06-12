@@ -30,11 +30,21 @@ import (
 // only). canWriteMemory gates the memory section: a member with no write/edit
 // tool cannot maintain memory files, so teaching it the protocol is noise.
 func injectTeamProtocol(persona, name, space string, role agentdef.Role, canWriteMemory bool) string {
-	var b strings.Builder
+	suffix := teamProtocolSuffix(name, space, role, canWriteMemory)
 	if p := strings.TrimRight(persona, "\n"); p != "" {
-		b.WriteString(p)
-		b.WriteString("\n\n")
+		return p + "\n\n" + suffix
 	}
+	return suffix
+}
+
+// teamProtocolSuffix renders the swarm's collaboration sections WITHOUT a
+// persona body: grounding, channel rules, common protocol, role protocol,
+// and (for file-writing members) the memory protocol. Dir members get it
+// concatenated into their prompt body (injectTeamProtocol); persona members
+// get it as AgentDefinition.PromptSuffix so it survives the internally-
+// assembled prompt path and every re-render (RP-29).
+func teamProtocolSuffix(name, space string, role agentdef.Role, canWriteMemory bool) string {
+	var b strings.Builder
 	b.WriteString(swarmIdentity(name, space, role))
 	b.WriteString("\n\n")
 	b.WriteString(communicationProtocol)

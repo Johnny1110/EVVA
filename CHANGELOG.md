@@ -12,6 +12,8 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+## [v1.7.3-beta.1] — 2026-06-13
+
 ### Added
 
 - **Swarm web: per-member permission-mode switch (agent card ⋯ menu).** The
@@ -1509,7 +1511,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `EVVA.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.7.3-beta.1...HEAD
+[v1.7.3-beta.1]: https://github.com/johnny1110/evva/compare/v1.7.2...v1.7.3-beta.1
 [v1.7.2]: https://github.com/johnny1110/evva/compare/v1.7.0...v1.7.2
 [v1.7.1-beta.1]: https://github.com/johnny1110/evva/compare/v1.7.0...v1.7.1-beta.1
 [v1.7.0]: https://github.com/johnny1110/evva/compare/v1.4.4...v1.7.0

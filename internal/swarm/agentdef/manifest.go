@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/johnny1110/evva/pkg/llm"
 	"github.com/johnny1110/evva/pkg/permission"
 	"gopkg.in/yaml.v3"
 )
@@ -40,6 +41,18 @@ type Member struct {
 	// the broad stance, allow rules open holes in `default`, and deny rules
 	// bind in EVERY mode — bypass included.
 	PermissionMode string
+	// FromPersona marks a member that references a registry main-tier persona
+	// instead of a workdir agents/{main,sub}/<name>/ directory (RP-29). The
+	// member NAME stays in Agent for both shapes; the space resolves and
+	// composes the persona def at assembly time.
+	FromPersona bool
+	// Model / Effort / WhenToUse are optional manifest-level overrides. For a
+	// persona member they are the only pin point (it has no profile.yml); for
+	// a dir member a non-empty value is authoritative over profile.yml — the
+	// RP-7 §3.7 schedule precedent: the whole team's config reads in one file.
+	Model     string
+	Effort    string
+	WhenToUse string
 }
 
 // Settings are space-wide knobs from the manifest.
@@ -126,12 +139,66 @@ type scheduleYml struct {
 	Prompt string `yaml:"prompt,omitempty"`
 }
 
-// memberYml is one leader/worker entry in evva-swarm.yml.
+// memberYml is one leader/worker entry in evva-swarm.yml. Exactly one of
+// agent/persona names the member (RP-29): agent → workdir directory member,
+// persona → registry main-tier persona member.
 type memberYml struct {
-	Agent          string       `yaml:"agent"`
+	Agent          string       `yaml:"agent,omitempty"`
+	Persona        string       `yaml:"persona,omitempty"`
+	Model          string       `yaml:"model,omitempty"`
+	Effort         string       `yaml:"effort,omitempty"`
+	WhenToUse      string       `yaml:"when_to_use,omitempty"`
 	Schedule       *scheduleYml `yaml:"schedule,omitempty"`
 	BudgetTokens   int          `yaml:"budget_tokens,omitempty"`
 	PermissionMode string       `yaml:"permission_mode,omitempty"` // "" = inherit settings (RP-24)
+}
+
+// memberFromYml validates and converts one manifest member entry. ctx names
+// the entry ("leader", `worker "x"`) for error messages. Exactly one of
+// agent/persona must be set; effort, schedule, and permission_mode fail fast
+// here so a typo rejects the manifest at register time.
+func memberFromYml(y memberYml, ctx string) (Member, error) {
+	agentName := strings.TrimSpace(y.Agent)
+	personaName := strings.TrimSpace(y.Persona)
+	if (agentName == "") == (personaName == "") {
+		return Member{}, fmt.Errorf("agentdef: manifest %s: exactly one of agent/persona is required", ctx)
+	}
+	name := agentName
+	fromPersona := false
+	if personaName != "" {
+		name, fromPersona = personaName, true
+	}
+	sched, err := parseScheduleYml(y.Schedule)
+	if err != nil {
+		return Member{}, fmt.Errorf("agentdef: manifest %s schedule: %w", ctx, err)
+	}
+	mode, err := parsePermissionMode(y.PermissionMode)
+	if err != nil {
+		return Member{}, fmt.Errorf("agentdef: manifest %s permission_mode: %w", ctx, err)
+	}
+	effort := strings.TrimSpace(y.Effort)
+	if effort != "" && llm.ParseEffort(effort) == 0 {
+		return Member{}, fmt.Errorf("agentdef: manifest %s: invalid effort %q (want low|medium|high|ultra)", ctx, effort)
+	}
+	return Member{
+		Agent: name, FromPersona: fromPersona,
+		Model: strings.TrimSpace(y.Model), Effort: effort, WhenToUse: strings.TrimSpace(y.WhenToUse),
+		Schedule: sched, BudgetTokens: y.BudgetTokens, PermissionMode: mode,
+	}, nil
+}
+
+// memberToYml is the inverse of memberFromYml (WriteManifest).
+func memberToYml(m Member) memberYml {
+	y := memberYml{
+		Model: m.Model, Effort: m.Effort, WhenToUse: m.WhenToUse,
+		Schedule: toScheduleYml(m.Schedule), BudgetTokens: m.BudgetTokens, PermissionMode: m.PermissionMode,
+	}
+	if m.FromPersona {
+		y.Persona = m.Agent
+	} else {
+		y.Agent = m.Agent
+	}
+	return y
 }
 
 // manifestYml is the on-disk schema for evva-swarm.yml (design §4.4).
@@ -234,17 +301,13 @@ func LoadManifest(path string) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("agentdef: parse manifest %s: %w", path, err)
 	}
 
-	leaderSched, err := parseScheduleYml(y.Leader.Schedule)
+	leader, err := memberFromYml(y.Leader, "leader")
 	if err != nil {
-		return Manifest{}, fmt.Errorf("agentdef: manifest leader %q schedule: %w", y.Leader.Agent, err)
+		return Manifest{}, err
 	}
 	settingsMode, err := parsePermissionMode(y.Settings.PermissionMode)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("agentdef: manifest settings.permission_mode: %w", err)
-	}
-	leaderMode, err := parsePermissionMode(y.Leader.PermissionMode)
-	if err != nil {
-		return Manifest{}, fmt.Errorf("agentdef: manifest leader %q permission_mode: %w", y.Leader.Agent, err)
 	}
 	stall, err := parseStallDuration(y.Settings.StallThreshold, DefaultStallThreshold)
 	if err != nil {
@@ -274,7 +337,7 @@ func LoadManifest(path string) (Manifest, error) {
 	m := Manifest{
 		Name:    y.Name,
 		Workdir: y.Workdir,
-		Leader:  Member{Agent: y.Leader.Agent, Schedule: leaderSched, BudgetTokens: y.Leader.BudgetTokens, PermissionMode: leaderMode},
+		Leader:  leader,
 		Settings: Settings{
 			PermissionMode:        settingsMode,
 			MaxIterations:         y.Settings.MaxIterations,
@@ -290,15 +353,11 @@ func LoadManifest(path string) (Manifest, error) {
 		},
 	}
 	for _, w := range y.Workers {
-		ws, err := parseScheduleYml(w.Schedule)
+		wm, err := memberFromYml(w, fmt.Sprintf("worker %q", strings.TrimSpace(w.Agent+w.Persona)))
 		if err != nil {
-			return Manifest{}, fmt.Errorf("agentdef: manifest worker %q schedule: %w", w.Agent, err)
+			return Manifest{}, err
 		}
-		wMode, err := parsePermissionMode(w.PermissionMode)
-		if err != nil {
-			return Manifest{}, fmt.Errorf("agentdef: manifest worker %q permission_mode: %w", w.Agent, err)
-		}
-		m.Workers = append(m.Workers, Member{Agent: w.Agent, Schedule: ws, BudgetTokens: w.BudgetTokens, PermissionMode: wMode})
+		m.Workers = append(m.Workers, wm)
 	}
 	if err := m.validate(); err != nil {
 		return Manifest{}, err
@@ -325,9 +384,9 @@ func toScheduleYml(s *Schedule) *scheduleYml {
 // emitted too, though runtime.json stays the live authority (RP-7).
 func WriteManifest(path string, m Manifest) error {
 	y := manifestYml{Name: m.Name, Workdir: m.Workdir}
-	y.Leader = memberYml{Agent: m.Leader.Agent, Schedule: toScheduleYml(m.Leader.Schedule), BudgetTokens: m.Leader.BudgetTokens, PermissionMode: m.Leader.PermissionMode}
+	y.Leader = memberToYml(m.Leader)
 	for _, w := range m.Workers {
-		y.Workers = append(y.Workers, memberYml{Agent: w.Agent, Schedule: toScheduleYml(w.Schedule), BudgetTokens: w.BudgetTokens, PermissionMode: w.PermissionMode})
+		y.Workers = append(y.Workers, memberToYml(w))
 	}
 	y.Settings.PermissionMode = m.Settings.PermissionMode
 	y.Settings.MaxIterations = m.Settings.MaxIterations

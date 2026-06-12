@@ -96,3 +96,30 @@ func TestResolveMainProfile_EvvaSuffixFromRegistry(t *testing.T) {
 		t.Fatalf("re-render must keep exactly one suffix")
 	}
 }
+
+func TestDiskMainProfile_SuffixAndStrip(t *testing.T) {
+	cfg := suffixTestConfig(t)
+	def := sysprompt.AgentDefinition{
+		Name: "nono", As: []string{"main"},
+		BuildSystemPrompt: func(_ sysprompt.PromptContext) string { return "I am nono." },
+		ActiveTools:       []tools.ToolName{tools.READ_FILE, tools.SCHEDULE_WAKEUP},
+		DeferredTools:     append([]tools.ToolName{}, alarm.Names()...),
+		LongRunning:       true,
+		PromptSuffix:      "## SWARM PROTOCOL MARKER",
+	}
+	p := mainProfileFromDiskAgent(def, cfg, cfg.DefaultProvider, cfg.DefaultModel, nil, memdir.Snapshot{}, nil, nil)
+	if !strings.HasSuffix(p.SystemPrompt, "## SWARM PROTOCOL MARKER") {
+		t.Fatalf("disk persona suffix missing")
+	}
+	if slices.Contains(p.ActiveTools, tools.SCHEDULE_WAKEUP) {
+		t.Fatalf("strip must remove schedule_wakeup from a long-running disk persona")
+	}
+	for _, n := range alarm.Names() {
+		if slices.Contains(p.DeferredTools, n) {
+			t.Fatalf("strip must remove solo alarm tool %q", n)
+		}
+	}
+	if !slices.Contains(p.ActiveTools, tools.READ_FILE) {
+		t.Fatalf("unrelated tools must survive the strip")
+	}
+}

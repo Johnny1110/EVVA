@@ -342,6 +342,12 @@ func mainProfileFromDiskAgent(def sysprompt.AgentDefinition, cfg *config.Config,
 	// names in so an opted-in persona advertises and can reach the live
 	// MCP catalog after a /profile switch.
 	deferred := append(append([]tools.ToolName{}, def.DeferredTools...), extraDeferred...)
+	// Swarm-resident personas drop solo self-scheduling tools — same rule and
+	// reason as mainProfileForDef (RP-29).
+	if def.LongRunning {
+		def.ActiveTools = stripTools(def.ActiveTools, soloSchedulingTools())
+		deferred = stripTools(deferred, soloSchedulingTools())
+	}
 	// A deferred catalog is reachable only through tool_search — auto-mount
 	// it (RP-19) so a tools.yml that declares deferred tools but forgets to
 	// list tool_search doesn't ship a dead catalog. Mutating the local def
@@ -354,6 +360,9 @@ func mainProfileFromDiskAgent(def sysprompt.AgentDefinition, cfg *config.Config,
 	ctx.Model = string(model)
 	body := def.BuildSystemPrompt(ctx)
 	sp := sysprompt.ComposeDiskMainPrompt(body, ctx, def)
+	if def.PromptSuffix != "" {
+		sp += "\n\n" + def.PromptSuffix
+	}
 	options = append(options, llm.WithSystem(sp))
 	return Profile{
 		Type:          MAIN,

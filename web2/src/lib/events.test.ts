@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   reduceChat,
+  clock,
+  eventAt,
   groupTasks,
   textOf,
   approvalOf,
@@ -118,6 +120,52 @@ test('empty text deltas and unknown kinds are ignored', () => {
   turns = reduceChat(turns, txt('leader', ''))
   turns = reduceChat(turns, { Kind: 'usage', AgentID: 'leader' })
   assert.equal(turns.length, 0)
+})
+
+test('a turn stamps `at` from the event Time on first chunk, stable across appends', () => {
+  const t0 = '2026-06-13T09:05:03.000Z'
+  const t1 = '2026-06-13T09:05:04.500Z'
+  let turns = []
+  turns = reduceChat(turns, { ...txt('leader', 'Hel'), Time: t0 })
+  turns = reduceChat(turns, { ...txt('leader', 'lo'), Time: t1 })
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0].text, 'Hello')
+  // First-chunk time wins — the stamp marks when the message began, not the last delta.
+  assert.equal(turns[0].at, Date.parse(t0))
+})
+
+test('tool and error turns carry the event Time too', () => {
+  const ts = '2026-06-13T09:05:03.000Z'
+  let turns = reduceChat([], {
+    Kind: 'tool_use_start',
+    AgentID: 'leader',
+    Time: ts,
+    ToolUseStart: { Name: 'bash', ToolID: 't1', Input: {} },
+  })
+  assert.equal(turns[0].at, Date.parse(ts))
+  turns = reduceChat([], { Kind: 'error', AgentID: 'leader', Time: ts, Error: { Message: 'boom' } })
+  assert.equal(turns[0].at, Date.parse(ts))
+})
+
+test('a timeless event omits `at` entirely (pinned reducer fixtures stay clean)', () => {
+  const turns = reduceChat([], txt('leader', 'hi'))
+  assert.equal(turns[0].at, undefined)
+  assert.ok(!('at' in turns[0]))
+})
+
+test('eventAt parses RFC3339, is null-safe, and rejects junk', () => {
+  assert.equal(eventAt({ Kind: 'text', Time: '2026-06-13T09:05:03Z' }), Date.parse('2026-06-13T09:05:03Z'))
+  assert.equal(eventAt({ Kind: 'text' }), undefined)
+  assert.equal(eventAt(null), undefined)
+  assert.equal(eventAt({ Kind: 'text', Time: 'not-a-date' }), undefined)
+})
+
+test('clock formats local HH:MM:SS, zero-padded, empty for no instant', () => {
+  // Built from local components, so the expected string is timezone-independent.
+  const ms = new Date(2026, 5, 13, 9, 5, 3).getTime()
+  assert.equal(clock(ms), '09:05:03')
+  assert.equal(clock(0), '')
+  assert.equal(clock(undefined), '')
 })
 
 test('textOf is null-safe', () => {

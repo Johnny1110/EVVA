@@ -16,17 +16,23 @@ export const TASK_STATES: readonly TaskStatus[] = [
 ]
 
 // ── Turn model ──────────────────────────────────────────────────────────────
+// `at` is the turn's wall-clock instant (unix-ms) — for a streaming turn the
+// time of its FIRST chunk, for a tool/error/user turn the moment it appeared. It
+// is OPTIONAL on purpose: turns folded from a timeless event or seeded from a
+// transcript (no time on the wire) simply omit it, and the UI shows no stamp.
 export interface AssistantTurn {
   type: 'assistant'
   agentId: string
   text: string
   open: boolean
+  at?: number
 }
 export interface ThinkingTurn {
   type: 'thinking'
   agentId: string
   text: string
   open: boolean
+  at?: number
 }
 export interface ToolTurn {
   type: 'tool'
@@ -36,17 +42,20 @@ export interface ToolTurn {
   input?: unknown
   status: 'running' | 'done' | 'error'
   result?: string
+  at?: number
 }
 export interface ErrorTurn {
   type: 'error'
   agentId: string
   text: string
+  at?: number
 }
 export interface UserTurn {
   type: 'user'
   target: string
   agentId: string
   text: string
+  at?: number
 }
 export type StreamTurn = AssistantTurn | ThinkingTurn
 export type Turn = StreamTurn | ToolTurn | ErrorTurn | UserTurn
@@ -57,6 +66,28 @@ export function textOf(ev?: WireEvent | null): string {
 }
 export function thinkingOf(ev?: WireEvent | null): string {
   return (ev && ev.Thinking && ev.Thinking.Text) || ''
+}
+
+// eventAt extracts an event's emit instant (RFC3339 from the Go sink, event.go
+// Time) as unix-ms, or undefined when the wire carried no parseable time. Kept
+// undefined rather than 0 so a turn folded from a timeless event omits `at`
+// entirely (the conditional below), which keeps the pinned reducer tests — whose
+// fixtures carry no Time — byte-identical.
+export function eventAt(ev?: WireEvent | null): number | undefined {
+  if (!ev || !ev.Time) return undefined
+  const ms = Date.parse(ev.Time)
+  return Number.isNaN(ms) ? undefined : ms
+}
+
+// clock formats a unix-ms instant as local HH:MM:SS — the per-message timestamp
+// rendered beside each stream turn. Empty string for a missing/zero instant so
+// the UI can `v-if` it away. Built from the local-time parts (not toLocale*) so
+// it is deterministic under test.
+export function clock(ms?: number): string {
+  if (!ms) return ''
+  const d = new Date(ms)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
 // closeAgentOpen closes ONE agent's open streaming turns, leaving others' in-flight
@@ -82,15 +113,19 @@ function agentOpenTurn(turns: Turn[], agent: string): StreamTurn | null {
 }
 
 // appendChunk folds a delta into the agent's open turn of `type`, opening a fresh
-// one when needed (closing the agent's other open streaming turn first).
-function appendChunk(turns: Turn[], agent: string, type: StreamTurn['type'], text: string): Turn[] {
+// one when needed (closing the agent's other open streaming turn first). `at`
+// stamps only a freshly-opened turn — a continuing turn keeps its first-chunk
+// time, so the displayed timestamp marks when the message began.
+function appendChunk(turns: Turn[], agent: string, type: StreamTurn['type'], text: string, at?: number): Turn[] {
   if (!text) return turns
   const open = agentOpenTurn(turns, agent)
   if (open && open.type === type) {
     open.text += text
   } else {
     if (open) open.open = false
-    turns.push({ type, agentId: agent, text, open: true } as StreamTurn)
+    const t = { type, agentId: agent, text, open: true } as StreamTurn
+    if (at !== undefined) t.at = at
+    turns.push(t)
   }
   return turns
 }
@@ -101,25 +136,28 @@ function appendChunk(turns: Turn[], agent: string, type: StreamTurn['type'], tex
 export function reduceChat(turns: Turn[], ev: WireEvent): Turn[] {
   if (!ev || !ev.Kind) return turns
   const agent = ev.AgentID || ''
+  const at = eventAt(ev)
 
   switch (ev.Kind) {
     case 'text':
     case 'text_chunk':
-      return appendChunk(turns, agent, 'assistant', textOf(ev))
+      return appendChunk(turns, agent, 'assistant', textOf(ev), at)
     case 'thinking':
     case 'thinking_chunk':
-      return appendChunk(turns, agent, 'thinking', thinkingOf(ev))
+      return appendChunk(turns, agent, 'thinking', thinkingOf(ev), at)
     case 'tool_use_start': {
       closeAgentOpen(turns, agent)
       const p = ev.ToolUseStart || {}
-      turns.push({
+      const t: ToolTurn = {
         type: 'tool',
         agentId: agent,
         tool: p.Name || '',
         toolId: p.ToolID || '',
         input: p.Input,
         status: 'running',
-      })
+      }
+      if (at !== undefined) t.at = at
+      turns.push(t)
       return turns
     }
     case 'tool_use_result': {
@@ -134,7 +172,9 @@ export function reduceChat(turns: Turn[], ev: WireEvent): Turn[] {
     case 'error': {
       closeAgentOpen(turns, agent)
       const msg = (ev.Error && ev.Error.Message) || 'error'
-      turns.push({ type: 'error', agentId: agent, text: msg })
+      const t: ErrorTurn = { type: 'error', agentId: agent, text: msg }
+      if (at !== undefined) t.at = at
+      turns.push(t)
       return turns
     }
     case 'turn_end':

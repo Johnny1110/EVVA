@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import type { Turn } from '@/lib/events'
+import { clock } from '@/lib/events'
 import { agentColor } from '@/lib/colors'
 import AssistantTurn from './turns/AssistantTurn.vue'
 import ThinkingTurn from './turns/ThinkingTurn.vue'
@@ -33,6 +34,17 @@ function displayName(t: Turn): string {
 }
 function colorOf(t: Turn): string {
   return agentColor(t.type === 'user' ? 'user' : displayName(t))
+}
+// Per-message stamp: HH:MM:SS for the row, full local date-time on hover. Empty
+// for turns folded from a timeless event or seeded from a transcript.
+function clockOf(t: Turn): string {
+  return clock(t.at)
+}
+function stampTitle(t: Turn): string {
+  return t.at ? new Date(t.at).toLocaleString() : ''
+}
+function stampIso(t: Turn): string {
+  return t.at ? new Date(t.at).toISOString() : ''
 }
 
 function atBottom(): boolean {
@@ -85,8 +97,11 @@ watch(
     <div ref="scroller" class="scroll" role="log" aria-live="polite" aria-relevant="additions" @scroll="onScroll">
       <p v-if="turns.length > visible.length" class="capped">showing last {{ visible.length }} of {{ turns.length }}</p>
       <div v-for="(t, i) in visible" :key="i" class="row">
-        <div v-if="showAgent" class="who" :style="{ color: colorOf(t) }">
-          <span class="dot" :style="{ background: colorOf(t) }" />{{ displayName(t) }}
+        <div v-if="showAgent || t.at" class="meta">
+          <span v-if="showAgent" class="who" :style="{ color: colorOf(t) }">
+            <span class="dot" :style="{ background: colorOf(t) }" />{{ displayName(t) }}
+          </span>
+          <time v-if="t.at" class="ts" :datetime="stampIso(t)" :title="stampTitle(t)">{{ clockOf(t) }}</time>
         </div>
         <div class="turn">
           <AssistantTurn v-if="t.type === 'assistant'" :turn="t" />
@@ -126,6 +141,11 @@ watch(
   flex-direction: column;
   gap: 0.2rem;
 }
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
 .who {
   display: inline-flex;
   align-items: center;
@@ -133,6 +153,14 @@ watch(
   font-size: var(--fs-xs);
   font-weight: 600;
   font-family: var(--font-mono);
+}
+.ts {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .dot {
   width: 0.5rem;

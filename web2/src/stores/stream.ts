@@ -25,7 +25,7 @@ export const useStreamStore = defineStore('stream', {
       this.livePhases = reducePhase(this.livePhases, ev)
     },
     pushUser(target: string, agentId: string, text: string) {
-      this.turns = [...this.turns, { type: 'user', target, agentId, text }]
+      this.turns = [...this.turns, { type: 'user', target, agentId, text, at: Date.now() }]
     },
     // Operator → member message (mail-mode flat comms). Optimistically shows the
     // user turn, then rides the bus + drain; the reply streams back over the WS

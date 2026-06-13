@@ -1,7 +1,7 @@
 # The shipped examples, deconstructed
 
 The evva repo ships three complete, ready-to-run swarms under
-[`examples/evva-swarm/`](https://github.com/johnny1110/evva/tree/main/examples/evva-swarm). Each is
+[`examples/evva-swarm/`](https://github.com/Johnny1110/EVVA/tree/main/examples/evva-swarm). Each is
 pure config — a manifest, agent definitions, and one root-level shared-knowledge doc — and their
 shapes are deliberately different. **The fastest way to build a swarm is to copy the closest example
 and adapt it** (rename members, rewrite personas, adjust the manifest).

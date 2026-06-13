@@ -18,14 +18,14 @@ memory.
 
 | Use | URL |
 | --- | --- |
-| Browse (human) | `https://github.com/johnny1110/evva/tree/main/docs/user-guide/agent-guide` |
-| Fetch raw markdown (agent) | `https://raw.githubusercontent.com/johnny1110/evva/main/docs/user-guide/agent-guide/<path>` |
+| Browse (human) | `https://github.com/Johnny1110/EVVA/tree/main/docs/user-guide/agent-guide` |
+| Fetch raw markdown (agent) | `https://raw.githubusercontent.com/Johnny1110/EVVA/main/docs/user-guide/agent-guide/<path>` |
 
 For example, to read the full tool catalog with `web_fetch`:
-`https://raw.githubusercontent.com/johnny1110/evva/main/docs/user-guide/agent-guide/tools/catalog.md`
+`https://raw.githubusercontent.com/Johnny1110/EVVA/main/docs/user-guide/agent-guide/tools/catalog.md`
 
-> GitHub normalizes owner/repo casing, so `Johnny1110/EVVA` resolves to the same repo as
-> `johnny1110/evva`. The branch (`main`) and the path after the repo **are** case-sensitive — copy
+> GitHub normalizes owner/repo casing, so the lowercase `johnny1110/evva` also resolves to
+> this same repo. The branch (`main`) and the path after the repo **are** case-sensitive — copy
 > them exactly. If `main` 404s, the docs may not have merged to the stable branch yet; try the
 > repository's default branch.
 

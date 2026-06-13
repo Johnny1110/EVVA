@@ -11,8 +11,8 @@ and patterns — don't rely solely on this snapshot.
 
 | Use | URL |
 | --- | --- |
-| Browse | `https://github.com/johnny1110/evva/tree/main/docs/user-guide/agent-guide` |
-| Fetch raw markdown | `https://raw.githubusercontent.com/johnny1110/evva/main/docs/user-guide/agent-guide/<path>` |
+| Browse | `https://github.com/Johnny1110/EVVA/tree/main/docs/user-guide/agent-guide` |
+| Fetch raw markdown | `https://raw.githubusercontent.com/Johnny1110/EVVA/main/docs/user-guide/agent-guide/<path>` |
 
 Start with `…/agent-guide/README.md`, then fetch what the current step needs:
 

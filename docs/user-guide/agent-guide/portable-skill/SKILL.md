@@ -22,8 +22,8 @@ complete tool catalog, and the latest patterns.
 
 | Use | URL |
 | --- | --- |
-| Browse (human) | `https://github.com/johnny1110/evva/tree/main/docs/user-guide/agent-guide` |
-| Fetch raw markdown (you) | `https://raw.githubusercontent.com/johnny1110/evva/main/docs/user-guide/agent-guide/<path>` |
+| Browse (human) | `https://github.com/Johnny1110/EVVA/tree/main/docs/user-guide/agent-guide` |
+| Fetch raw markdown (you) | `https://raw.githubusercontent.com/Johnny1110/EVVA/main/docs/user-guide/agent-guide/<path>` |
 
 Start by fetching the index: `…/docs/user-guide/agent-guide/README.md`. Then fetch the specific pages
 you need (paths below). GitHub normalizes owner/repo casing; the branch (`main`) and path are

@@ -248,4 +248,4 @@ If a hook isn't firing:
 ## Reference
 
 - Engine: `pkg/hooks` (loader, dispatcher, runner, decision).
-- Wiring & guarantees: `docs/extending.md` → `## Lifecycle hooks`.
+- Wiring & guarantees: `docs/contributing/extending.md` → `## Lifecycle hooks`.

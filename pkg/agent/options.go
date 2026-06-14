@@ -195,7 +195,7 @@ type Drainer = agent_impl.Drainer
 // boundary, folding any returned message in as a synthetic user turn before the
 // next LLM call. A nil drainer is a no-op, so single-agent callers are
 // unaffected. This is the seam evva's swarm uses for mid-run message delivery
-// (drain B); see docs/extending.md.
+// (drain B); see docs/contributing/extending.md.
 func WithInboxDrainer(d Drainer) Option {
 	return agent_impl.WithInboxDrainer(d)
 }

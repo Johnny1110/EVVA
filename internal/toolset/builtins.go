@@ -76,7 +76,7 @@ func init() {
 	// daemon_* read/control surface for every background unit (bash bg,
 	// monitor, async subagent). All three resolve through ToolState's
 	// DaemonState() — lazy-allocated on first registration. See
-	// docs/design/daemon-design.md.
+	// docs/roadmap/design/daemon-design.md.
 	r.MustRegister(tools.DAEMON_LIST, func(s tools.State) (tools.Tool, error) {
 		return daemon.NewList(s.(*ToolState).DaemonState()), nil
 	})

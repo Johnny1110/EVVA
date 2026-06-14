@@ -1032,7 +1032,7 @@ points in the agent loop. Configure them in `.evva/settings.json`:
 Project hooks (`.evva/settings.json`) fire before user hooks
 (`<APP_HOME>/settings.json`). A malformed settings file produces
 startup warnings; the agent still boots.
-- [`docs/extending.md`](../../extending.md) — the full reference: every public package, every extension point, and what you can't override.
-- [`docs/sdk-stability.md`](../../sdk-stability.md) — the per-package stability tiers and how to depend on evva.
+- [`docs/contributing/extending.md`](../../contributing/extending.md) — the full reference: every public package, every extension point, and what you can't override.
+- [`docs/contributing/sdk-stability.md`](../../contributing/sdk-stability.md) — the per-package stability tiers and how to depend on evva.
 - [`examples/full-host/`](../../../examples/full-host/main.go) — runnable full host (separate module, TUI + personas + permissions).
 - [`examples/minimal-host/`](../../../examples/minimal-host/main.go) — runnable tiny host (custom provider + tool + skill).

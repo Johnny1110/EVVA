@@ -13,7 +13,7 @@ import "fmt"
 
 // Version is the SDK release identifier. Bumped on every tagged
 // release. As of v1.0.0 the Stable-tier surface promise in
-// docs/sdk-stability.md is in force: breaking changes to Stable
+// docs/contributing/sdk-stability.md is in force: breaking changes to Stable
 // packages require a major bump.
 const Version = "v1.7.4-beta.1"
 

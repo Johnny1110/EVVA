@@ -5,7 +5,7 @@
 // dynamically into the deferred-tool channel.
 //
 // The package is Experimental — public types may change in a minor
-// version (see docs/sdk-stability.md). Stabilization candidate for v1.7
+// version (see docs/contributing/sdk-stability.md). Stabilization candidate for v1.7
 // or later once downstream consumers have exercised the surface.
 //
 // Architectural seam:

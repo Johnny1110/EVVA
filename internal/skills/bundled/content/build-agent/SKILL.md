@@ -6,7 +6,7 @@ Use this skill when the user wants to BUILD THEIR OWN agent or app on top of evv
 
 A program that embeds evva is a **host**. It owns `main()`, picks a UI (or none), and constructs an agent from evva's public `pkg/*` surface — it never imports `internal/` (Go forbids that across modules anyway). Everything is wired through one of two constructors plus a handful of `Option`s.
 
-**Authoritative API, always:** run `go doc github.com/johnny1110/evva/pkg/agent` (and `.../pkg/config`, `.../pkg/llm`, `.../pkg/tools`, `.../pkg/ui`, `.../pkg/permission`) to read the EXACT API of the evva version the host imports. That godoc beats any snippet in this skill — snippets here may lag the version on disk. The full prose reference is `docs/extending.md` in the evva repo, and two runnable templates are the source of truth — read whichever matches the user's goal before writing code:
+**Authoritative API, always:** run `go doc github.com/johnny1110/evva/pkg/agent` (and `.../pkg/config`, `.../pkg/llm`, `.../pkg/tools`, `.../pkg/ui`, `.../pkg/permission`) to read the EXACT API of the evva version the host imports. That godoc beats any snippet in this skill — snippets here may lag the version on disk. The full prose reference is `docs/contributing/extending.md` in the evva repo, and two runnable templates are the source of truth — read whichever matches the user's goal before writing code:
 
 - `examples/full-host/main.go` (~60 lines) — the batteries-included path: interactive TUI, persona catalog + `/profile` switching, permission prompts, `/resume`, `/compact`, background tasks. Built on the one-call `agent.New(Config)`. It is a SEPARATE Go module (its own `go.mod` with a `replace`), which proves the public surface is self-sufficient.
 - `examples/minimal-host/main.go` (~150 lines) — the à-la-carte path: `agent.NewWithProfile` plus a custom provider, a custom tool, and a custom skill, with a JSON event sink and no TUI.
@@ -101,7 +101,7 @@ ag, err := agent.NewWithProfile(profile,
 
 ## Step 4 — Wire only the extension points the goal calls for
 
-Each bullet is one section of `docs/extending.md` — read that section (or `go doc` the package) for the exact contract.
+Each bullet is one section of `docs/contributing/extending.md` — read that section (or `go doc` the package) for the exact contract.
 
 - **Custom LLM provider** — implement `pkg/llm.Client` (`Name`, `Model`, `Complete`, `Stream`, `Apply`), register a factory on `llm.DefaultRegistry().MustRegister(name, factory)`, then install creds: `cfg.LLMProviderConfig[name] = config.APIConfig{ApiURL: ..., ApiSecret: os.Getenv(...)}`.
 - **Custom tool** — implement `pkg/tools.Tool` (`Name`, `Description`, `Schema`, `Execute`). For one agent: `agent.WithCustomTool(name, func(s tools.State) (tools.Tool, error) { ... })`. Process-wide: `toolset.DefaultRegistry().MustRegister(name, factory)` in an `init()`.

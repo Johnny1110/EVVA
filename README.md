@@ -137,71 +137,45 @@ Full usage documentation covering the TUI interface, slash commands, keybindings
 
 Run a team of collaborating agents with `evva service` + `evva swarm`. A 0→hero
 walkthrough — concepts, building a swarm from scratch, the web workstation,
-day-2 ops, restart-resume:
+day-2 ops, restart-resume, the full `evva swarm` / `evva service` CLI reference,
+and the external-event webhook:
 
-- [English](docs/roadmap/veronica/user-guide-en.md)
-- [简体中文](docs/roadmap/veronica/user-guide-zh.md)
+- [English](docs/user-guide/swarm/en.md)
+- [正體中文](docs/user-guide/swarm/zh-tw.md)
 
-Or just try the ready-to-run [example swarm](docs/roadmap/veronica/example-swarm/) — copy
-it out, `evva swarm .`, and watch a 3-agent team build a small site.
+For a field reference — every manifest field, tool, and coordination pattern —
+see the [agent guide](docs/user-guide/agent-guide/).
+
+Or just try a ready-to-run example: the minimal 3-agent
+[starter swarm](examples/evva-swarm/starter/) (`evva swarm .`, watch a small team
+build a site) or the 7-member [tech-team swarm](examples/evva-swarm/tech-team/).
+More live under [`examples/evva-swarm/`](examples/evva-swarm/).
 
 Running it 24/7? `evva service install-unit` wires the host into launchd /
 systemd so it survives crashes and reboots —
 [setup runbook (EN)](docs/user-guide/en/service-autostart.md) ·
 [正體中文](docs/user-guide/zh-tw/service-autostart.md).
 
-**CLI quick reference** (`evva swarm help` for the full list). Spaces are
-Docker-style: a stable id plus a unique **name**, and every `<ref>` below accepts
-either:
+> The full `evva swarm` / `evva service` command table, the `install-unit`
+> autostart runbook, and the external-event webhook (an outside app drives a
+> swarm's leader by POSTing to `/api/swarm/<ref>/event`) all live in the swarm
+> guide — see **§8 Day-2 operations**, **§10 Security**, and **§11 Reference**.
 
-| Command | What it does |
-| --- | --- |
-| `evva swarm . [--name <n>]` | register `./evva-swarm.yml` as a new space (name: `--name` → manifest `name:` → generated) |
-| `evva swarm ls` | list spaces — running and stopped (like `docker ps -a`) |
-| `evva swarm run <ref>` | (re)start a stopped space, under its same id / URL |
-| `evva swarm stop <ref>` | stop a space but keep it (restart with `run`) |
-| `evva swarm rm <ref>` | forget a space entirely (its workdir data is left intact) |
-| `evva swarm reset <ref>` | wipe a space — fresh ledger + cleared agent context, same id |
-| `evva swarm add <ref> <m>` | hot-load member `<m>` into a space |
+### Integrate evva in your Go project
 
-**External-event webhook.** An outside app can drive a swarm's leader by POSTing
-an event — a webhook is just a message dropped on the leader's mailbox, so the
-leader wakes (or folds it into its current run) and decides what to do. The
-endpoint is **unauthenticated** (the service binds loopback only; this is for
-local integrations in the current phase):
-
-```
-POST http://127.0.0.1:8888/api/swarm/<ref>/event
-Body: { "title"?, "body" (required), "source"?, "data"?, "to"? (default leader), "idempotency_key"? }
-→ 202 { "messageId": "<id>" }   (200 if the idempotency_key was already seen)
-```
-
-```python
-# in your engine — one function is all you need
-import requests
-EVVA = "http://127.0.0.1:8888/api/swarm/trader/event"
-def notify(title, body, data=None):
-    requests.post(EVVA, json={"title": title, "body": body, "data": data}, timeout=2)
-
-notify("BTC volatility spike", "BTC 1m vol > 3σ; 64210→66800 in 4m", {"symbol": "BTC", "z": 3.4})
-```
-
-```bash
-curl -XPOST http://127.0.0.1:8888/api/swarm/trader/event \
-  -d '{"title":"BTC volatility spike","body":"vol>3σ","data":{"symbol":"BTC","z":3.4}}'
-```
-
----
-
-## How to integrate EVVA agent in your Go project?
+Embed evva's agent runtime as a library — custom LLM provider, tools, and event
+sink, using only `pkg/*` imports:
 
 - [English](docs/user-guide/en/integration.md)
+- [正體中文](docs/user-guide/zh-tw/integration.md)
 
----
+### LSP integration
 
-## LSP integration
+Semantic code intelligence — definitions, references, hover, symbols — via the
+`lsp_request` tool:
 
 - [English](docs/user-guide/en/lsp.md)
+- [正體中文](docs/user-guide/zh-tw/lsp.md)
 
 ---
 
@@ -269,101 +243,61 @@ echo "list files in /tmp" | evva -no-tui   # piped prompt
 
 ---
 
-## Features
-
-**Agent loop**
-- ReAct-style: LLM call → parallel tool dispatch → tool results → repeat.
-- Multiple `tool_use` blocks per turn, executed concurrently.
-- Iteration cap surfaces as a pausable state.
-- Cancellable via `ctx`; Esc / Ctrl+C honored end-to-end.
-
-**LLM providers**
-- Anthropic Claude (extended thinking + cryptographic signature round-trip).
-- DeepSeek (OpenAI-compatible chat, reasoning_content echoed back).
-- OpenAI.
-- Ollama (local).
-- Per-provider option pattern (`WithTemperature`, `WithEffort`, ...).
-
-**Tools**
-- File system: `read_file`, `write_file`, `edit_file` — strict-absolute paths, structured `*FileDiff` metadata for diff rendering.
-- Shell: `bash`, `grep`, `tree`.
-- Tasks (six tools sharing one observable `*task.Store`).
-- Meta: `agent` (sub-agents), `tool_search` (lazy schema loading), `skill`, `schedule_wakeup`.
-- Plus stubs for `web_*`, `cron_*`, `notebook_edit`, `monitor`, `mode`, `ux`.
-
-**Sub-agents**
-- `explore` (read-only) and `general-purpose` presets.
-- Sync mode (parent blocks) and async mode (parent continues, result lands on next iteration).
-- Two-layer hierarchy: sub-agents can't spawn sub-agents.
-
-**Observable store framework** (`internal/observable`)
-- One pub/sub primitive any store can embed. Adding a new panel costs zero edits to the agent or event packages.
-
-**Swappable UI** (`internal/ui`)
-- Narrow `UI` and `Controller` interfaces. Reference bubbletea TUI under `internal/ui/bubbletea/`. `-no-tui` falls back to a plain CLI sink.
-
-**Streaming completions** (chunked text + thinking).
-
-**2-level compaction**
-- micro: compress tool-result blocks when context budget approaches threshold.
-- full: summarize the whole session into a single assistant brief.
-
----
-
 ## Project structure
 
 ```
 evva/
-├── cmd/evva/                  # CLI entry point — wires agent + UI
-├── configs/                   # config loading (.env + YAML)
-├── docs/                      # design notes, tool docs, system prompts
-├── internal/
-│   ├── agent/                 # agent loop, profiles, spawn
-│   │   ├── event/             # event types + sink contract
-│   │   └── sysprompt/         # system prompt builder
-│   ├── constant/              # provider / model / status enums
-│   ├── llm/                   # llm.Client interface + shared params
-│   │   ├── claude/  deepseek/  ollama/
-│   ├── llmfactory/            # provider factory keyed by constant
-│   ├── logger/                # structured slog wrapper + pretty fmt
-│   ├── observable/            # pub/sub framework for stores
-│   ├── session/               # conversation history + cumulative usage
-│   ├── tools/                 # tool interface (Name/Schema/Execute)
-│   │   ├── cron/  dev/  fs/  meta/  mode/  monitor/  notebook/
-│   │   ├── shell/ task/ ux/   web/
-│   ├── toolset/               # tool catalog + ToolState registry
-│   └── ui/                    # UI plugin contract
-│       └── bubbletea/         # reference TUI implementation
-├── log/                       # per-agent runtime logs (gitignored)
-├── pkg/common/                # small shared utilities (UUID, ...)
-└── scripts/                   # demo / dev scripts
+├── cmd/evva/        # CLI entry point — TUI + `service` / `swarm` / `update` subcommands
+├── pkg/             # stable public SDK (embed evva as a library)
+│   ├── agent/       #   agent constructor + controller interface
+│   ├── llm/         #   provider abstraction + claude/ deepseek/ openai/ ollama/ builtins/
+│   ├── tools/       #   Tool interface + fs/ shell/ web/ lsp/ repl/ cron/ … families
+│   ├── toolset/     #   tool registry + catalog
+│   ├── ui/          #   UI plugin contract + bubbletea/ + lp/ reference impls
+│   ├── observable/  #   pub/sub mixin for backing stores
+│   ├── event/ config/ constant/ permission/ skill/ hooks/ mcp/ update/ version/ …
+├── internal/        # runtime-specific impls (not part of the public API)
+│   ├── agent/       #   agent struct, main loop, spawn, profiles, sysprompt/, loader/
+│   ├── swarm/       #   Veronica multi-agent swarm subsystem (:8888 host)
+│   ├── tools/       #   evva-specific tool families (meta/ mode/ ux/ config/ dev/)
+│   ├── ui/          #   Bubble Tea v2 TUI implementation
+│   ├── session/ toolset/ permission/ question/ memdir/ hooks/ skills/ logger/
+├── web2/            # Vue 3 + TypeScript swarm web workstation (FE v2)
+├── examples/        # embedding hosts + ready-to-run example swarms
+├── docs/            # documentation (see docs/README.md for the map)
+├── scripts/         # dev / release scripts
+└── ref/             # reference TypeScript source ported from
 ```
 
-Key boundaries:
+The full package-by-package breakdown lives in
+**[docs/architecture.md](docs/architecture.md)** (vision + architecture). Key boundaries:
 - `agent` knows about `event.Sink`, never about a concrete UI.
-- `tools/*` packages produce `tools.Result` (text + opaque `Metadata`); the UI type-asserts on `Metadata` to render structured payloads.
-- `observable` has no dependencies on agent or UI.
-- `ui` defines two narrow interfaces; implementations live under it.
+- `pkg/tools/*` and `internal/tools/*` produce `tools.Result` (text + opaque `Metadata`); the UI type-asserts on `Metadata` to render structured payloads.
+- `pkg/observable` has no dependencies on agent or UI.
+- `pkg/ui` defines two narrow interfaces; implementations live under `internal/ui/` and `pkg/ui/`.
 
 ---
 
 ## Roadmap
 
-### Planned
-- **Multimodal Read**: images, PDFs (with `pages` range), Jupyter notebooks.
-- **Overwrite diffs**: proper Myers/Hunt-McIlroy diff for `write_file` overwrites.
-- **Per-agent LLM**: sub-agent can use a different provider than its parent.
-- **Veronica space**: long-running local sandbox service on `:8080`.
-- **Web UI**: a second `UI` implementation served over WebSocket.
-- **Session persistence**: `/resume` to reload a session snapshot.
+Much of the original roadmap has shipped: multimodal `read` (images, PDFs,
+notebooks), the Veronica multi-agent swarm with a Vue web workstation (`:8888`),
+Windows support, MCP client, typed memory, LSP intelligence, and session
+persistence. The living roadmap — waves, PRDs, and design docs — lives under
+**[docs/roadmap/](docs/roadmap/)**.
 
 ### Known limitations
-- Windows is not yet supported. macOS and Linux only.
 - Sub-agent hierarchy is exactly two layers (no nested spawning).
 - Token counts depend on provider reporting — Ollama only reports prompt / eval, not cache or reasoning splits.
-- The TUI transcript grows unbounded in a long session; compaction is on the list above.
+- The swarm web workstation binds loopback only and its event webhook is unauthenticated (local integrations only, current phase).
 
 ---
+
+## Contributing
+
+Bug reports, features, and PRs are welcome — start with
+**[CONTRIBUTING.md](CONTRIBUTING.md)** for dev setup, the branch/PR flow, and
+where things live. Architecture and vision: **[docs/architecture.md](docs/architecture.md)**.
 
 ## License
 

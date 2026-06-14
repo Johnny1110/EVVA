@@ -1157,8 +1157,8 @@ func main() {
 `v1.0.0` 讓 **Stable** 等級套件受主版號承諾保護：`pkg/agent`、`pkg/config`、`pkg/event`、`pkg/llm`、`pkg/tools`、`pkg/toolset`、`pkg/permission`、`pkg/ui`、`pkg/skill`、`pkg/constant`。Experimental 等級套件（`pkg/ui/bubbletea`、`pkg/tools/lsp`、`pkg/observable`、`pkg/tools/kits`）在次版號仍可能變動。
 
 - [`integration.md`](../en/integration.md)（英文）— 逐步整合教學。
-- [`docs/extending.md`](../../extending.md)（英文）— 完整參考：每個公開套件、每個擴充點，以及無法覆寫的部分。
-- [`docs/sdk-stability.md`](../../sdk-stability.md)（英文）— 各套件穩定性等級與如何在 `go.mod` 釘選 evva。
+- [`docs/contributing/extending.md`](../../contributing/extending.md)（英文）— 完整參考：每個公開套件、每個擴充點，以及無法覆寫的部分。
+- [`docs/contributing/sdk-stability.md`](../../contributing/sdk-stability.md)（英文）— 各套件穩定性等級與如何在 `go.mod` 釘選 evva。
 - [`examples/full-host/`](../../../examples/full-host/main.go) — 可執行的完整宿主（TUI + 人格 + 權限），獨立模組。
 
 ### 生命週期掛鉤

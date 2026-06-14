@@ -50,12 +50,12 @@ const (
 )
 
 // Deferred tools — name-only until loaded with TOOL_SEARCH. ================
-// Grouped by purpose to match docs/claude-tool/claude-code-tool-summary.md.
+// Grouped by purpose to match docs/reference/claude-code/claude-tool/claude-code-tool-summary.md.
 
 // Process management. Daemons are the unified abstraction over background
 // units — bash run_in_background tasks, async subagents, monitor streams,
 // and future kinds (remote_agent, in_process_teammate, local_workflow,
-// dream). See docs/design/daemon-design.md.
+// dream). See docs/roadmap/design/daemon-design.md.
 //
 //   - Bash run_in_background:true spawns a bash daemon (id prefix "b").
 //   - MONITOR spawns a monitor daemon (id prefix "m") streaming stdout
@@ -66,7 +66,7 @@ const (
 //
 // The previous TASK_LIST / TASK_OUTPUT / TASK_STOP names have been removed
 // — the task_* namespace is reserved for the future todo-v2 implementation
-// (see docs/design/task-design.md).
+// (see docs/roadmap/design/task-design.md).
 const (
 	MONITOR ToolName = "monitor"
 

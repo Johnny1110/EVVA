@@ -21,7 +21,7 @@ all the same shape.
 This guide is for developers who want to add a new UI under `pkg/ui/`. It
 assumes Go familiarity but **no** prior bubbletea knowledge.
 
-> **See also:** [`docs/extending.md`](../extending.md) has the short
+> **See also:** [`extending.md`](extending.md) has the short
 > version (one "Custom UI" section among many extension points). This
 > document is the deep, dedicated walkthrough.
 
@@ -749,7 +749,7 @@ stack. Versions are pinned in `go.mod`: bubbletea `v1.3.10`, bubbles
 > **Charmbracelet version pinning matters.** `ui.UI.Run` exposes a
 > `tea.Program` indirectly. If a downstream UI imports a *different*
 > major/minor of bubbletea than evva's pinned `v1.3.10`, Go treats them as
-> distinct types and wiring breaks. Match the pin (see `docs/extending.md` §
+> distinct types and wiring breaks. Match the pin (see `docs/contributing/extending.md` §
 > "Charmbracelet version pinning").
 
 ---
@@ -931,7 +931,7 @@ Before you call a UI done:
 | `cmd/evva/main.go` | the host: wiring + the `cliSink` headless fallback |
 | `examples/full-host/main.go` | the canonical full embed (separate module) |
 | `examples/minimal-host/main.go` | a stdout-sink embed (no TUI) |
-| `docs/extending.md` | the short "Custom UI" section + every other extension point |
+| `docs/contributing/extending.md` | the short "Custom UI" section + every other extension point |
 
 ---
 

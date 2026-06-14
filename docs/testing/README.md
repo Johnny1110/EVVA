@@ -14,7 +14,7 @@ actually run before shipping a behavioral change.
 ## 1. Layout
 
 ```
-docs/test-case/
+docs/testing/
 ├── README.md            ← this file
 └── tools/               ← one markdown file per evva tool
     ├── write_file.md

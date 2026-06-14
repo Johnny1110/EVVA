@@ -1,6 +1,6 @@
 # evva swarm & evva service — User Guide (0 → Hero)
 
-> Languages: **English** ｜ [中文](user-guide-zh.md)
+> Languages: **English** ｜ [正體中文](zh-tw.md)
 > Audience: anyone who wants to run a team of evva agents that collaborate.
 > Scope: how the swarm works, and a complete walkthrough building one from scratch.
 
@@ -386,8 +386,9 @@ split the work."* → watch the leader `task_create`/`task_assign`, the workers
 pick up their tasks, report back, and the board march to **completed**.
 
 > **Want to skip the typing and just try it?** A ready-to-run example swarm
-> lives at [`example-swarm/`](example-swarm/) — copy it out, `evva swarm .`, and
-> follow its README.
+> lives at [`examples/evva-swarm/starter/`](../../../examples/evva-swarm/starter/) — copy it
+> out, `evva swarm .`, and follow its README. A larger 7-member team is at
+> [`examples/evva-swarm/tech-team/`](../../../examples/evva-swarm/tech-team/).
 
 ---
 

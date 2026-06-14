@@ -1,5 +1,7 @@
 # How to integrate EVVA agent in your Go project?
 
+> Languages: **English** ｜ [正體中文](../zh-tw/integration.md)
+
 <br>
 
 ---
@@ -176,8 +178,8 @@ If one of these is blocking your use case, fork or file an issue.
 
 ### See also
 
-- [`docs/extending.md`](../../../docs/extending.md) — full reference covering every public package, every extension point, and the things you can't override.
-- [`docs/sdk-stability.md`](../../../docs/sdk-stability.md) — per-package stability tiers and how to pin evva in `go.mod`.
+- [`docs/contributing/extending.md`](../../../docs/contributing/extending.md) — full reference covering every public package, every extension point, and the things you can't override.
+- [`docs/contributing/sdk-stability.md`](../../../docs/contributing/sdk-stability.md) — per-package stability tiers and how to pin evva in `go.mod`.
 - [`examples/full-host/main.go`](../../../examples/full-host/main.go) — full host (TUI + personas + permissions), separate module.
 - [`examples/minimal-host/main.go`](../../../examples/minimal-host/main.go) — tiny host via `NewWithProfile`.
 - [`pkg/agent/downstream_test.go`](../../../pkg/agent/downstream_test.go) + [`converged_downstream_test.go`](../../../pkg/agent/converged_downstream_test.go) — copy-paste test templates for both constructors.

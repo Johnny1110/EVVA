@@ -59,7 +59,7 @@
 ## 6. i18n scaffolding（不做完整翻譯）
 
 - 導入 vue-i18n，字串外化為 key；預設 locale 跟隨 `uiStore`／瀏覽器。
-- 出貨 `zh-TW`（主）＋ `en` 骨架兩本字典；對齊既有 [`user-guide-zh`](../../user-guide-zh.md) / [`user-guide-en`](../../user-guide-en.md) 的術語。
+- 出貨 `zh-TW`（主）＋ `en` 骨架兩本字典；對齊既有 [`user-guide-zh`](../../../../user-guide/swarm/zh-tw.md) / [`user-guide-en`](../../../../user-guide/swarm/en.md) 的術語。
 - **完整翻譯內容**留待另案（README §8）；本 PRD 只保證**抽字串完成、切語言可運作**。
 
 ---

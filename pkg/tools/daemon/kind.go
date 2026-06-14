@@ -6,7 +6,7 @@
 // (task_list / task_stop / task_output) with one DaemonState + one Daemon
 // interface + three daemon_* tools.
 //
-// See docs/design/daemon-design.md for the full RFC.
+// See docs/roadmap/design/daemon-design.md for the full RFC.
 package daemon
 
 import (

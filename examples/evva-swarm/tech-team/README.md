@@ -2,14 +2,14 @@
 
 A ready-to-run **7-member software engineering team** that takes a real
 development request and ships a working, verified result. Unlike the minimal
-[`example-swarm/`](../example-swarm/) (a 3-member demo), this is a full delivery
+[`starter/`](../starter/) (a 3-member demo), this is a full delivery
 team with professional, role-specific system prompts and toolsets — the reference
 for "what a serious swarm looks like".
 
-> Guides: [English](../user-guide-en.md) ｜ [中文](../user-guide-zh.md)
+> Guides: [English](../../../docs/user-guide/swarm/en.md) ｜ [中文](../../../docs/user-guide/swarm/zh-tw.md)
 
 ```
-vero-tech-swarm/
+tech-team/
 ├── evva-swarm.yml                 # the team manifest
 └── agents/
     ├── main/lead/                 # Team Lead — plans, delegates, verifies, reports
@@ -53,7 +53,7 @@ evva service start
 
 # 2. Copy this folder somewhere it can safely create a project, then enter it.
 #    (Replace <evva-repo> with wherever you have evva checked out.)
-cp -r <evva-repo>/docs/veronica/vero-tech-swarm ~/vero-tech
+cp -r <evva-repo>/examples/evva-swarm/tech-team ~/vero-tech
 cd ~/vero-tech
 
 # 3. Register the swarm into the running service.

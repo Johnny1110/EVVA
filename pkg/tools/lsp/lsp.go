@@ -5,7 +5,7 @@
 // document symbols. Servers are started lazily on first use and managed via
 // the daemon system.
 //
-// See docs/roadmap/lsp.md for architecture and implementation plan.
+// See docs/roadmap/design/lsp.md for architecture and implementation plan.
 package lsp
 
 import "github.com/johnny1110/evva/pkg/tools"

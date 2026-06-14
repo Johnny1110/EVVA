@@ -7,7 +7,7 @@ non-default home directory — without forking and without touching the
 agent loop.
 
 This page is the reference for downstream developers. The runnable
-proof-of-concept lives at [`examples/minimal-host/`](../examples/minimal-host/main.go).
+proof-of-concept lives at [`examples/minimal-host/`](../../examples/minimal-host/main.go).
 
 ## Public packages
 
@@ -37,7 +37,7 @@ Internal packages (`internal/`) remain inaccessible from outside the
 module by Go's import-visibility rule. As of SDK v2.5, the flagship
 `cmd/evva` itself builds on `pkg/*` alone — zero direct `internal/`
 imports — and the separate-module
-[`examples/full-host/`](../examples/full-host/main.go) reproduces the
+[`examples/full-host/`](../../examples/full-host/main.go) reproduces the
 full TUI experience, with Go's internal rule compiler-enforcing that it
 touches no internals. If the bundled host can be built on the public
 contract, yours can too.
@@ -245,7 +245,7 @@ tui.Run(ctx)
 `agent.Agent` and `ui.Controller` share method names with different payload
 types, so one concrete type can't satisfy both — `ag.Controller()` returns
 the `ui.Controller` view to hand to `UI.Attach`. The runnable end-to-end
-version of the above is [`examples/full-host/`](../examples/full-host/main.go).
+version of the above is [`examples/full-host/`](../../examples/full-host/main.go).
 
 ### Personas (the `evva → nono` pattern)
 
@@ -791,7 +791,7 @@ the use case.
 
 ## See also
 
-- [`examples/full-host/main.go`](../examples/full-host/main.go) — the canonical full host: TUI + personas + permissions via the one-call constructor, in a separate module (compiler-enforced pkg-only).
-- [`examples/minimal-host/main.go`](../examples/minimal-host/main.go) — the tiny host: `NewWithProfile` + a custom provider, tool, and skill.
-- [`pkg/agent/downstream_test.go`](../pkg/agent/downstream_test.go) + [`converged_downstream_test.go`](../pkg/agent/converged_downstream_test.go) — public-only test templates for the à-la-carte and one-call constructors.
-- [`docs/sdk-stability.md`](sdk-stability.md) — the per-package stability tiers.
+- [`examples/full-host/main.go`](../../examples/full-host/main.go) — the canonical full host: TUI + personas + permissions via the one-call constructor, in a separate module (compiler-enforced pkg-only).
+- [`examples/minimal-host/main.go`](../../examples/minimal-host/main.go) — the tiny host: `NewWithProfile` + a custom provider, tool, and skill.
+- [`pkg/agent/downstream_test.go`](../../pkg/agent/downstream_test.go) + [`converged_downstream_test.go`](../../pkg/agent/converged_downstream_test.go) — public-only test templates for the à-la-carte and one-call constructors.
+- [`docs/contributing/sdk-stability.md`](sdk-stability.md) — the per-package stability tiers.

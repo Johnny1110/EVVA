@@ -3,7 +3,7 @@
 All notable changes to the evva SDK surface (`pkg/*`) are documented
 here. Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
-Stability tiers are defined in [`docs/sdk-stability.md`](docs/sdk-stability.md).
+Stability tiers are defined in [`docs/contributing/sdk-stability.md`](docs/contributing/sdk-stability.md).
 
 Each release gets one entry: it is written when the beta is cut on `pre-release`
 (`[vX.Y.Z-beta.N]`) and renamed to `[vX.Y.Z]` when promoted to stable on `main`

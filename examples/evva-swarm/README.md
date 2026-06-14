@@ -5,14 +5,19 @@ evva swarm 讓多個 evva agent 組成一個**團隊 (space)** 協作:一位 **l
 工具集。成員之間用 `send_message` 對話、用任務看板 (`task_create` /
 `task_assign` / `task_verify`) 派工,你從 Web UI 觀戰或隨時插話。
 
-這個資料夾收錄三套**開箱即用**的 swarm 範例,形狀刻意不同,
+這個資料夾收錄五套**開箱即用**的 swarm 範例,形狀刻意不同,
 可以當成自己組隊的起點:
 
 | 範例 | 成員 | 形狀 | 演示什麼 |
 | --- | --- | --- | --- |
+| [`starter/`](starter/) | 1 leader + 2 workers | 最小可跑團隊 | 入門模板:leader 派工、builder 做、reviewer 審 |
+| [`tech-team/`](tech-team/) | 1 leader + 6 專家 | 完整交付團隊 | PM / 設計 / 前後端 / QA,真實工程隊形 |
 | [`werewolf-swarm/`](werewolf-swarm/) | 1 上帝 + 12 玩家 | 回合制對話遊戲 | 嚴格回合控管、私訊資訊紀律、純 `send_message`(不用看板) |
 | [`world-football/`](world-football/) | 1 總監 + 7 專家 | 六階段資料管線 | 任務看板派工、階段驗收、平行收集、多輪辯證 |
 | [`code-review-swarm/`](code-review-swarm/) | 1 審查長 + 4 成員 | 平行扇出 + 對抗驗證 | 三路平行審查、去重、逐條對抗驗證守住報告品質 |
+
+> `starter/` 與 `tech-team/` 原本放在 `docs/`,是搭配[群組使用指南](../../docs/user-guide/swarm/en.md)的
+> 教學用範例;其餘三套是不同形狀的完整演示。
 
 ## 一個 swarm 專案長什麼樣
 

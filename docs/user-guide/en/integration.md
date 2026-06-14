@@ -1,5 +1,7 @@
 # How to integrate EVVA agent in your Go project?
 
+> Languages: **English** ｜ [正體中文](../zh-tw/integration.md)
+
 <br>
 
 ---

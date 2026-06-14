@@ -2,7 +2,7 @@
 
 > 狀態：**草案 / Draft（方向提案，未進入實作）** ｜ 日期：2026-06-04
 > 關聯：Veronica swarm（Phase 1 已完成 — 見 [`roadmap.md`](roadmap.md) §5 DoD）
-> 上層設計：[`veronica-design-v1.md`](veronica-design-v1.md) ｜ 使用者指南：[`user-guide-zh.md`](../../user-guide/swarm/zh.md)
+> 上層設計：[`veronica-design-v1.md`](veronica-design-v1.md) ｜ 使用者指南：[`user-guide-zh.md`](../../user-guide/swarm/zh-tw.md)
 
 ---
 
@@ -145,7 +145,7 @@ POST /api/agents/{name}/message?space=<id>     body: { "body": "...", "subject":
 - 前端：多成員 console 依 `agentId` 過濾的 reducer 單元測試（`node --test`）。
 
 ### 文件
-- 更新 [`user-guide-zh.md`](../../user-guide/swarm/zh.md) / [`user-guide-en.md`](../../user-guide/swarm/en.md)
+- 更新 [`user-guide-zh.md`](../../user-guide/swarm/zh-tw.md) / [`user-guide-en.md`](../../user-guide/swarm/en.md)
   新增「扁平化溝通：直接對任一成員發訊息」章節。
 
 ---

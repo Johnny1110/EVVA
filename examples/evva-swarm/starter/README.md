@@ -4,7 +4,7 @@ A ready-to-run **3-member swarm** you can spin up in a couple of minutes to feel
 how a swarm collaborates: a **lead** that plans/assigns/verifies, a **builder**
 that writes code, and a **reviewer** that QAs the result.
 
-> Guides: [English](../../../docs/user-guide/swarm/en.md) ｜ [中文](../../../docs/user-guide/swarm/zh.md)
+> Guides: [English](../../../docs/user-guide/swarm/en.md) ｜ [中文](../../../docs/user-guide/swarm/zh-tw.md)
 
 ```
 starter/

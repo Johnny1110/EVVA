@@ -1,5 +1,7 @@
 # LSP — Language Server Protocol Support
 
+> Languages: **English** ｜ [正體中文](../zh-tw/lsp.md)
+
 evva integrates with Language Servers to provide semantic code intelligence directly in your terminal coding agent session.
 
 ## What It Does

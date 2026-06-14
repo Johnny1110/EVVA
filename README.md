@@ -137,10 +137,11 @@ Full usage documentation covering the TUI interface, slash commands, keybindings
 
 Run a team of collaborating agents with `evva service` + `evva swarm`. A 0→hero
 walkthrough — concepts, building a swarm from scratch, the web workstation,
-day-2 ops, restart-resume:
+day-2 ops, restart-resume, the full `evva swarm` / `evva service` CLI reference,
+and the external-event webhook:
 
 - [English](docs/user-guide/swarm/en.md)
-- [简体中文](docs/user-guide/swarm/zh.md)
+- [正體中文](docs/user-guide/swarm/zh-tw.md)
 
 For a field reference — every manifest field, tool, and coordination pattern —
 see the [agent guide](docs/user-guide/agent-guide/).
@@ -155,58 +156,26 @@ systemd so it survives crashes and reboots —
 [setup runbook (EN)](docs/user-guide/en/service-autostart.md) ·
 [正體中文](docs/user-guide/zh-tw/service-autostart.md).
 
-**CLI quick reference** (`evva swarm help` for the full list). Spaces are
-Docker-style: a stable id plus a unique **name**, and every `<ref>` below accepts
-either:
+> The full `evva swarm` / `evva service` command table, the `install-unit`
+> autostart runbook, and the external-event webhook (an outside app drives a
+> swarm's leader by POSTing to `/api/swarm/<ref>/event`) all live in the swarm
+> guide — see **§8 Day-2 operations**, **§10 Security**, and **§11 Reference**.
 
-| Command | What it does |
-| --- | --- |
-| `evva swarm . [--name <n>]` | register `./evva-swarm.yml` as a new space (name: `--name` → manifest `name:` → generated) |
-| `evva swarm ls` | list spaces — running and stopped (like `docker ps -a`) |
-| `evva swarm run <ref>` | (re)start a stopped space, under its same id / URL |
-| `evva swarm stop <ref>` | stop a space but keep it (restart with `run`) |
-| `evva swarm rm <ref>` | forget a space entirely (its workdir data is left intact) |
-| `evva swarm reset <ref>` | wipe a space — fresh ledger + cleared agent context, same id |
-| `evva swarm add <ref> <m>` | hot-load member `<m>` into a space |
+### Integrate evva in your Go project
 
-**External-event webhook.** An outside app can drive a swarm's leader by POSTing
-an event — a webhook is just a message dropped on the leader's mailbox, so the
-leader wakes (or folds it into its current run) and decides what to do. The
-endpoint is **unauthenticated** (the service binds loopback only; this is for
-local integrations in the current phase):
-
-```
-POST http://127.0.0.1:8888/api/swarm/<ref>/event
-Body: { "title"?, "body" (required), "source"?, "data"?, "to"? (default leader), "idempotency_key"? }
-→ 202 { "messageId": "<id>" }   (200 if the idempotency_key was already seen)
-```
-
-```python
-# in your engine — one function is all you need
-import requests
-EVVA = "http://127.0.0.1:8888/api/swarm/trader/event"
-def notify(title, body, data=None):
-    requests.post(EVVA, json={"title": title, "body": body, "data": data}, timeout=2)
-
-notify("BTC volatility spike", "BTC 1m vol > 3σ; 64210→66800 in 4m", {"symbol": "BTC", "z": 3.4})
-```
-
-```bash
-curl -XPOST http://127.0.0.1:8888/api/swarm/trader/event \
-  -d '{"title":"BTC volatility spike","body":"vol>3σ","data":{"symbol":"BTC","z":3.4}}'
-```
-
----
-
-## How to integrate EVVA agent in your Go project?
+Embed evva's agent runtime as a library — custom LLM provider, tools, and event
+sink, using only `pkg/*` imports:
 
 - [English](docs/user-guide/en/integration.md)
+- [正體中文](docs/user-guide/zh-tw/integration.md)
 
----
+### LSP integration
 
-## LSP integration
+Semantic code intelligence — definitions, references, hover, symbols — via the
+`lsp_request` tool:
 
 - [English](docs/user-guide/en/lsp.md)
+- [正體中文](docs/user-guide/zh-tw/lsp.md)
 
 ---
 
@@ -274,47 +243,6 @@ echo "list files in /tmp" | evva -no-tui   # piped prompt
 
 ---
 
-## Features
-
-**Agent loop**
-- ReAct-style: LLM call → parallel tool dispatch → tool results → repeat.
-- Multiple `tool_use` blocks per turn, executed concurrently.
-- Iteration cap surfaces as a pausable state.
-- Cancellable via `ctx`; Esc / Ctrl+C honored end-to-end.
-
-**LLM providers**
-- Anthropic Claude (extended thinking + cryptographic signature round-trip).
-- DeepSeek (OpenAI-compatible chat, reasoning_content echoed back).
-- OpenAI.
-- Ollama (local).
-- Per-provider option pattern (`WithTemperature`, `WithEffort`, ...).
-
-**Tools**
-- File system: `read`, `write`, `edit` — strict-absolute paths, structured `*FileDiff` metadata for diff rendering; `read` also handles PDFs (with `pages`), notebooks, and images.
-- Shell / search: `bash` (sync + background), `grep`, `tree`, `glob`.
-- Meta (always active): `agent` (sub-agents), `tool_search` (lazy schema loading), `skill`, `schedule_wakeup`, `todo_write`.
-- Deferred (loaded on demand via `tool_search`): `web_fetch` / `web_search` / `http_request`, `monitor`, `daemon_list` / `daemon_output` / `daemon_stop`, `lsp_request`, `ask_user_question` / `push_notification`, `alarm_*`, `json_query`, `calc`, `excel`, `repl`, plus per-server `mcp__<server>__<tool>` tools.
-- Still stubbed (planned): `cron_*`, `remote_trigger`, `notebook_edit`.
-
-**Sub-agents**
-- `explore` (read-only) and `general-purpose` presets.
-- Sync mode (parent blocks) and async mode (parent continues, result lands on next iteration).
-- Two-layer hierarchy: sub-agents can't spawn sub-agents.
-
-**Observable store framework** (`pkg/observable`)
-- One pub/sub primitive any store can embed. Adding a new panel costs zero edits to the agent or event packages.
-
-**Swappable UI** (`pkg/ui`)
-- Narrow `UI` and `Controller` interfaces. Reference Bubble Tea TUI under `internal/ui/` (built on the `pkg/ui/bubbletea` contract); `pkg/ui/lp` is a compact line-based UI; `-no-tui` falls back to a plain CLI sink.
-
-**Streaming completions** (chunked text + thinking).
-
-**2-level compaction**
-- micro: compress tool-result blocks when context budget approaches threshold.
-- full: summarize the whole session into a single assistant brief.
-
----
-
 ## Project structure
 
 ```
@@ -341,8 +269,8 @@ evva/
 └── ref/             # reference TypeScript source ported from
 ```
 
-The full package-by-package breakdown lives in **[EVVA.md](EVVA.md)** (vision +
-architecture). Key boundaries:
+The full package-by-package breakdown lives in
+**[docs/architecture.md](docs/architecture.md)** (vision + architecture). Key boundaries:
 - `agent` knows about `event.Sink`, never about a concrete UI.
 - `pkg/tools/*` and `internal/tools/*` produce `tools.Result` (text + opaque `Metadata`); the UI type-asserts on `Metadata` to render structured payloads.
 - `pkg/observable` has no dependencies on agent or UI.
@@ -369,7 +297,7 @@ persistence. The living roadmap — waves, PRDs, and design docs — lives under
 
 Bug reports, features, and PRs are welcome — start with
 **[CONTRIBUTING.md](CONTRIBUTING.md)** for dev setup, the branch/PR flow, and
-where things live. Architecture and vision: **[EVVA.md](EVVA.md)**.
+where things live. Architecture and vision: **[docs/architecture.md](docs/architecture.md)**.
 
 ## License
 

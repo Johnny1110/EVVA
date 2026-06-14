@@ -1,6 +1,6 @@
 # evva swarm & evva service — User Guide (0 → Hero)
 
-> Languages: **English** ｜ [中文](zh.md)
+> Languages: **English** ｜ [正體中文](zh-tw.md)
 > Audience: anyone who wants to run a team of evva agents that collaborate.
 > Scope: how the swarm works, and a complete walkthrough building one from scratch.
 

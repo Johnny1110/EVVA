@@ -2,8 +2,9 @@
 
 Thanks for your interest in evva — a ReAct coding agent for the terminal, written in Go.
 This guide covers getting set up, the development loop, and how changes land. For the
-project's vision and architecture see **[EVVA.md](EVVA.md)**; for coding conventions and the
-release workflow see **[CLAUDE.md](CLAUDE.md)**.
+project's vision and architecture see **[docs/architecture.md](docs/architecture.md)**; for
+coding conventions and the release workflow see the agent instruction files
+**[CLAUDE.md](CLAUDE.md)** / **[EVVA.md](EVVA.md)**.
 
 ## Prerequisites
 
@@ -44,7 +45,7 @@ See [`web2/README.md`](web2/README.md) for details.
 
 ## Repository layout
 
-A short map (full package-by-package tables are in [EVVA.md](EVVA.md)):
+A short map (full package-by-package tables are in [docs/architecture.md](docs/architecture.md)):
 
 | Path | What |
 |---|---|

@@ -9,10 +9,13 @@ one observable store fanning state to any UI, one agent loop. The unifying idea 
 runtime, many personas, swappable UI**.
 
 > **Full vision and architecture — the `pkg/` SDK surface, `internal/` packages, the
-> agent-definition layout, and the key boundaries — live in [EVVA.md](EVVA.md). Read it before
-> changing package structure.** Contributor onboarding (build/test/run, PR flow) is in
-> [CONTRIBUTING.md](CONTRIBUTING.md). User-facing docs live in [README.md](README.md) and
-> [docs/](docs/README.md).
+> agent-definition layout, and the key boundaries — live in
+> [docs/architecture.md](docs/architecture.md). Read it before changing package structure.**
+> Contributor onboarding (build/test/run, PR flow) is in [CONTRIBUTING.md](CONTRIBUTING.md).
+> User-facing docs live in [README.md](README.md) and [docs/](docs/README.md).
+>
+> **Twin file:** [EVVA.md](EVVA.md) holds these same rules for evva — Claude Code reads this
+> file, evva reads that one. Keep the two in sync.
 
 The reference TypeScript source lives at `ref/src/`. Treat it as the source of truth for tool
 descriptions, harness structure, and agent definitions — port from it, don't reinvent.

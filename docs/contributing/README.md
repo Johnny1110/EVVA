@@ -12,7 +12,9 @@ runtime**. For getting set up to contribute (build, test, PR flow), start with t
 
 ## See also
 
-- **[../../EVVA.md](../../EVVA.md)** — vision & architecture: the full `pkg/` / `internal/`
-  package tables and key boundaries.
-- **[../../CLAUDE.md](../../CLAUDE.md)** — coding conventions and the release workflow.
+- **[../architecture.md](../architecture.md)** — vision & architecture: the full `pkg/` /
+  `internal/` package tables and key boundaries.
+- **[../../CLAUDE.md](../../CLAUDE.md)** / **[../../EVVA.md](../../EVVA.md)** — the agent
+  instruction files: coding conventions and the release workflow (CLAUDE.md for Claude Code,
+  EVVA.md for evva; kept in sync).
 - **[../../examples/](../../examples/)** — `minimal-host` and `full-host` embedding examples.

@@ -33,6 +33,6 @@ have moved out (see below).
 ## Moved out of this folder
 
 - **User guides** → [../../user-guide/swarm/en.md](../../user-guide/swarm/en.md) ·
-  [zh.md](../../user-guide/swarm/zh.md)
+  [zh.md](../../user-guide/swarm/zh-tw.md)
 - **Example swarms** → [`../../../examples/evva-swarm/starter/`](../../../examples/evva-swarm/starter/)
   (3-member) and [`tech-team/`](../../../examples/evva-swarm/tech-team/) (7-member).

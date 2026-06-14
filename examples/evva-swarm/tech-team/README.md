@@ -6,7 +6,7 @@ development request and ships a working, verified result. Unlike the minimal
 team with professional, role-specific system prompts and toolsets — the reference
 for "what a serious swarm looks like".
 
-> Guides: [English](../../../docs/user-guide/swarm/en.md) ｜ [中文](../../../docs/user-guide/swarm/zh.md)
+> Guides: [English](../../../docs/user-guide/swarm/en.md) ｜ [中文](../../../docs/user-guide/swarm/zh-tw.md)
 
 ```
 tech-team/

@@ -12,7 +12,29 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
-## [v1.7.4-beta.1] — 2026-06-13
+## [v1.7.4-beta.2] — 2026-06-14
+
+### Added
+
+- **Swarm web: per-message timestamps in the stream** (#42) — each message in
+  the agent stream now carries and renders its own timestamp.
+
+### Fixed
+
+- **Swarm web: non-destructive stream rehydrate on reconnect** (#43) — a
+  websocket reconnect no longer wipes and rewrites existing messages; the
+  stream rehydrates in place.
+
+### Changed
+
+- **Documentation restructured into audience-based categories.** `docs/` now
+  splits into `user-guide/` · `contributing/` · `roadmap/` · `reference/` ·
+  `testing/`, each with an index README, fronted by a top-level
+  `docs/README.md` map. Vision + architecture moved to `docs/architecture.md`;
+  `EVVA.md` and `CLAUDE.md` are now twin agent-instruction files (the same
+  conventions + release workflow, one per agent). Added `CONTRIBUTING.md` and
+  `.github/` issue/PR templates. 正體中文 coverage added for the swarm,
+  Go-integration, and LSP guides. Docs only — no `pkg/*` surface change.
 
 ## [v1.7.3] — 2026-06-13
 
@@ -1522,8 +1544,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `EVVA.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.7.4-beta.1...HEAD
-[v1.7.4-beta.1]: https://github.com/johnny1110/evva/compare/v1.7.3...v1.7.4-beta.1
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.7.4-beta.2...HEAD
+[v1.7.4-beta.2]: https://github.com/johnny1110/evva/compare/v1.7.3...v1.7.4-beta.2
 [v1.7.3]: https://github.com/johnny1110/evva/compare/v1.7.2...v1.7.3
 [v1.7.2]: https://github.com/johnny1110/evva/compare/v1.7.0...v1.7.2
 [v1.7.1-beta.1]: https://github.com/johnny1110/evva/compare/v1.7.0...v1.7.1-beta.1

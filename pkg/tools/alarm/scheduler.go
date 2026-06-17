@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,7 +30,16 @@ import (
 // loop cannot accumulate unbounded timers and store growth.
 const defaultMaxPending = 100
 
-// Alarm is one scheduled one-shot wake.
+// defaultRecurringExpiry is the default auto-expiry for recurring cron jobs
+// (7 days from creation). This bounds the worst-case token drain from a
+// forgotten job.
+const defaultRecurringExpiry = 7 * 24 * time.Hour
+
+// maxJitter is the maximum random jitter added to recurring fire times to
+// prevent thundering herd when multiple jobs share the same cron expression.
+const maxJitter = 30 * time.Second
+
+// Alarm is one scheduled wake — either a one-shot alarm or a recurring cron job.
 //
 // Target and Origin are only meaningful in a multi-agent (swarm) context: the
 // OnFire wiring routes the wake to Target and labels it as coming from Origin.
@@ -46,6 +56,15 @@ type Alarm struct {
 	Target string `json:"target,omitempty"`
 	// Origin is the agent that set the alarm (swarm). "" in single-agent use.
 	Origin string `json:"origin,omitempty"`
+
+	// CronExpr is a 5-field cron expression for recurring fires. When empty,
+	// the alarm is one-shot (fires once and self-removes). When set, the
+	// scheduler re-arms after each fire using the cron engine's NextAfter.
+	CronExpr string `json:"cron_expr,omitempty"`
+
+	// Expiry is the time after which a recurring job auto-expires. Zero means
+	// no expiry. For recurring cron jobs, defaults to Created + 7 days.
+	Expiry time.Time `json:"expiry,omitempty"`
 }
 
 // Fired is the payload handed to OnFire when an alarm triggers. Late is true
@@ -54,7 +73,9 @@ type Alarm struct {
 // wake set before a downtime is not silently dropped.
 type Fired struct {
 	Alarm
-	Late bool
+	Late      bool
+	Recurring bool
+	NextFire  time.Time // for recurring jobs, the next scheduled fire time
 }
 
 // Message renders the user-message body injected into the conversation when
@@ -63,7 +84,12 @@ type Fired struct {
 // marker, followed by the alarm's own prompt.
 func (f Fired) Message() string {
 	var b strings.Builder
-	b.WriteString("⏰ Alarm fired")
+	b.WriteString("⏰ ")
+	if f.Recurring {
+		b.WriteString("Cron job fired")
+	} else {
+		b.WriteString("Alarm fired")
+	}
 	if f.Label != "" {
 		b.WriteString(" [" + f.Label + "]")
 	}
@@ -72,6 +98,9 @@ func (f Fired) Message() string {
 		fmt.Fprintf(&b, " (late — was due %s)", common.Stamp(f.FireAt))
 	case !f.FireAt.IsZero():
 		fmt.Fprintf(&b, " — %s", common.Stamp(f.FireAt))
+	}
+	if f.Recurring && !f.NextFire.IsZero() {
+		fmt.Fprintf(&b, " (recurring, next: %s)", common.Stamp(f.NextFire))
 	}
 	b.WriteByte('\n')
 	b.WriteString(f.Prompt)
@@ -96,6 +125,12 @@ type Config struct {
 
 	// MaxPending overrides defaultMaxPending when > 0.
 	MaxPending int
+
+	// CronNext computes the next fire time for a cron expression strictly after
+	// `after`. Injected by the cron tools package to decouple the scheduler from
+	// the cron engine (avoids a circular import). nil disables recurring jobs
+	// (Arm rejects any Alarm with a non-empty CronExpr).
+	CronNext func(expr string, after time.Time) (time.Time, error)
 }
 
 type armed struct {
@@ -106,12 +141,13 @@ type armed struct {
 // Scheduler owns the set of pending alarms and their timers. All methods are
 // safe for concurrent use; fires run on time.AfterFunc goroutines.
 type Scheduler struct {
-	mu     sync.Mutex
-	alarms map[string]*armed
-	onFire func(Fired)
-	path   string
-	now    func() time.Time
-	max    int
+	mu       sync.Mutex
+	alarms   map[string]*armed
+	onFire   func(Fired)
+	path     string
+	now      func() time.Time
+	max      int
+	cronNext func(expr string, after time.Time) (time.Time, error)
 }
 
 // New constructs a Scheduler from cfg. It does not read the durable store —
@@ -126,29 +162,61 @@ func New(cfg Config) *Scheduler {
 		max = defaultMaxPending
 	}
 	return &Scheduler{
-		alarms: make(map[string]*armed),
-		onFire: cfg.OnFire,
-		path:   cfg.StorePath,
-		now:    now,
-		max:    max,
+		alarms:   make(map[string]*armed),
+		onFire:   cfg.OnFire,
+		path:     cfg.StorePath,
+		now:      now,
+		max:      max,
+		cronNext: cfg.CronNext,
 	}
 }
 
-// Arm validates and schedules a one-shot alarm. ID and Created are assigned
-// here when empty. The fire instant must be strictly in the future; arming a
-// past time is an error (LoadAndRearm handles already-due alarms separately).
+// SetCronNext installs the cron expression evaluator. Call this before arming
+// any recurring jobs. It is safe to call once at startup.
+func (s *Scheduler) SetCronNext(fn func(expr string, after time.Time) (time.Time, error)) {
+	s.mu.Lock()
+	s.cronNext = fn
+	s.mu.Unlock()
+}
+
+// Arm validates and schedules an alarm. ID and Created are assigned here when
+// empty. For one-shot alarms (CronExpr == ""), FireAt must be strictly in the
+// future. For recurring cron jobs, FireAt is computed from CronExpr if zero.
 // Returns the stored alarm with its assigned ID.
 func (s *Scheduler) Arm(a Alarm) (Alarm, error) {
 	if strings.TrimSpace(a.Prompt) == "" {
 		return Alarm{}, fmt.Errorf("prompt is required")
 	}
-	if a.FireAt.IsZero() {
-		return Alarm{}, fmt.Errorf("fire time is required")
-	}
+
 	now := s.now()
-	if !a.FireAt.After(now) {
-		return Alarm{}, fmt.Errorf("fire time %s is not in the future (now %s)",
-			common.Stamp(a.FireAt), common.Stamp(now))
+	if a.Created.IsZero() {
+		a.Created = now
+	}
+
+	// Handle cron expression: parse and compute first fire time.
+	if a.CronExpr != "" {
+		if s.cronNext == nil {
+			return Alarm{}, fmt.Errorf("cron support not configured")
+		}
+		if a.FireAt.IsZero() {
+			next, err := s.cronNext(a.CronExpr, now)
+			if err != nil {
+				return Alarm{}, err
+			}
+			a.FireAt = next
+		}
+		if a.Expiry.IsZero() {
+			a.Expiry = a.Created.Add(defaultRecurringExpiry)
+		}
+	} else {
+		// One-shot alarm: FireAt is required and must be in the future.
+		if a.FireAt.IsZero() {
+			return Alarm{}, fmt.Errorf("fire time is required")
+		}
+		if !a.FireAt.After(now) {
+			return Alarm{}, fmt.Errorf("fire time %s is not in the future (now %s)",
+				common.Stamp(a.FireAt), common.Stamp(now))
+		}
 	}
 
 	s.mu.Lock()
@@ -158,9 +226,6 @@ func (s *Scheduler) Arm(a Alarm) (Alarm, error) {
 	}
 	if a.ID == "" {
 		a.ID = newID()
-	}
-	if a.Created.IsZero() {
-		a.Created = now
 	}
 	s.armLocked(a, now)
 	if err := s.persistLocked(); err != nil {
@@ -202,9 +267,14 @@ func (s *Scheduler) Pending() int {
 }
 
 // Rearm reinstates persisted alarms at startup: every future alarm gets a fresh
-// timer, and every already-due alarm (its instant passed while the process was
-// down) is returned — flagged late — for the caller to deliver, WITHOUT firing
-// OnFire here. Past-due alarms are dropped from the store before returning.
+// timer, and every already-due one-shot alarm (its instant passed while the
+// process was down) is returned — flagged late — for the caller to deliver,
+// WITHOUT firing OnFire here. Past-due one-shot alarms are dropped from the
+// store before returning.
+//
+// For recurring cron jobs that are past-due, the next fire time is computed
+// from now and the job is re-armed (no "late" fire — catching up on missed
+// recurring fires would be wasteful).
 //
 // Splitting "re-arm" from "fire past-due" lets a host that must not start work
 // before its UI is live (the solo TUI) deliver missed alarms on the next run
@@ -221,13 +291,28 @@ func (s *Scheduler) Rearm() ([]Fired, error) {
 	s.mu.Lock()
 	for _, a := range stored {
 		a.Durable = true // only durable alarms are ever persisted
-		if a.FireAt.After(now) {
+		if a.CronExpr != "" {
+			// Recurring job: check expiry, then compute next fire from now.
+			if !a.Expiry.IsZero() && now.After(a.Expiry) {
+				// Expired: skip (drop from store).
+				continue
+			}
+			if s.cronNext == nil {
+				continue // cron not configured: skip
+			}
+			next, err := s.cronNext(a.CronExpr, now)
+			if err != nil {
+				continue // no next fire: skip
+			}
+			a.FireAt = next
+			s.armLocked(a, now)
+		} else if a.FireAt.After(now) {
 			s.armLocked(a, now)
 		} else {
 			due = append(due, Fired{Alarm: a, Late: true})
 		}
 	}
-	_ = s.persistLocked() // drop the past-due ones from disk
+	_ = s.persistLocked() // drop the past-due one-shots and expired cron from disk
 	s.mu.Unlock()
 	return due, nil
 }
@@ -286,8 +371,13 @@ func (s *Scheduler) Stop() {
 }
 
 // armLocked registers a timer for a and records it. Caller holds s.mu.
+// For recurring jobs, adds jitter to prevent thundering herd.
 func (s *Scheduler) armLocked(a Alarm, now time.Time) {
 	d := max(a.FireAt.Sub(now), 0)
+	// Add jitter for recurring jobs to spread load.
+	if a.CronExpr != "" {
+		d += time.Duration(mathrand.Int64N(int64(maxJitter)))
+	}
 	id := a.ID
 	t := time.AfterFunc(d, func() { s.fire(id) })
 	s.alarms[id] = &armed{alarm: a, timer: t}
@@ -305,9 +395,9 @@ func (s *Scheduler) removeLocked(id string) bool {
 	return true
 }
 
-// fire is the timer callback: drop the alarm, persist the smaller set, then
-// invoke OnFire outside the lock (it enqueues + signals, which take their own
-// locks / channel sends).
+// fire is the timer callback. For one-shot alarms, drop the alarm and persist.
+// For recurring cron jobs, compute the next fire time and re-arm (unless
+// expired). Then invoke OnFire outside the lock.
 func (s *Scheduler) fire(id string) {
 	s.mu.Lock()
 	ar, ok := s.alarms[id]
@@ -315,14 +405,44 @@ func (s *Scheduler) fire(id string) {
 		s.mu.Unlock()
 		return
 	}
-	delete(s.alarms, id)
 	a := ar.alarm
-	_ = s.persistLocked() // a fired alarm must not survive a restart
+	now := s.now()
+
+	var fired Fired
+	fired.Alarm = a
+
+	if a.CronExpr != "" {
+		// Recurring job: compute next fire time and re-arm if not expired.
+		fired.Recurring = true
+		if !a.Expiry.IsZero() && now.After(a.Expiry) {
+			// Expired: remove the job.
+			delete(s.alarms, id)
+		} else if s.cronNext == nil {
+			delete(s.alarms, id)
+		} else {
+			next, err := s.cronNext(a.CronExpr, now)
+			if err != nil {
+				// No next fire within 5 years, or parse error: remove.
+				delete(s.alarms, id)
+			} else {
+				// Re-arm with next fire time.
+				ar.alarm.FireAt = next
+				fired.NextFire = next
+				d := max(next.Sub(now), 0) + time.Duration(mathrand.Int64N(int64(maxJitter)))
+				ar.timer = time.AfterFunc(d, func() { s.fire(id) })
+			}
+		}
+	} else {
+		// One-shot alarm: remove.
+		delete(s.alarms, id)
+	}
+
+	_ = s.persistLocked()
 	onFire := s.onFire
 	s.mu.Unlock()
 
 	if onFire != nil {
-		onFire(Fired{Alarm: a})
+		onFire(fired)
 	}
 }
 

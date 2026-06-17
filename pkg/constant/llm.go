@@ -23,6 +23,12 @@ var (
 	// auth to Authorization: Bearer). ApiUrl is the z.ai Anthropic gateway, so
 	// pkg/llm/glm hits ApiUrl + "/v1/messages".
 	GLM = LLMProvider{Name: "glm", ApiUrl: "https://api.z.ai/api/anthropic", Models: []Model{GLM_4_6, GLM_5_2}}
+	// QWEN — Alibaba Cloud Tongyi/Qwen via the DashScope OpenAI-compatible
+	// endpoint (same wire format as OPENAI/DEEPSEEK; pkg/llm/qwen copies the
+	// deepseek engine, Bearer auth, thinking via enable_thinking). ApiUrl is the
+	// international (Singapore) gateway; pkg/llm/qwen hits ApiUrl + "/chat/completions".
+	// China users override api_url to https://dashscope.aliyuncs.com/compatible-mode/v1.
+	QWEN = LLMProvider{Name: "qwen", ApiUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", Models: []Model{QWEN3_7_PLUS, QWEN3_7_MAX}}
 )
 
 type Model string
@@ -48,10 +54,15 @@ const (
 	// compatible endpoint; vision input requires a vision-capable GLM model.
 	GLM_4_6 Model = "glm-4.6"
 	GLM_5_2 Model = "glm-5.2"
+
+	// QWEN (Alibaba DashScope). qwen3.7-plus is the cheaper tier, qwen3.7-max the
+	// flagship (1M ctx, native extended-thinking). OpenAI-compatible wire.
+	QWEN3_7_PLUS Model = "qwen3.7-plus"
+	QWEN3_7_MAX  Model = "qwen3.7-max"
 )
 
 func GetAllProviders() []LLMProvider {
-	return []LLMProvider{OLLAMA, ANTHROPIC, DEEPSEEK, OPENAI, GLM}
+	return []LLMProvider{OLLAMA, ANTHROPIC, DEEPSEEK, OPENAI, GLM, QWEN}
 }
 
 func GetProvider(name string) (LLMProvider, bool) {
@@ -118,6 +129,8 @@ var MODEL_CONTEXT_SIZE = map[Model]int{
 	GPT_5_5:           1_050_000,
 	GLM_4_6:           200_000,
 	GLM_5_2:           1_000_000,
+	QWEN3_7_PLUS:      1_000_000,
+	QWEN3_7_MAX:       1_000_000,
 }
 
 // Pricing is a model's USD rate card, every rate expressed per 1,000,000
@@ -186,6 +199,13 @@ var MODEL_PRICING = map[Model]Pricing{
 	// and cache-write mirrors input (z.ai publishes no write surcharge).
 	GLM_4_6: {Input: 0.43, Output: 1.74, CacheRead: 0.11, CacheWrite: 0.43},
 	GLM_5_2: {Input: 1.40, Output: 4.40, CacheRead: 0.26, CacheWrite: 1.40},
+
+	// Qwen / Alibaba DashScope (verified 2026-06, list price — qwen3.7-max also
+	// runs a 50% promo). OpenAI-compatible wire; the client does not surface
+	// cache tokens, so the cache rates never fire (plus's real cached input is
+	// ~$0.08, recorded below for accuracy).
+	QWEN3_7_PLUS: {Input: 0.40, Output: 1.60, CacheRead: 0.08, CacheWrite: 0.40},
+	QWEN3_7_MAX:  {Input: 2.50, Output: 7.50, CacheRead: 2.50, CacheWrite: 2.50},
 }
 
 // CostOf prices a usage slice for model m against MODEL_PRICING. ok is

@@ -30,6 +30,7 @@ func TestSupportedSettingsKeys(t *testing.T) {
 		"memory_recall_model",
 		"ollama.api_url",
 		"openai.api_key", "openai.api_url",
+		"qwen.api_key", "qwen.api_url",
 		"tavily_api_key",
 	}
 	if got := AllKeys(); !reflect.DeepEqual(got, want) {

@@ -837,6 +837,7 @@ providers:
   deepseek:  { api_key: "", api_url: "" }
   openai:    { api_key: "", api_url: "" }
   glm:       { api_key: "", api_url: "" }
+  qwen:      { api_key: "", api_url: "" }   # Alibaba DashScope (OpenAI-compatible); api_url defaults to the intl/Singapore gateway — override for Beijing/US. Models: qwen3.7-plus (cheap) / qwen3.7-max (flagship, ~1M ctx)
   ollama:    { api_url: "" }
 ```
 

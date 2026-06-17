@@ -839,6 +839,7 @@ providers:
   deepseek:  { api_key: "", api_url: "" }
   openai:    { api_key: "", api_url: "" }
   glm:       { api_key: "", api_url: "" }
+  qwen:      { api_key: "", api_url: "" }   # 阿里雲 DashScope（OpenAI 相容）；api_url 預設國際/新加坡閘道，北京/美國請覆寫。模型：qwen3.7-plus（便宜）/ qwen3.7-max（旗艦，~1M ctx）
   ollama:    { api_url: "" }
 ```
 

@@ -14,6 +14,19 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ### Added
 
+- **Alibaba Qwen (DashScope) LLM provider.** New `pkg/llm/qwen` provider reached
+  over DashScope's OpenAI-compatible endpoint
+  (`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, `Authorization: Bearer`),
+  so it rides the same chat-completions wire as `pkg/llm/deepseek` — tool calls,
+  SSE streaming, and `reasoning_content` thinking. Two models: `qwen3.7-plus`
+  (cheaper tier) and `qwen3.7-max` (flagship, ~1M ctx, native extended-thinking);
+  evva's effort levels map to DashScope's `enable_thinking` + `thinking_budget`
+  (effort 0 omits the flag so a thinking-native model keeps its default).
+  Configure with `/config` (`qwen.api_key`, optional `qwen.api_url` to switch
+  region — defaults to the Singapore gateway) or the `qwen:` block in the YAML
+  config; surfaces automatically in the `/model` picker, with list-price rates in
+  the `/cost` card (qwen3.7-plus $0.40/$1.60, qwen3.7-max $2.50/$7.50 per 1M).
+
 ### Fixed
 
 ## [v1.8.0-beta.1] — 2026-06-17

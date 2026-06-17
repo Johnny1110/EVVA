@@ -1,5 +1,5 @@
 // Package builtins registers evva's bundled LLM providers (Anthropic,
-// DeepSeek, GLM, OpenAI, Ollama) into pkg/llm.DefaultRegistry().
+// DeepSeek, GLM, OpenAI, Ollama, Qwen) into pkg/llm.DefaultRegistry().
 //
 // Import this package for its side effect when you want the standard
 // kit available without picking providers individually:
@@ -17,6 +17,7 @@ import (
 	"github.com/johnny1110/evva/pkg/llm/glm"
 	"github.com/johnny1110/evva/pkg/llm/ollama"
 	"github.com/johnny1110/evva/pkg/llm/openai"
+	"github.com/johnny1110/evva/pkg/llm/qwen"
 )
 
 func init() {
@@ -26,4 +27,5 @@ func init() {
 	r.MustRegister(glm.ProviderName, glm.Factory)
 	r.MustRegister(ollama.ProviderName, ollama.Factory)
 	r.MustRegister(openai.ProviderName, openai.Factory)
+	r.MustRegister(qwen.ProviderName, qwen.Factory)
 }

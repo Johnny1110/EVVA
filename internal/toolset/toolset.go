@@ -34,6 +34,7 @@ import (
 	"github.com/johnny1110/evva/pkg/skill"
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/pkg/tools/alarm"
+	"github.com/johnny1110/evva/pkg/tools/cron"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/lsp"
@@ -287,6 +288,9 @@ func (s *ToolState) AlarmScheduler() *alarm.Scheduler {
 				wq.Enqueue(f.Message())
 				s.NotifyAlarm()
 			},
+			// CronNext powers the recurring cron_* tools that share this
+			// scheduler; without it Arm rejects any cron expression.
+			CronNext: cron.Next,
 		})
 	}
 	return s.alarmScheduler

@@ -12,6 +12,28 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Cron scheduling tools (`cron_create` / `cron_list` / `cron_delete`).** The
+  single-agent session can now schedule a prompt on a recurring 5-field cron
+  pattern (local timezone) — the recurring sibling of the one-shot `alarm_*`
+  tools. A cron job is an `alarm.Alarm` with a cron expression, so cron and
+  alarm entries share one `Scheduler`: one timer set, one durable store
+  (`alarms.json`), one fire path. On fire the job re-enters the conversation
+  with its prompt as a fresh user message (idle-wake + `WakeupQueue`) and
+  re-arms at the next match. `recurring: false` fires once then self-removes;
+  recurring jobs auto-expire 7 days after creation to bound token spend, with a
+  0–30s jitter to spread load when jobs share an expression. `durable: true`
+  persists across restarts (re-armed on startup alongside alarms). Root/Main
+  profile only — stripped from subagents and swarm members, which use the
+  manifest `schedule:` / leader `schedule_set` instead. `remote_trigger` stays
+  a stub.
+- **`pkg/tools/alarm.Scheduler` gains recurring support.** `Alarm` carries
+  `CronExpr`, `Recurring`, and `Expiry`; `Fired` carries `Recurring` and
+  `NextFire`; `Config` gains a `CronNext` evaluator seam (injected by
+  `pkg/tools/cron`, keeping the scheduler free of any cron-engine dependency)
+  and a `Jitter` hook. Plain one-shot alarms are unchanged.
+
 ## [v1.8.0-beta.2] — 2026-06-17
 
 ### Added

@@ -97,7 +97,8 @@ mistake.
 | `skill` | ⛔ (auto) | Auto-injected into every member — never list it. |
 | `schedule_wakeup` | ⛔ | For interactive `/loop` pacing. Swarm cadence is the leader's `schedule_set` / a manifest `schedule:`; one-shot waits use the injected `alarm_set`. |
 | `alarm_create`, `alarm_list`, `alarm_cancel` | ⛔ | The single-agent alarm tools. Swarm members get the injected `alarm_set` / `alarm_clear` instead — don't list these. |
-| `cron_create`, `cron_list`, `cron_delete`, `remote_trigger` | ⛔ | Schedule/trigger **remote** agent runs — a different feature from the swarm scheduler. Use a manifest `schedule:` for swarm cadence. |
+| `cron_create`, `cron_list`, `cron_delete` | ⛔ | The single-agent **recurring** scheduler — `alarm`'s sibling (alarm fires once, cron fires on a repeating wall-clock pattern). Members get the manifest `schedule:` / leader `schedule_set` instead. |
+| `remote_trigger` | ⛔ | Trigger **remote** agent runs — a separate feature (currently a stub), unrelated to the swarm scheduler. |
 | `enter_plan_mode`, `exit_plan_mode` | ⛔ | Interactive read-only design mode. Not meaningful for a swarm member. |
 | `enter_worktree`, `exit_worktree` | ⛔ | Interactive git-worktree isolation. A member that needs a worktree can run `git worktree` via `bash`. |
 | `ask_user_question` | ⛔ | A member addresses the operator through its **output text**, not this tool. For blocking decisions, message the leader. |

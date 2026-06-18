@@ -228,3 +228,223 @@ func TestFiredMessage(t *testing.T) {
 		t.Errorf("late Message() = %q, want %q", got, want)
 	}
 }
+
+// --- cron (recurring) -------------------------------------------------------
+
+// fastCronNext is a fake cron evaluator that fires d after `after`, decoupling
+// the scheduler's recurring machinery from the minute-resolution cron engine so
+// tests run in milliseconds. zeroJitter disables load-spreading for prompt fires.
+func fastCronNext(d time.Duration) func(string, time.Time) (time.Time, error) {
+	return func(_ string, after time.Time) (time.Time, error) { return after.Add(d), nil }
+}
+
+func zeroJitter() time.Duration { return 0 }
+
+// waitFor polls cond until true or fails after timeout.
+func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		if cond() {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("condition not met within timeout")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+func TestScheduler_RecurringRearm(t *testing.T) {
+	var sink fireSink
+	s := New(Config{OnFire: sink.on, CronNext: fastCronNext(20 * time.Millisecond), Jitter: zeroJitter})
+
+	a, err := s.Arm(Alarm{CronExpr: "*/1 * * * *", Recurring: true, Prompt: "tick"})
+	if err != nil {
+		t.Fatalf("Arm recurring: %v", err)
+	}
+	if a.Expiry.IsZero() {
+		t.Error("recurring cron should get a default expiry")
+	}
+
+	// At least three fires proves it re-arms rather than firing once.
+	waitFor(t, func() bool { return len(sink.snapshot()) >= 3 }, 2*time.Second)
+	if got := s.Pending(); got != 1 {
+		t.Errorf("Pending while recurring = %d, want 1 (stays armed)", got)
+	}
+	for i, f := range sink.snapshot() {
+		if !f.Recurring || f.CronExpr == "" || f.NextFire.IsZero() {
+			t.Errorf("fire %d = %+v, want recurring cron with NextFire set", i, f)
+		}
+	}
+
+	if !s.Cancel(a.ID) {
+		t.Fatal("Cancel returned false for a pending cron job")
+	}
+	if got := s.Pending(); got != 0 {
+		t.Errorf("Pending after cancel = %d, want 0", got)
+	}
+}
+
+func TestScheduler_OneShotCronFiresOnce(t *testing.T) {
+	var sink fireSink
+	s := New(Config{OnFire: sink.on, CronNext: fastCronNext(20 * time.Millisecond), Jitter: zeroJitter})
+
+	a, err := s.Arm(Alarm{CronExpr: "30 14 * * *", Recurring: false, Prompt: "once"})
+	if err != nil {
+		t.Fatalf("Arm one-shot cron: %v", err)
+	}
+	if !a.Expiry.IsZero() {
+		t.Error("one-shot cron should not get an expiry")
+	}
+
+	waitFor(t, func() bool { return len(sink.snapshot()) >= 1 }, 2*time.Second)
+	time.Sleep(60 * time.Millisecond) // room to (wrongly) re-fire
+	got := sink.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("one-shot cron fired %d times, want 1", len(got))
+	}
+	if got[0].Recurring || got[0].CronExpr == "" {
+		t.Errorf("one-shot fire = %+v, want a non-recurring cron entry", got[0])
+	}
+	if s.Pending() != 0 {
+		t.Errorf("Pending after one-shot fire = %d, want 0 (self-removed)", s.Pending())
+	}
+}
+
+func TestScheduler_RecurringAutoExpiry(t *testing.T) {
+	var sink fireSink
+	t0 := time.Now()
+	s := New(Config{
+		OnFire:   sink.on,
+		CronNext: fastCronNext(20 * time.Millisecond),
+		Jitter:   zeroJitter,
+		Now:      func() time.Time { return t0 },
+	})
+	// Expiry already in the past → the first fire is the final one (no re-arm).
+	if _, err := s.Arm(Alarm{CronExpr: "*/1 * * * *", Recurring: true, Prompt: "stale", Expiry: t0.Add(-time.Hour)}); err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+
+	waitFor(t, func() bool { return len(sink.snapshot()) >= 1 }, 2*time.Second)
+	time.Sleep(60 * time.Millisecond)
+	if got := len(sink.snapshot()); got != 1 {
+		t.Errorf("expired job fired %d times, want exactly 1", got)
+	}
+	if s.Pending() != 0 {
+		t.Errorf("Pending after expiry = %d, want 0 (auto-deleted)", s.Pending())
+	}
+	if sink.snapshot()[0].Recurring {
+		t.Error("expired final fire must not be flagged recurring")
+	}
+}
+
+func TestScheduler_RecurringRejectedWithoutCronNext(t *testing.T) {
+	s := New(Config{}) // CronNext nil
+	if _, err := s.Arm(Alarm{CronExpr: "*/5 * * * *", Recurring: true, Prompt: "p"}); err == nil {
+		t.Fatal("Arm with a cron expr but no CronNext should error")
+	}
+}
+
+func TestScheduler_DurableCronRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alarms.json")
+	t0 := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	// Far-future next so nothing fires during the test.
+	cfg := func(sink *fireSink) Config {
+		c := Config{StorePath: path, Now: func() time.Time { return t0 }, CronNext: fastCronNext(time.Hour), Jitter: zeroJitter}
+		if sink != nil {
+			c.OnFire = sink.on
+		}
+		return c
+	}
+
+	s1 := New(cfg(nil))
+	if _, err := s1.Arm(Alarm{CronExpr: "0 9 * * *", Recurring: true, Prompt: "daily", Durable: true}); err != nil {
+		t.Fatalf("Arm durable recurring: %v", err)
+	}
+	// A session-only cron must NOT survive a restart.
+	if _, err := s1.Arm(Alarm{CronExpr: "0 9 * * *", Recurring: true, Prompt: "ephemeral", Durable: false}); err != nil {
+		t.Fatalf("Arm session cron: %v", err)
+	}
+
+	var sink fireSink
+	s2 := New(cfg(&sink))
+	pastDue, err := s2.Rearm()
+	if err != nil {
+		t.Fatalf("Rearm: %v", err)
+	}
+	if len(pastDue) != 0 {
+		t.Errorf("Rearm pastDue = %d, want 0 (recurring jobs never fire late)", len(pastDue))
+	}
+	if got := s2.Pending(); got != 1 {
+		t.Fatalf("Pending after Rearm = %d, want 1 (only the durable cron)", got)
+	}
+	got := s2.List()
+	if len(got) != 1 || got[0].CronExpr != "0 9 * * *" || !got[0].Recurring || got[0].Prompt != "daily" {
+		t.Errorf("re-armed cron = %+v, want durable recurring 'daily'", got)
+	}
+	if len(sink.snapshot()) != 0 {
+		t.Error("Rearm must not fire anything")
+	}
+}
+
+func TestScheduler_MixedAlarmAndCronList(t *testing.T) {
+	t0 := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	s := New(Config{Now: func() time.Time { return t0 }, CronNext: fastCronNext(30 * time.Minute), Jitter: zeroJitter})
+
+	if _, err := s.Arm(Alarm{FireAt: t0.Add(time.Hour), Prompt: "alarm-late"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Arm(Alarm{CronExpr: "*/30 * * * *", Recurring: true, Prompt: "cron-mid"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Arm(Alarm{FireAt: t0.Add(10 * time.Minute), Prompt: "alarm-soon"}); err != nil {
+		t.Fatal(err)
+	}
+
+	list := s.List()
+	if len(list) != 3 {
+		t.Fatalf("List len = %d, want 3", len(list))
+	}
+	// Sorted by FireAt across both kinds: soon (10m) < cron (30m) < late (60m).
+	for i, w := range []string{"alarm-soon", "cron-mid", "alarm-late"} {
+		if list[i].Prompt != w {
+			t.Errorf("List[%d].Prompt = %q, want %q", i, list[i].Prompt, w)
+		}
+	}
+	crons := 0
+	for _, a := range list {
+		if a.CronExpr != "" {
+			crons++
+		}
+	}
+	if crons != 1 {
+		t.Errorf("entries with a cron expr = %d, want 1", crons)
+	}
+}
+
+func TestDefaultJitterBounds(t *testing.T) {
+	for range 1000 {
+		if d := defaultJitter(); d < 0 || d >= maxJitter {
+			t.Fatalf("defaultJitter() = %v, want [0, %v)", d, maxJitter)
+		}
+	}
+}
+
+func TestFiredMessage_Cron(t *testing.T) {
+	at := time.Date(2026, 9, 11, 14, 30, 0, 0, time.Local)
+	next := time.Date(2026, 9, 11, 14, 35, 0, 0, time.Local)
+
+	recurring := Fired{Alarm: Alarm{Prompt: "check", CronExpr: "*/5 * * * *", FireAt: at}, Recurring: true, NextFire: next}
+	want := fmt.Sprintf("⏰ Cron job fired — %s (recurring, next: %s)\ncheck", common.Stamp(at), common.Stamp(next))
+	if got := recurring.Message(); got != want {
+		t.Errorf("recurring cron Message() = %q, want %q", got, want)
+	}
+
+	oneShot := Fired{Alarm: Alarm{Prompt: "once", CronExpr: "30 14 * * *", FireAt: at}}
+	wantOneShot := fmt.Sprintf("⏰ Cron job fired — %s\nonce", common.Stamp(at))
+	if got := oneShot.Message(); got != wantOneShot {
+		t.Errorf("one-shot cron Message() = %q, want %q", got, wantOneShot)
+	}
+}

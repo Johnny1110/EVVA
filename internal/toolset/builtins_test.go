@@ -76,3 +76,23 @@ func TestConfigToolWiring(t *testing.T) {
 		t.Errorf("GET through registry errored: %s", res.Content)
 	}
 }
+
+// TestCronToolWiring proves cron_create builds through the registry and that
+// the ToolState's shared alarm scheduler has the CronNext seam wired — arming a
+// real cron expression succeeds end-to-end. Without the wiring, Arm would
+// reject the expression with "cron support not configured".
+func TestCronToolWiring(t *testing.T) {
+	state := NewToolState()
+	tool, err := pubtoolset.DefaultRegistry().Build(tools.CRON_CREATE, state)
+	if err != nil {
+		t.Fatalf("Build(cron_create): %v", err)
+	}
+	res, _ := tool.Execute(context.Background(), tools.NopLogger(),
+		json.RawMessage(`{"cron":"*/5 * * * *","prompt":"check CI"}`))
+	if res.IsError {
+		t.Fatalf("cron_create through registry errored: %s", res.Content)
+	}
+	if !state.HasAlarmScheduler() || state.AlarmScheduler().Pending() != 1 {
+		t.Errorf("expected 1 pending cron job on the shared scheduler, got pending=%d", state.AlarmScheduler().Pending())
+	}
+}

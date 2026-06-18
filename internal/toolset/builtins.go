@@ -11,8 +11,8 @@ import (
 	"github.com/johnny1110/evva/pkg/tools"
 	"github.com/johnny1110/evva/pkg/tools/alarm"
 	"github.com/johnny1110/evva/pkg/tools/cron"
-	"github.com/johnny1110/evva/pkg/tools/excel"
 	"github.com/johnny1110/evva/pkg/tools/daemon"
+	"github.com/johnny1110/evva/pkg/tools/excel"
 	"github.com/johnny1110/evva/pkg/tools/fs"
 	"github.com/johnny1110/evva/pkg/tools/lsp"
 	"github.com/johnny1110/evva/pkg/tools/monitor"
@@ -153,10 +153,18 @@ func init() {
 		return mcp.NewReadResourceTool(s.(*ToolState).McpManager()), nil
 	})
 
-	// --- cron (stateless stubs) ---
-	r.MustRegister(tools.CRON_CREATE, func(tools.State) (tools.Tool, error) { return cron.Create, nil })
-	r.MustRegister(tools.CRON_LIST, func(tools.State) (tools.Tool, error) { return cron.List, nil })
-	r.MustRegister(tools.CRON_DELETE, func(tools.State) (tools.Tool, error) { return cron.Delete, nil })
+	// --- cron (recurring/scheduled wake; shares the alarm Scheduler via
+	// ToolState — a cron job is an alarm with a cron expression) ---
+	r.MustRegister(tools.CRON_CREATE, func(s tools.State) (tools.Tool, error) {
+		return cron.NewCreate(s.(*ToolState).AlarmScheduler()), nil
+	})
+	r.MustRegister(tools.CRON_LIST, func(s tools.State) (tools.Tool, error) {
+		return cron.NewList(s.(*ToolState).AlarmScheduler()), nil
+	})
+	r.MustRegister(tools.CRON_DELETE, func(s tools.State) (tools.Tool, error) {
+		return cron.NewDelete(s.(*ToolState).AlarmScheduler()), nil
+	})
+	// remote_trigger stays a stub (unrelated remote-API feature).
 	r.MustRegister(tools.REMOTE_TRIGGER, func(tools.State) (tools.Tool, error) { return cron.Trigger, nil })
 
 	// --- alarm (one-shot absolute-time wake; shares one *alarm.Scheduler per

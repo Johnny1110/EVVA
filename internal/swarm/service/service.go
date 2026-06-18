@@ -637,6 +637,60 @@ func (s *Service) ResetSpace(ref string) (string, error) {
 	return id, nil
 }
 
+// ReloadSpace re-reads the manifest + every agent's on-disk definition
+// (system_prompt.md, tools/*.yml, profile.yml) and rebuilds the space IN PLACE
+// under its SAME id+name — the one-click "apply my evva-swarm.yml / system_prompt /
+// tools edits without a remove+restart". Unlike ResetSpace it PRESERVES the .vero
+// ledger (tasks + messages) and member transcripts; like a fresh register it takes
+// the manifest as written (fresh=true), so ad-hoc runtime schedule / permission-mode
+// overrides revert to the yml. In-flight runs are cancelled by the teardown. The
+// manifest is validated BEFORE teardown (reset's precedent) so a broken edit fails
+// the reload and leaves the live space running.
+func (s *Service) ReloadSpace(ref string) (string, error) {
+	s.mu.RLock()
+	ent := s.resolveLocked(ref)
+	var id, name, workdir string
+	if ent != nil {
+		id, name, workdir = ent.id, ent.name, ent.workdir
+	}
+	s.mu.RUnlock()
+	if ent == nil {
+		return "", fmt.Errorf("swarm: unknown space %q", ref)
+	}
+
+	// Validate the (re-read) manifest + agent dirs UP FRONT so a broken edit fails
+	// the reload before the live space is torn down (ResetSpace's precedent).
+	m, loaded, cfg, err := s.loadSpace(workdir)
+	if err != nil {
+		return "", fmt.Errorf("swarm: reload %q: %w", ref, err)
+	}
+
+	// Tear the live space down (cancels in-flight runs, shuts agents, closes the db
+	// so the rebuild re-opens it) and drop it from the registry. Detach the live
+	// handles under the lock; teardown is a no-op when already stopped.
+	s.mu.Lock()
+	live := &spaceEntry{cancel: ent.cancel, super: ent.super, space: ent.space,
+		stopPump: ent.stopPump, pumpDone: ent.pumpDone, events: ent.events}
+	delete(s.spaces, id)
+	s.mu.Unlock()
+	teardownSpace(live)
+
+	// Rebuild under the same id+name, taking the manifest as written (fresh=true):
+	// NewSpace re-opens the existing .vero (tasks + messages intact) and Reload
+	// restores transcripts + unread mail + frozen membership, so only the runtime
+	// schedule / permission-mode overrides revert to the yml. On failure re-insert a
+	// stopped placeholder so the space is never silently lost (RunSpace's precedent).
+	if _, err := s.register(id, name, m, loaded, cfg, true); err != nil {
+		s.mu.Lock()
+		s.spaces[id] = &spaceEntry{id: id, name: name, workdir: workdir, status: statusStopped}
+		s.mu.Unlock()
+		s.persistSpaces()
+		return "", fmt.Errorf("swarm: reload %q: rebuild failed: %w", ref, err)
+	}
+	s.log.Info("swarm: space reloaded", "id", id, "name", name, "workdir", workdir)
+	return id, nil
+}
+
 // spacesFile is the persisted reconcile manifest path, or "" when persistence
 // is disabled (no state dir).
 func (s *Service) spacesFile() string {

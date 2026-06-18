@@ -38,13 +38,17 @@ type Backend interface {
 	// rebuilds a stopped one under its same id/name (POST /api/swarm/:ref/run);
 	// RemoveSpace forgets it entirely (DELETE /api/swarm/:ref). ResetSpace wipes it
 	// to a blank slate — fresh ledger + cleared agent context — under the SAME id
-	// (POST /api/swarm/:ref/reset). For all of the above except Register, ref is a
-	// space id OR its name. Register/Run/Reset return the (stable) space id.
+	// (POST /api/swarm/:ref/reset). ReloadSpace re-reads the manifest + every agent's
+	// prompt/tools and rebuilds in place under the SAME id, KEEPING the ledger +
+	// transcripts (POST /api/swarm/:ref/reload) — the one-click "apply my config
+	// edits" without a remove+restart. For all of the above except Register, ref is a
+	// space id OR its name. Register/Run/Reset/Reload return the (stable) space id.
 	Register(workdir, name string) (string, error)
 	StopSpace(ref string) error
 	RunSpace(ref string) (string, error)
 	RemoveSpace(ref string) error
 	ResetSpace(ref string) (string, error)
+	ReloadSpace(ref string) (string, error)
 
 	// Read snapshots. The bool is false when the space id is unknown.
 	Spaces() []SpaceInfo
@@ -496,6 +500,14 @@ func NewRouter(b Backend, hub *Hub, spa fs.FS) http.Handler {
 	}))
 	mux.Handle("POST /api/swarm/{id}/reset", guard(func(w http.ResponseWriter, r *http.Request) {
 		id, err := b.ResetSpace(r.PathValue("id"))
+		if err != nil {
+			respondErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"id": id})
+	}))
+	mux.Handle("POST /api/swarm/{id}/reload", guard(func(w http.ResponseWriter, r *http.Request) {
+		id, err := b.ReloadSpace(r.PathValue("id"))
 		if err != nil {
 			respondErr(w, err)
 			return

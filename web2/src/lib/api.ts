@@ -124,5 +124,9 @@ export function createApi(getToken: () => string) {
     removeSpace: (ref: string) => req<null>('DELETE', `/api/swarm/${enc(ref)}`),
     // Wipe the space and rebuild under the same id; returns { id }. Destructive.
     reset: (id: string) => req<{ id: string }>('POST', `/api/swarm/${enc(id)}/reset`),
+    // Re-read the manifest + every agent's prompt/tools and rebuild in place under
+    // the same id; returns { id }. KEEPS tasks/messages/transcripts; reverts ad-hoc
+    // runtime permission/schedule overrides to the yml. The "re-apply config" path.
+    reloadSpace: (ref: string) => req<{ id: string }>('POST', `/api/swarm/${enc(ref)}/reload`),
   }
 }

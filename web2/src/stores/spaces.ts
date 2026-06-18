@@ -53,6 +53,21 @@ export const useSpacesStore = defineStore('spaces', {
       // FE-3 stores hold (turns, gates, roster agentIds) is now stale.
       this.epoch++
     },
+    async reload(id: string) {
+      this.loading = true
+      try {
+        await api.reloadSpace(id)
+        await this.load()
+        // Members were rebuilt server-side under the same id (new agentIds, fresh
+        // roster) — the FE-3 stores (turns, gates, roster) must re-bootstrap, same
+        // as reset. Tasks/messages survive, but the live handles do not.
+        this.epoch++
+      } finally {
+        // Errors propagate to the caller (TopBar surfaces them); a failed reload
+        // validates the manifest before teardown, so the live space keeps running.
+        this.loading = false
+      }
+    },
     async halt(id: string) {
       await api.halt(id)
     },

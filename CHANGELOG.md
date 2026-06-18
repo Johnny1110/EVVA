@@ -12,6 +12,19 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **One-click "re-apply config" on the swarm web refresh button.** With a space
+  open, the top-right refresh button now re-reads `evva-swarm.yml` and every
+  member's `system_prompt.md` + `tools/*.yml` and rebuilds all agents in place
+  under the same space id — no more remove+restart to apply config edits. It runs
+  through a confirm dialog (the rebuild cancels in-flight runs) and the button's
+  hover tooltip describes the action. Conversations, tasks, and messages are
+  preserved; the manifest is taken as written, so ad-hoc runtime permission/
+  schedule overrides revert to the yml. New backend seam:
+  `webapi.Backend.ReloadSpace` / `service.Service.ReloadSpace`, exposed as
+  `POST /api/swarm/{id}/reload`.
+
 ## [v1.8.0-beta.3] — 2026-06-18
 
 ### Added

@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/johnny1110/evva/internal/swarm/store"
@@ -158,5 +159,97 @@ func TestResetSpace(t *testing.T) {
 
 	if _, err := svc.ResetSpace("nope"); err == nil {
 		t.Error("reset of an unknown space should error")
+	}
+}
+
+// TestReloadSpace re-reads the manifest + agent dirs and rebuilds a space under the
+// SAME id WITHOUT wiping its ledger — the web "re-apply config" path. It proves both
+// halves of the contract: a manifest edit (a new per-member permission_mode) takes
+// effect on the rebuilt roster, AND a seeded task survives (reload, unlike reset,
+// keeps the .vero ledger + transcripts).
+func TestReloadSpace(t *testing.T) {
+	src := filepath.Join("..", "..", "..", "examples", "evva-swarm", "starter")
+	dst := t.TempDir()
+	if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
+		t.Fatalf("copy example: %v", err)
+	}
+	svc := New("127.0.0.1:0")
+	svc.loadConfig = scriptedLoadConfig(t.TempDir())
+	defer svc.Stop()
+
+	id, err := svc.Register(dst, "")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	modeOf := func(name string) string {
+		roster, _ := svc.Roster(id)
+		for _, m := range roster {
+			if m.Name == name {
+				return m.PermissionMode
+			}
+		}
+		return ""
+	}
+	// Starter manifest sets permission_mode: bypass at the settings level, so every
+	// member inherits it before the edit.
+	if got := modeOf("builder"); got != "bypass" {
+		t.Fatalf("pre-reload builder mode = %q, want bypass", got)
+	}
+
+	// Seed a task so there's ledger state that reload must PRESERVE (unlike reset).
+	ent, ok := svc.entry(id)
+	if !ok {
+		t.Fatal("no entry after register")
+	}
+	if _, err := ent.space.Store.CreateTask(store.Task{Title: "seed", Assignee: "builder", CreatedBy: "lead"}); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+
+	// Edit the on-disk manifest: pin the builder worker to plan mode. Reload must
+	// re-read this and apply it to the rebuilt member.
+	mf := filepath.Join(dst, "evva-swarm.yml")
+	raw, err := os.ReadFile(mf)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	edited := strings.Replace(string(raw), "  - agent: builder\n", "  - agent: builder\n    permission_mode: plan\n", 1)
+	if edited == string(raw) {
+		t.Fatal("manifest edit did not match — starter layout changed?")
+	}
+	if err := os.WriteFile(mf, []byte(edited), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	newID, err := svc.ReloadSpace(id)
+	if err != nil {
+		t.Fatalf("ReloadSpace: %v", err)
+	}
+	if newID != id {
+		t.Errorf("reload changed the space id: %q -> %q", id, newID)
+	}
+	if !svc.HasSpace(id) {
+		t.Error("space gone after reload; it should be rebuilt under the same id")
+	}
+
+	// Manifest re-read took effect: builder is now plan, reviewer still inherits bypass.
+	if got := modeOf("builder"); got != "plan" {
+		t.Errorf("post-reload builder mode = %q, want plan (manifest not re-read?)", got)
+	}
+	if got := modeOf("reviewer"); got != "bypass" {
+		t.Errorf("post-reload reviewer mode = %q, want bypass", got)
+	}
+
+	// Ledger preserved: the seeded task survives (the reload-vs-reset difference).
+	page, ok := svc.Tasks(id)
+	if !ok {
+		t.Fatal("no tasks view after reload (store not reopened?)")
+	}
+	if len(page.Tasks) != 1 {
+		t.Errorf("post-reload tasks = %d, want 1 (ledger should be preserved)", len(page.Tasks))
+	}
+
+	if _, err := svc.ReloadSpace("nope"); err == nil {
+		t.Error("reload of an unknown space should error")
 	}
 }

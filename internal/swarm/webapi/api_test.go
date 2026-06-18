@@ -80,6 +80,13 @@ func (f *fakeBackend) ResetSpace(id string) (string, error) {
 	return id, nil // reset keeps the same id
 }
 
+func (f *fakeBackend) ReloadSpace(id string) (string, error) {
+	if !f.HasSpace(id) {
+		return "", errUnknownSpace
+	}
+	return id, nil // reload keeps the same id
+}
+
 func (f *fakeBackend) Spaces() []SpaceInfo {
 	out := make([]SpaceInfo, 0, len(f.spaces))
 	for id, r := range f.spaces {

@@ -505,6 +505,17 @@ From the **web roster** you can, per member:
   compaction.
 - **Halt all** — the emergency stop: cancel every in-flight run in the space.
 
+Space-wide, the **top-right refresh button** does double duty. On the space list it
+just re-fetches the list. **Inside a space it becomes "re-apply config":** it
+re-reads `evva-swarm.yml` and every agent's `system_prompt.md` + `tools/*.yml` and
+rebuilds all members in place under the same space id — so you can iterate on
+prompts, tool lists, and manifest settings **without the old remove + restart
+dance** (hover the button for a one-line reminder). Because the rebuild cancels any
+in-flight runs, it asks you to confirm first. Conversations, tasks, and messages are
+**kept**; the manifest is taken as written, so any ad-hoc permission-mode / schedule
+changes you made from the web revert to what the yml says — re-apply those after if
+you meant to keep them.
+
 ### Cost & stall fuses (token budget / run watchdog)
 
 A team running 24/7 needs two fuses. Both live under `settings:` in

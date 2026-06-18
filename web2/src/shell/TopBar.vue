@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '../stores/session'
@@ -6,19 +7,48 @@ import { useSpacesStore } from '../stores/spaces'
 import { useConnectionStore } from '../stores/connection'
 import { useUiStore } from '../stores/ui'
 import { setLocale, type Locale } from '../lib/i18n'
+import { errMsg } from '../lib/util'
 import SpaceSwitcher from './SpaceSwitcher.vue'
 import ThemeToggle from './ThemeToggle.vue'
 import SpaceMenu from './SpaceMenu.vue'
+import ConfirmDialog from '../components/safety/ConfirmDialog.vue'
 import EvButton from '../components/base/EvButton.vue'
 import EvIcon from '../components/base/EvIcon.vue'
 
-defineProps<{ spaceId?: string }>()
+const props = defineProps<{ spaceId?: string }>()
 const router = useRouter()
 const session = useSessionStore()
 const spaces = useSpacesStore()
 const conn = useConnectionStore()
 const ui = useUiStore()
 const { t, locale } = useI18n()
+
+// The top-right refresh button. With no space open it just re-fetches the space
+// list (cheap, read-only). Inside a space it becomes "re-apply config": re-read
+// evva-swarm.yml + every agent's system_prompt/tools and rebuild all members in
+// place (same id). That rebuild cancels in-flight runs, so it goes through the
+// graded ConfirmDialog first — consistent with reset/stop/halt.
+const reapply = ref(false)
+const err = ref('')
+
+function onRefresh() {
+  const id = props.spaceId
+  if (!id) {
+    spaces.load()
+    return
+  }
+  reapply.value = true
+}
+async function doReapply() {
+  const id = props.spaceId
+  reapply.value = false
+  if (!id) return
+  try {
+    await spaces.reload(id)
+  } catch (e) {
+    err.value = errMsg(e)
+  }
+}
 
 function logout() {
   session.disconnect()
@@ -39,7 +69,12 @@ function logout() {
       <span v-if="spaceId" class="conn" :title="`live connection: ${conn.status}`">
         <span class="cdot" :class="conn.status" />{{ conn.status }}
       </span>
-      <EvButton size="sm" :title="t('common.refresh')" @click="spaces.load()"><EvIcon name="refresh" :size="14" /></EvButton>
+      <EvButton
+        size="sm"
+        :loading="spaces.loading"
+        :title="spaceId ? t('common.reapplyHint') : t('common.refresh')"
+        @click="onRefresh"
+      ><EvIcon name="refresh" :size="14" /></EvButton>
       <select class="loc" :value="locale" :title="'language'" @change="setLocale(($event.target as HTMLSelectElement).value as Locale)">
         <option value="zh-Hant">中</option>
         <option value="en">EN</option>
@@ -56,11 +91,22 @@ function logout() {
       <SpaceMenu v-if="spaceId" :space-id="spaceId" />
       <EvButton size="sm" @click="logout">{{ t('common.logout') }}</EvButton>
     </div>
+
+    <ConfirmDialog
+      v-if="reapply"
+      :title="t('common.reapplyTitle')"
+      :message="t('common.reapplyMsg')"
+      :confirm-label="t('common.reapplyConfirm')"
+      @confirm="doReapply"
+      @cancel="reapply = false"
+    />
+    <p v-if="err" class="err" @click="err = ''">{{ err }}</p>
   </header>
 </template>
 
 <style scoped>
 .topbar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -68,6 +114,21 @@ function logout() {
   padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--color-line);
   background: var(--color-surface);
+}
+.err {
+  position: absolute;
+  right: var(--sp-3);
+  top: 100%;
+  margin: 0.25rem 0 0;
+  max-width: 32rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
+  color: var(--color-danger);
+  cursor: pointer;
+  z-index: 41;
 }
 .left,
 .right {

@@ -341,7 +341,7 @@ func TestExitWorktree_RejectsBadAction(t *testing.T) {
 
 	res, _ := tool.Execute(context.Background(), ctrl.Logger(),
 		json.RawMessage(`{"action":"burn"}`))
-	if !res.IsError || !strings.Contains(res.Content, `"keep" or "remove"`) {
+	if !res.IsError || !strings.Contains(res.Content, "action must be") {
 		t.Errorf("expected bad-action error; got %q", res.Content)
 	}
 }

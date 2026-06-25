@@ -41,6 +41,13 @@ type agentDaemon struct {
 	parentID    string
 	startedAt   time.Time
 
+	// worktreePath / worktreeBranch are set right after construction (before
+	// Register) when the subagent runs under isolation:"worktree". They are
+	// surfaced via LocalAgentMeta so worktree_list can show which daemon owns
+	// a live worktree. Immutable once Register is called.
+	worktreePath   string
+	worktreeBranch string
+
 	// Guarded by mu.
 	status  daemon.DaemonStatus
 	phase   constant.AgentStatus
@@ -96,12 +103,14 @@ func (d *agentDaemon) Snapshot() daemon.DaemonSnapshot {
 
 func (d *agentDaemon) snapshotLocked() daemon.DaemonSnapshot {
 	meta := daemon.LocalAgentMeta{
-		AgentType: d.agentType,
-		Prompt:    d.prompt,
-		Async:     d.async,
-		Phase:     d.phase.String(),
-		Summary:   d.summary,
-		Err:       d.errMsg,
+		AgentType:      d.agentType,
+		Prompt:         d.prompt,
+		Async:          d.async,
+		Phase:          d.phase.String(),
+		Summary:        d.summary,
+		Err:            d.errMsg,
+		WorktreePath:   d.worktreePath,
+		WorktreeBranch: d.worktreeBranch,
 	}
 	return daemon.DaemonSnapshot{
 		ID:          d.id,

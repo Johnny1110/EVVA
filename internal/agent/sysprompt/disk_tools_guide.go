@@ -77,7 +77,8 @@ var toolGuidelines = map[tools.ToolName]string{
 	tools.ENTER_PLAN_MODE: "Flip the session into a read-only planning stance before non-trivial implementation work; the user approves your plan before you write code.",
 	tools.EXIT_PLAN_MODE:  "Present the finished plan and ask the user to approve leaving the read-only planning stance.",
 	tools.ENTER_WORKTREE:  "Create an isolated git worktree and switch the session into it — only on an explicit worktree request.",
-	tools.EXIT_WORKTREE:   "Leave the session's isolated git worktree, keeping or removing it as instructed.",
+	tools.EXIT_WORKTREE:   "Leave the session's isolated git worktree: keep, remove, or merge it back into the base branch.",
+	tools.WORKTREE_LIST:   "List the live evva-managed worktrees (branch, ahead/behind, dirty, owning subagent) to review parallel work before merging.",
 
 	// User interaction.
 	tools.ASK_USER_QUESTION: "Ask the user a structured multiple-choice question — only when you are blocked on a decision that is genuinely theirs to make.",
@@ -108,7 +109,7 @@ var toolGuideOrder = []tools.ToolName{
 	tools.WEB_SEARCH, tools.WEB_FETCH, tools.HTTP_REQUEST,
 	tools.JSON_QUERY, tools.CALC,
 	tools.AGENT, tools.SKILL, tools.TOOL_SEARCH, tools.TODO_WRITE, tools.CONFIG, tools.FEEDBACK,
-	tools.ENTER_PLAN_MODE, tools.EXIT_PLAN_MODE, tools.ENTER_WORKTREE, tools.EXIT_WORKTREE,
+	tools.ENTER_PLAN_MODE, tools.EXIT_PLAN_MODE, tools.ENTER_WORKTREE, tools.EXIT_WORKTREE, tools.WORKTREE_LIST,
 	tools.ASK_USER_QUESTION, tools.PUSH_NOTIFICATION,
 	tools.CRON_CREATE, tools.CRON_LIST, tools.CRON_DELETE, tools.REMOTE_TRIGGER,
 	tools.ALARM_CREATE, tools.ALARM_LIST, tools.ALARM_CANCEL, tools.SCHEDULE_WAKEUP,

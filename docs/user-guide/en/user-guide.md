@@ -520,18 +520,27 @@ The model **only** invokes these tools when you explicitly say "worktree" — ph
 
 1. **Enter** — model calls `enter_worktree` (optionally with a `name`). evva runs `git worktree add -b worktree-<slug> <repo>/.evva/worktrees/<slug>/ HEAD` and switches the session's working directory to the new worktree. Subsequent `read` / `edit` / `write` / `bash` calls run in the worktree — the original directory is untouched.
 2. **Work** — drive the session normally. Reads, edits, commits all happen inside the worktree on its own branch.
-3. **Exit** — when done, model calls `exit_worktree` with `action: "keep"` or `action: "remove"`:
+3. **Exit** — when done, model calls `exit_worktree` with `action: "keep"`, `"remove"`, or `"merge"`:
    - `"keep"` — the worktree directory and branch stay on disk. Useful if you want to come back to the work or merge it later.
    - `"remove"` — runs `git worktree remove --force` and deletes the branch. If the worktree has uncommitted changes the tool refuses unless you explicitly say *"remove, discard the changes"* (the model re-invokes with `discard_changes: true`).
+   - `"merge"` — integrates the worktree branch back into the base branch (`git merge --no-ff`), then removes the worktree on success. The worker must have committed first. A conflict-free merge reports the commits and files integrated and tears the worktree down; a conflict is **aborted** (`git merge --abort`) and reported with the conflicted paths, leaving the worktree intact — nothing is ever half-applied.
 4. The session is restored to the original directory; EVVA.md and the system prompt rebuild against the original workdir.
 
-**Subagent isolation** — the `agent` tool accepts `isolation: "worktree"`. Spawning a subagent with that flag creates a per-subagent worktree under `.evva/worktrees/agent-<id>/` and the child runs entirely inside it. On a clean exit (no file changes, no commits) evva auto-removes the worktree; otherwise it stays on disk and the subagent's result reports `worktree_path:` / `worktree_branch:` so you can inspect or merge.
+**Subagent isolation** — the `agent` tool accepts `isolation: "worktree"`. Spawning a subagent with that flag creates a per-subagent worktree under `.evva/worktrees/agent-<id>/` and the child runs entirely inside it. On a clean exit (no file changes, no commits) evva auto-removes the worktree; otherwise it stays on disk and the subagent's result reports `worktree_path:` / `worktree_branch:`. Use `worktree_list` to review every such worktree and `exit_worktree` `action: "merge"` to integrate the good ones — see *Running work in parallel* below.
+
+**Running work in parallel (fan-out → review → reconcile)** — the integrate half of parallel work:
+
+1. **Fan out** — spawn several subagents with `isolation: "worktree"`, each on its own slice of the task (e.g. one file or module each). They run concurrently, each on its own branch under `.evva/worktrees/`.
+2. **Review** — when they finish, call `worktree_list`. It prints one row per live worktree: branch, base branch, how many commits it is ahead/behind the base, whether it has uncommitted changes, and — if a subagent is still writing it — the owning daemon id (so finished work is distinguishable from in-flight). Read-only and auto-allowed.
+3. **Reconcile** — integrate the good branches **one at a time** with `exit_worktree` `action: "merge"`, passing the `branch` shown by `worktree_list`. Merge sequentially, not in a batch: each merge shifts the base, and the next is checked against the new base. A conflict aborts cleanly and names the conflicting paths — re-spawn that worker with the conflict context, merge another branch first, or resolve by hand.
+
+This is **not** the swarm. Fan-out is a transient crew — ephemeral worktrees, no persistence, disbands when the work merges. The swarm (`evva swarm`) is a standing team with a mailbox and a store. Use fan-out for *"split this across N files, then reconcile"*; use the swarm for an ongoing mission.
 
 **Notes:**
 
 - Worktrees live at `<repo>/.evva/worktrees/<slug>/`. Add `.evva/` to `.gitignore` if you don't already.
-- Plan mode denies `enter_worktree` / `exit_worktree` (they're not in the read-only safelist). Exit plan mode first if you want to start one.
-- Subagents can't enter a worktree mid-session — only the root agent can. The AgentTool's `isolation` parameter is the way to put a subagent inside a worktree.
+- Plan mode denies `enter_worktree` / `exit_worktree` (they're not in the read-only safelist). Exit plan mode first if you want to start one. `worktree_list` is read-only, so it's allowed everywhere; the `merge` action mutates the base branch, so it prompts like any write unless you're in `bypass`.
+- Subagents can't enter a worktree mid-session — only the root agent can. The AgentTool's `isolation` parameter is the way to put a subagent inside a worktree. `worktree_list` and the `merge` action are likewise root-agent only — subagents do the work; the lead reviews and reconciles it.
 - Worktrees have no `.worktreeinclude` support in v1 — gitignored files (`.env`, local config) are NOT copied into the new worktree. Set them up by hand in the worktree if needed.
 
 ### Approval Prompts

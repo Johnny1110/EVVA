@@ -99,6 +99,13 @@ func (a *Agent) Spawn(ctx context.Context, req meta.SpawnRequest) (string, error
 		req.Name, subProfile.Type.String(), req.Desc, req.Prompt,
 		req.AsyncMode, a.ID,
 	)
+	// Record the isolation worktree so worktree_list can attribute a live
+	// worktree to its owning daemon. Set before Register (no concurrent
+	// reader yet).
+	if isolationSession != nil {
+		ad.worktreePath = isolationSession.Path
+		ad.worktreeBranch = isolationSession.Branch
+	}
 	state.Register(ad)
 
 	if child.IsAsync() {

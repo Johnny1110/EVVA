@@ -86,6 +86,7 @@ const (
 	EXIT_PLAN_MODE  ToolName = "exit_plan_mode"
 	ENTER_WORKTREE  ToolName = "enter_worktree"
 	EXIT_WORKTREE   ToolName = "exit_worktree"
+	WORKTREE_LIST   ToolName = "worktree_list"
 
 	NOTEBOOK_EDIT ToolName = "notebook_edit"
 

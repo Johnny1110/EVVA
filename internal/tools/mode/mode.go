@@ -27,7 +27,7 @@ import (
 func Names() []tools.ToolName {
 	return []tools.ToolName{
 		tools.ENTER_PLAN_MODE, tools.EXIT_PLAN_MODE,
-		tools.ENTER_WORKTREE, tools.EXIT_WORKTREE,
+		tools.ENTER_WORKTREE, tools.EXIT_WORKTREE, tools.WORKTREE_LIST,
 	}
 }
 

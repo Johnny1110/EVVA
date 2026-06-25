@@ -268,6 +268,10 @@ var ReadOnlyOrSelfTools = map[string]bool{
 	// excluded since it mutates (terminates the daemon).
 	"daemon_list":   true,
 	"daemon_output": true,
+	// Worktree introspection — enumerate the live evva-managed worktrees
+	// (branch / ahead-behind / dirty / owning daemon). Pure read; the merge
+	// that mutates the base branch rides exit_worktree's gate, not this.
+	"worktree_list": true,
 	// Plan-mode coordination — the model must be able to enter and exit
 	// plan mode while ModePlan denies everything else. Both are otherwise
 	// session-state-only (they don't touch the filesystem outside of the

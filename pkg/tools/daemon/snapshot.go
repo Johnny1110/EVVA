@@ -56,6 +56,12 @@ type LocalAgentMeta struct {
 	Phase     string
 	Summary   string
 	Err       string
+	// WorktreePath / WorktreeBranch are set when the subagent was spawned
+	// with isolation:"worktree" — they let worktree_list cross-reference a
+	// live worktree back to the daemon still writing it ("owned by Y").
+	// Empty for non-isolated subagents.
+	WorktreePath   string
+	WorktreeBranch string
 }
 
 func (LocalAgentMeta) daemonMetadata() {}

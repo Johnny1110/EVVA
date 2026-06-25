@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -190,16 +189,18 @@ If called outside an enter_worktree session, the tool is a **no-op**: it reports
 
 ## Parameters
 
-- ` + "`action`" + ` (required): ` + "`\"keep\"`" + ` or ` + "`\"remove\"`" + `
+- ` + "`action`" + ` (required): ` + "`\"keep\"`" + `, ` + "`\"remove\"`" + `, or ` + "`\"merge\"`" + `
   - ` + "`\"keep\"`" + ` — leave the worktree directory and branch intact on disk. Use this if the user wants to come back to the work later, or if there are changes to preserve.
   - ` + "`\"remove\"`" + ` — delete the worktree directory and its branch. Use this for a clean exit when the work is done or abandoned.
+  - ` + "`\"merge\"`" + ` — integrate the worktree branch back into the base branch (the branch checked out in the main worktree), then remove the worktree on success. The worker must have committed its work first. Conflicts are reported and the merge is aborted — nothing is half-applied. This is how you reconcile work done in an isolated worktree (including one left by a finished ` + "`isolation:\"worktree\"`" + ` subagent — list candidates with worktree_list).
 - ` + "`discard_changes`" + ` (optional, default false): only meaningful with ` + "`action: \"remove\"`" + `. If the worktree has uncommitted files or commits not on the original branch, the tool will REFUSE to remove it unless this is set to ` + "`true`" + `. If the tool returns an error listing changes, confirm with the user before re-invoking with ` + "`discard_changes: true`" + `.
+- ` + "`branch`" + ` (optional): only meaningful with ` + "`action: \"merge\"`" + `. The branch of a specific live worktree to merge (e.g. ` + "`worktree-explore-ab12`" + `, as shown by worktree_list). Omit to merge the worktree of the active enter_worktree session. Provide it to merge a worktree you are NOT currently inside — e.g. one a finished subagent left behind.
 
 ## Behavior
 
-- Restores the agent's working directory to where it was before enter_worktree
-- Reloads the EVVA.md / USER_PROFILE.md snapshot and rebuilds the active filesystem + bash tools against the original workdir
+- ` + "`keep`" + ` / ` + "`remove`" + ` restore the agent's working directory to where it was before enter_worktree, reload the EVVA.md / USER_PROFILE.md snapshot, and rebuild the active filesystem + bash tools against the original workdir
 - On ` + "`action: \"remove\"`" + ` with no pending changes (or with ` + "`discard_changes: true`" + `): runs ` + "`git worktree remove --force <path>`" + ` and deletes the worktree branch
+- On ` + "`action: \"merge\"`" + `: runs ` + "`git merge --no-ff <branch>`" + ` from the base checkout. On success: removes the worktree + branch (and, for the active session, returns to the original workdir). On conflict: runs ` + "`git merge --abort`" + ` and reports the conflicted paths, leaving the worktree intact. Refuses if the worktree has uncommitted changes; reports a no-op when there is nothing to integrate
 - Once exited, enter_worktree can be called again to create a fresh worktree
 `
 
@@ -208,14 +209,16 @@ const exitWorktreeSchema = `{
 	"additionalProperties":false,
 	"required":["action"],
 	"properties":{
-		"action":{"type":"string","enum":["keep","remove"],"description":"\"keep\" leaves the worktree and branch on disk; \"remove\" deletes both."},
-		"discard_changes":{"type":"boolean","description":"Required true when action is \"remove\" and the worktree has uncommitted files or unmerged commits."}
+		"action":{"type":"string","enum":["keep","remove","merge"],"description":"\"keep\" leaves the worktree and branch on disk; \"remove\" deletes both; \"merge\" integrates the worktree branch into the base branch, then removes the worktree on success."},
+		"discard_changes":{"type":"boolean","description":"Required true when action is \"remove\" and the worktree has uncommitted files or unmerged commits."},
+		"branch":{"type":"string","description":"Only for action \"merge\": the branch of a specific live worktree to merge (see worktree_list). Omit to merge the active session's worktree."}
 	}
 }`
 
 type exitWorktreeInput struct {
 	Action         string `json:"action"`
 	DiscardChanges bool   `json:"discard_changes"`
+	Branch         string `json:"branch"`
 }
 
 // ExitWorktreeTool tears down (or keeps) a worktree session opened by
@@ -241,6 +244,19 @@ func (t *ExitWorktreeTool) Execute(ctx context.Context, logger *slog.Logger, inp
 		}, nil
 	}
 
+	var in exitWorktreeInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return tools.Result{IsError: true, Content: fmt.Sprintf("exit_worktree: decode input: %v", err)}, nil
+	}
+	action := strings.ToLower(strings.TrimSpace(in.Action))
+
+	// merge can target a specific worktree by branch, so it is valid even
+	// with no active session (e.g. integrating a finished subagent's
+	// worktree). Handle it before the no-active-session no-op below.
+	if action == "merge" {
+		return t.executeMerge(ctx, ctrl, logger, in)
+	}
+
 	sess := ctrl.WorktreeSession()
 	if sess == nil {
 		// Per ref spec: no-op when no session is active.
@@ -249,13 +265,8 @@ func (t *ExitWorktreeTool) Execute(ctx context.Context, logger *slog.Logger, inp
 		}, nil
 	}
 
-	var in exitWorktreeInput
-	if err := json.Unmarshal(input, &in); err != nil {
-		return tools.Result{IsError: true, Content: fmt.Sprintf("exit_worktree: decode input: %v", err)}, nil
-	}
-	action := strings.ToLower(strings.TrimSpace(in.Action))
 	if action != "keep" && action != "remove" {
-		return tools.Result{IsError: true, Content: `exit_worktree: action must be "keep" or "remove"`}, nil
+		return tools.Result{IsError: true, Content: `exit_worktree: action must be "keep", "remove", or "merge"`}, nil
 	}
 
 	if action == "keep" {
@@ -326,6 +337,164 @@ func (t *ExitWorktreeTool) Execute(ctx context.Context, logger *slog.Logger, inp
 		msg += "\n\n" + summary + "\n(discarded per discard_changes=true)"
 	}
 	return tools.Result{Content: msg}, nil
+}
+
+// executeMerge integrates a worktree branch back into the repo's base
+// branch, then tears the worktree down. With no `branch` argument it
+// operates on the active session (the reconcile counterpart to keep/remove);
+// with `branch` it targets any live worktree under .evva/worktrees/, which
+// works even when no session is active — e.g. merging a worktree a finished
+// isolation:"worktree" subagent left behind.
+//
+// Safety contract: the merge runs from the base checkout (pulling the child
+// branch in, never the reverse), refuses an unclean source, no-ops when
+// there is nothing to integrate, and on conflict runs `git merge --abort`
+// and reports the conflicted paths — the base branch is never left in a
+// half-merged state.
+func (t *ExitWorktreeTool) executeMerge(ctx context.Context, ctrl WorktreeController, logger *slog.Logger, in exitWorktreeInput) (tools.Result, error) {
+	target := strings.TrimSpace(in.Branch)
+
+	// --- resolve target: (childPath, childBranch) onto basePath ---
+	var childPath, childBranch, basePath string
+	var fromSession bool
+	var sess *WorktreeSession
+
+	if target == "" {
+		sess = ctrl.WorktreeSession()
+		if sess == nil {
+			return tools.Result{
+				IsError: true,
+				Content: `exit_worktree: no active worktree session — pass "branch" to merge a specific worktree (run worktree_list to see candidates).`,
+			}, nil
+		}
+		childPath, childBranch, basePath, fromSession = sess.Path, sess.Branch, sess.OriginalWorkdir, true
+	} else {
+		entries, err := parseWorktreeList(ctx, ctrl.Workdir())
+		if err != nil {
+			return tools.Result{IsError: true, Content: "exit_worktree: cannot enumerate worktrees: " + err.Error()}, nil
+		}
+		if len(entries) == 0 || !entries[0].isMain {
+			return tools.Result{IsError: true, Content: "exit_worktree: cannot resolve the main worktree"}, nil
+		}
+		var match *worktreeEntry
+		for i := range entries {
+			e := &entries[i]
+			if e.isMain || !isManagedWorktree(e.Path) {
+				continue
+			}
+			if e.Branch == target || e.Branch == branchNameFor(target) {
+				match = e
+				break
+			}
+		}
+		if match == nil {
+			return tools.Result{
+				IsError: true,
+				Content: fmt.Sprintf("exit_worktree: no live worktree on branch %q.%s", target, worktreeBranchesHint(entries)),
+			}, nil
+		}
+		childPath, childBranch, basePath = match.Path, match.Branch, entries[0].Path
+	}
+
+	// --- base branch + clean guards ---
+	baseBranchRaw, err := runGit(ctx, basePath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return tools.Result{IsError: true, Content: "exit_worktree: cannot resolve base branch: " + err.Error()}, nil
+	}
+	baseBranch := strings.TrimSpace(baseBranchRaw)
+
+	// A dirty base would make `git merge` fail confusingly — refuse early
+	// with a clear message instead. Only tracked modifications block a merge;
+	// untracked files (notably the .evva/worktrees/ dirs that live inside the
+	// repo) do not, so ignore them here.
+	if baseStatus, sErr := runGit(ctx, basePath, "status", "--porcelain", "--untracked-files=no"); sErr != nil {
+		return tools.Result{IsError: true, Content: "exit_worktree: cannot inspect base checkout: " + sErr.Error()}, nil
+	} else if strings.TrimSpace(baseStatus) != "" {
+		return tools.Result{
+			IsError: true,
+			Content: fmt.Sprintf("exit_worktree: base branch %q has uncommitted changes at %s — commit or stash them before merging.", baseBranch, basePath),
+		}, nil
+	}
+
+	// A4: refuse an unclean source — only UNCOMMITTED work blocks a merge
+	// (committed work is exactly what we're integrating).
+	if uncommitted, uErr := worktreeUncommitted(ctx, childPath); uErr != nil {
+		return tools.Result{IsError: true, Content: "exit_worktree: cannot inspect worktree on branch " + childBranch + ": " + uErr.Error()}, nil
+	} else if uncommitted > 0 {
+		return tools.Result{
+			IsError: true,
+			Content: fmt.Sprintf("exit_worktree: worktree on branch %q has %d uncommitted change(s) — the worker must commit before its work can be merged.", childBranch, uncommitted),
+		}, nil
+	}
+
+	// A5: nothing to integrate → no-op, never errors, leaves the worktree.
+	ahead, _, err := aheadBehind(ctx, basePath, baseBranch, childBranch)
+	if err != nil {
+		return tools.Result{IsError: true, Content: "exit_worktree: cannot count commits to integrate: " + err.Error()}, nil
+	}
+	if ahead == 0 {
+		return tools.Result{
+			Content: fmt.Sprintf("No changes to integrate: branch %q has no commits beyond %q. Worktree left untouched at %s.", childBranch, baseBranch, childPath),
+		}, nil
+	}
+
+	// Capture the set of files this merge will bring in, for the report.
+	filesOut, _ := runGit(ctx, basePath, "diff", "--name-only", baseBranch+"..."+childBranch)
+	filesChanged := countNonEmptyLines(filesOut)
+
+	// --- merge (A2 / A3) ---
+	mergeOut, mergeErr := runGit(ctx, basePath, "merge", "--no-ff", "-m",
+		fmt.Sprintf("Merge %s into %s", childBranch, baseBranch), childBranch)
+	if mergeErr != nil {
+		// A3: capture conflicts, abort, leave the worktree intact. Structural,
+		// not a crash — the agent decides what to do next.
+		conflicts, _ := runGit(ctx, basePath, "diff", "--name-only", "--diff-filter=U")
+		_, _ = runGit(ctx, basePath, "merge", "--abort")
+		conflictList := strings.TrimSpace(conflicts)
+		if conflictList == "" {
+			return tools.Result{
+				IsError: true,
+				Content: fmt.Sprintf("exit_worktree: merge of %q failed (aborted, worktree intact):\n%s", childBranch, strings.TrimSpace(mergeOut)),
+			}, nil
+		}
+		logger.Info("exit_worktree", "action", "merge", "branch", childBranch, "base", baseBranch, "result", "conflict")
+		return tools.Result{
+			// Not IsError: a conflict is an actionable outcome, not a tool failure.
+			Content: fmt.Sprintf(
+				"MERGE CONFLICT — aborted, nothing applied. Branch %q conflicts with %q in:\n%s\n\nThe worktree is intact at %s. Resolve by re-spawning the worker with conflict context, merging another branch first, or asking the user.",
+				childBranch, baseBranch, bulletLines(conflictList), childPath,
+			),
+		}, nil
+	}
+
+	// --- success: tear the worktree down ---
+	repoRoot, err := gitTopLevel(ctx, basePath)
+	if err != nil {
+		repoRoot = basePath
+	}
+	var teardown string
+	if rmOut, rmErr := runGit(ctx, repoRoot, "worktree", "remove", "--force", childPath); rmErr != nil {
+		teardown = fmt.Sprintf("\n(warning: worktree removal failed: %v: %s — remove it manually at %s)", rmErr, strings.TrimSpace(rmOut), childPath)
+	} else if _, brErr := runGit(ctx, repoRoot, "branch", "-D", childBranch); brErr != nil {
+		logger.Warn("exit_worktree merge: branch delete failed (worktree removed)", "branch", childBranch, "err", brErr)
+	}
+
+	// For the active-session form, restore the agent's workdir + end the
+	// session (mirror keep/remove).
+	if fromSession && sess != nil {
+		if serr := ctrl.SwitchWorkdir(sess.OriginalWorkdir); serr != nil {
+			teardown += "\n(warning: switch back to base workdir failed: " + serr.Error() + ")"
+		}
+		ctrl.EndWorktreeSession()
+	}
+
+	logger.Info("exit_worktree", "action", "merge", "branch", childBranch, "base", baseBranch, "commits", ahead, "files", filesChanged)
+	return tools.Result{
+		Content: fmt.Sprintf(
+			"Merged %q into %q: %d commit(s), %d file(s) changed. Worktree removed: %s.%s",
+			childBranch, baseBranch, ahead, filesChanged, childPath, teardown,
+		),
+	}, nil
 }
 
 // --- helpers -----------------------------------------------------------
@@ -409,44 +578,56 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// worktreeHasChanges returns (true, summary) when the worktree at `path`
-// has uncommitted files OR commits beyond the original HEAD. summary is a
-// human-readable description for the tool's error message. Fail-closed:
-// any git error treats the worktree as dirty so we never auto-remove a
-// worktree we can't inspect.
+// worktreeUncommitted returns the count of uncommitted working-tree changes
+// in the worktree at path (0 ⇒ everything is committed). This is the signal
+// the merge action's source-clean guard wants: committed work is fine to
+// merge; only uncommitted work blocks it.
+func worktreeUncommitted(ctx context.Context, path string) (int, error) {
+	out, err := runGit(ctx, path, "status", "--porcelain")
+	if err != nil {
+		return 0, err
+	}
+	out = strings.TrimRight(out, "\n")
+	if out == "" {
+		return 0, nil
+	}
+	return strings.Count(out, "\n") + 1, nil
+}
+
+// worktreeCommitsAhead counts commits on the worktree's branch that are not
+// reachable from the repo's base branch (the branch checked out in the
+// primary worktree). Best-effort: returns 0 if the base can't be resolved, so
+// a clean worktree with no base context never blocks auto-cleanup.
+func worktreeCommitsAhead(ctx context.Context, path string) int {
+	entries, err := parseWorktreeList(ctx, path)
+	if err != nil || len(entries) == 0 || entries[0].Branch == "" {
+		return 0
+	}
+	ahead, _, aErr := aheadBehind(ctx, path, entries[0].Branch, "HEAD")
+	if aErr != nil {
+		return 0
+	}
+	return ahead
+}
+
+// worktreeHasChanges returns (true, summary) when the worktree at `path` holds
+// work that would be lost if it were removed: uncommitted files OR commits on
+// its branch beyond the base branch. This is the auto-cleanup / discard guard
+// (so a worker that COMMITTED its slice is preserved for later merge, not
+// silently dropped). Fail-closed: any git error treats the worktree as dirty
+// so we never auto-remove a worktree we can't inspect.
 func worktreeHasChanges(ctx context.Context, path string) (bool, string) {
-	statusOut, err := runGit(ctx, path, "status", "--porcelain")
+	uncommitted, err := worktreeUncommitted(ctx, path)
 	if err != nil {
 		return true, "could not inspect worktree status: " + err.Error()
 	}
-	statusOut = strings.TrimRight(statusOut, "\n")
-	uncommittedLines := 0
-	if statusOut != "" {
-		uncommittedLines = strings.Count(statusOut, "\n") + 1
-	}
-
-	// Count commits on the worktree branch beyond its merge-base with the
-	// branch git checked out at worktree-creation time. Use `@{upstream}`?
-	// No — there's no upstream. Use HEAD..HEAD@{1}? Brittle. Simpler:
-	// list commits reachable from HEAD but not from origin/HEAD via
-	// `git log --oneline @{u}..HEAD` — also not guaranteed. Use the
-	// reflog-resilient approach: ask for unique commits ahead of the
-	// default branch's HEAD-on-creation, captured via `git rev-list
-	// --count HEAD ^@{upstream}` is fragile too. Fall back to the
-	// safest cross-environment signal: count commits whose parent is
-	// reachable from no other branch — `git rev-list --count
-	// HEAD --not --branches=main --branches=master --branches=develop`
-	// is too repo-specific. v1 uses just the porcelain status as the
-	// dirty signal; uncommitted commits without dirty files are
-	// uncommon and we'd rather under-warn than fail to inspect.
-	commitsAhead := 0
-
-	if uncommittedLines == 0 && commitsAhead == 0 {
+	commitsAhead := worktreeCommitsAhead(ctx, path)
+	if uncommitted == 0 && commitsAhead == 0 {
 		return false, ""
 	}
 	return true, fmt.Sprintf(
-		"%s file(s) uncommitted, %s commit(s) beyond starting HEAD",
-		strconv.Itoa(uncommittedLines), strconv.Itoa(commitsAhead),
+		"%d file(s) uncommitted, %d commit(s) beyond base branch",
+		uncommitted, commitsAhead,
 	)
 }
 

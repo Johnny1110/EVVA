@@ -135,6 +135,10 @@ func init() {
 		ts := s.(*ToolState)
 		return mode.NewExitWorktree(ts.WorktreeController), nil
 	})
+	r.MustRegister(tools.WORKTREE_LIST, func(s tools.State) (tools.Tool, error) {
+		ts := s.(*ToolState)
+		return mode.NewList(ts.WorktreeController, ts.DaemonState()), nil
+	})
 	r.MustRegister(tools.NOTEBOOK_EDIT, func(tools.State) (tools.Tool, error) { return notebook.Edit, nil })
 
 	// --- lsp (semantic code intelligence) ---

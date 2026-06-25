@@ -12,6 +12,30 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Parallel fan-out reconciliation — the integrate half of parallel work.**
+  evva already fans work out into isolated git worktrees (subagents spawned with
+  `isolation: "worktree"`); this adds the merge-back primitive and a review surface
+  so the lead agent can reconcile that work without hand-driving `git merge` through
+  bash.
+  - `exit_worktree` gains an `action: "merge"`: it integrates a worktree branch
+    back into the base branch (`git merge --no-ff` run from the base checkout),
+    then removes the worktree + branch on success. Refuses an unclean source,
+    reports a no-op when there's nothing to integrate, and on conflict runs
+    `git merge --abort` and returns the conflicted paths — the base branch is never
+    left half-merged. An optional `branch` targets a specific live worktree (e.g.
+    one a finished subagent left behind), so merge works with no active session.
+  - New read-only `worktree_list` tool enumerates the live worktrees under
+    `.evva/worktrees/` with branch, base, ahead/behind counts, a dirty flag, and a
+    cross-reference to the owning subagent daemon (so in-flight work is
+    distinguishable from finished). Auto-allowed; main-agent only.
+  - `LocalAgentMeta` (daemon snapshot) carries `WorktreePath` / `WorktreeBranch`
+    for the cross-reference. A finished subagent that committed its work now keeps
+    its worktree (the commit-ahead count is no longer stubbed) so it survives for
+    review and merge. User-guide "Running work in parallel" section added (en +
+    zh-tw). PRD: `docs/roadmap/PRD/parallel-fanout-reconcile.md`.
+
 ## [v1.8.2-beta.4] — 2026-06-25
 
 ### Added

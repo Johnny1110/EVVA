@@ -523,18 +523,27 @@ permission_mode: default     # default | accept_edits | plan | bypass
 
 1. **進入** — 模型呼叫 `enter_worktree`（可選擇傳入 `name`）。evva 執行 `git worktree add -b worktree-<slug> <repo>/.evva/worktrees/<slug>/ HEAD` 並將 session 的工作目錄切到新工作樹。之後的 `read` / `edit` / `write` / `bash` 都在工作樹中執行 — 原本目錄完全不會被動到。
 2. **工作** — 正常驅動 session。讀檔、編輯、提交都發生在工作樹的獨立分支上。
-3. **退出** — 完成後，模型呼叫 `exit_worktree`，搭配 `action: "keep"` 或 `action: "remove"`：
+3. **退出** — 完成後，模型呼叫 `exit_worktree`，搭配 `action: "keep"`、`"remove"` 或 `"merge"`：
    - `"keep"` — 工作樹目錄與分支留在磁碟上。想之後回來繼續或合併時用這個。
    - `"remove"` — 執行 `git worktree remove --force` 並刪除分支。若工作樹中有未提交的變更，除非你明確說「移除並丟棄變更」（模型會以 `discard_changes: true` 重新呼叫），否則工具會拒絕。
+   - `"merge"` — 將工作樹分支整合回基底分支（`git merge --no-ff`），成功後移除該工作樹。worker 必須先提交。無衝突的合併會回報整合了多少 commit 與檔案並拆除工作樹；發生衝突時則**中止**（`git merge --abort`）並回報衝突的路徑，工作樹原封不動 — 絕不會留下合併到一半的狀態。
 4. Session 還原至原始目錄；EVVA.md 與系統提示會以原 workdir 重建。
 
-**子代理隔離** — `agent` 工具接受 `isolation: "worktree"`。以該旗標 spawn 一個子代理時，會在 `.evva/worktrees/agent-<id>/` 下建立屬於該子代理的工作樹，子代理整個生命週期都跑在裡面。若乾淨退出（沒有檔案變動、沒有新提交），evva 會自動移除工作樹；否則保留在磁碟，子代理結果裡會回報 `worktree_path:` / `worktree_branch:`，方便你檢視或合併。
+**子代理隔離** — `agent` 工具接受 `isolation: "worktree"`。以該旗標 spawn 一個子代理時，會在 `.evva/worktrees/agent-<id>/` 下建立屬於該子代理的工作樹，子代理整個生命週期都跑在裡面。若乾淨退出（沒有檔案變動、沒有新提交），evva 會自動移除工作樹；否則保留在磁碟，子代理結果裡會回報 `worktree_path:` / `worktree_branch:`。用 `worktree_list` 檢視所有這類工作樹，再用 `exit_worktree` 的 `action: "merge"` 整合好的那些 — 見下方「平行執行工作」。
+
+**平行執行工作（fan-out → 檢視 → 整合）** — 平行工作的「整合」那一半：
+
+1. **散開（fan out）** — 以 `isolation: "worktree"` spawn 多個子代理，各自負責任務的一個切片（例如各做一個檔案或模組）。它們並行執行，各自在 `.evva/worktrees/` 下的獨立分支上。
+2. **檢視** — 它們完成後，呼叫 `worktree_list`。它會為每個存活的工作樹印出一列：分支、基底分支、領先/落後基底幾個 commit、是否有未提交變更，以及（若仍有子代理在寫入）擁有它的 daemon id（讓你分得清已完成與進行中的工作）。唯讀且自動允許。
+3. **整合** — 用 `exit_worktree` 的 `action: "merge"` **逐一**整合好的分支，傳入 `worktree_list` 顯示的 `branch`。請循序合併、不要一次批次處理：每次合併都會推進基底，下一次會以新的基底重新檢查。衝突會乾淨地中止並指出衝突路徑 — 帶著衝突脈絡重新 spawn 那個 worker、先合併另一個分支，或手動解決。
+
+這**不是** swarm。Fan-out 是短暫的工班 — 工作樹用完即丟、不持久化、工作合併後即解散。Swarm（`evva swarm`）則是有信箱與儲存的常設團隊。Fan-out 用於「把這件事拆到 N 個檔案、再整合」；swarm 用於持續性的任務。
 
 **注意事項：**
 
 - 工作樹位於 `<repo>/.evva/worktrees/<slug>/`。如果還沒把 `.evva/` 加進 `.gitignore`，建議加上。
-- 計畫模式會拒絕 `enter_worktree` / `exit_worktree`（它們不在唯讀白名單裡）。需要新建工作樹時請先退出計畫模式。
-- 子代理無法在中途自行進入工作樹 — 僅根代理可以呼叫工具對。AgentTool 的 `isolation` 參數才是讓子代理跑在工作樹裡的官方做法。
+- 計畫模式會拒絕 `enter_worktree` / `exit_worktree`（它們不在唯讀白名單裡）。需要新建工作樹時請先退出計畫模式。`worktree_list` 是唯讀的，因此到處都允許；`merge` 動作會更動基底分支，因此除非在 `bypass`，否則會像一般寫入一樣提示。
+- 子代理無法在中途自行進入工作樹 — 僅根代理可以呼叫工具對。AgentTool 的 `isolation` 參數才是讓子代理跑在工作樹裡的官方做法。`worktree_list` 與 `merge` 動作同樣僅限根代理 — 子代理負責執行工作，由 lead 檢視並整合。
 - v1 沒有 `.worktreeinclude` 支援 — 被 gitignore 的檔案（`.env`、本機設定）不會自動複製到新工作樹。需要時請在工作樹裡手動建立。
 
 ### 核准提示

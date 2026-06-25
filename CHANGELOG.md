@@ -12,6 +12,19 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+## [v1.8.3] — 2026-06-25
+
+### Fixed
+
+- **Windows: `worktree_list` owner cross-reference.** The column that shows
+  which running subagent owns a worktree was always blank on Windows — it
+  compared a `filepath.Join` path (OS-native separators) against
+  `git worktree list`'s forward-slash output. Both sides are now normalized
+  with `filepath.Clean`. (Also greens the Windows CI gate: the fan-out merge
+  tests now set a repo-local git identity so the production `git merge` commit
+  resolves on runners with no global git config — no behavior change on
+  correctly-configured hosts.)
+
 ## [v1.8.2] — 2026-06-25
 
 ### Added
@@ -1857,7 +1870,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `EVVA.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.8.2...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.8.3...HEAD
+[v1.8.3]: https://github.com/johnny1110/evva/compare/v1.8.2...v1.8.3
 [v1.8.2]: https://github.com/johnny1110/evva/compare/v1.8.2-beta.4...v1.8.2
 [v1.8.2-beta.4]: https://github.com/johnny1110/evva/compare/v1.8.2-beta.2...v1.8.2-beta.4
 [v1.8.2-beta.2]: https://github.com/johnny1110/evva/compare/v1.8.2-beta.1...v1.8.2-beta.2

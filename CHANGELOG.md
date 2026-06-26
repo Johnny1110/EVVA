@@ -12,6 +12,17 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ## [Unreleased]
 
+## [v1.8.4] — 2026-06-26
+
+### Fixed
+
+- **Windows CI: fan-out merge conflict test.** The conflict test asserted a
+  byte-exact file content after `git merge --abort`, but the Windows runner's
+  global `core.autocrlf=true` rewrote `LF`→`CRLF` when the abort restored the
+  working tree, so the check saw `from-main\r\n`. The test repo helper now pins
+  `core.autocrlf=false` so content round-trips verbatim on every host. Test-only
+  — no `pkg/*` or runtime change; binary-equivalent to v1.8.3.
+
 ## [v1.8.3] — 2026-06-25
 
 ### Fixed
@@ -1870,7 +1881,8 @@ Initial published tag — Phase 13 SDK split + Phase 14 session storage +
 Phase 15 friday proof of concept. See `EVVA.md` for the per-phase
 deliverables.
 
-[Unreleased]: https://github.com/johnny1110/evva/compare/v1.8.3...HEAD
+[Unreleased]: https://github.com/johnny1110/evva/compare/v1.8.4...HEAD
+[v1.8.4]: https://github.com/johnny1110/evva/compare/v1.8.3...v1.8.4
 [v1.8.3]: https://github.com/johnny1110/evva/compare/v1.8.2...v1.8.3
 [v1.8.2]: https://github.com/johnny1110/evva/compare/v1.8.2-beta.4...v1.8.2
 [v1.8.2-beta.4]: https://github.com/johnny1110/evva/compare/v1.8.2-beta.2...v1.8.2-beta.4

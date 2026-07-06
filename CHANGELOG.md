@@ -14,6 +14,23 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
 
 ### Added
 
+- **Self-healing edits — edit→LSP diagnostics sync.** The `edit`/`write`
+  tools now notify the LSP layer after a successful mutation (`didOpen` on
+  first touch, full-sync `didChange` with a bumped version thereafter,
+  clearing stale diagnostics for the file first), so a language server
+  re-analyzes and the existing between-turns diagnostics drain has real
+  content to deliver — where previously an edit gave the model no signal
+  unless a filesystem-watching server happened to notice on its own. Off by
+  default cost: zero when no LSP manager is configured (nil sink, no-op).
+  New opt-in `lsp_diagnostics_on_edit` setting (default false): when on, the
+  edit/write tool waits a short bounded window (~750ms) for diagnostics on
+  the just-edited file and folds them into that tool call's own result, so
+  the model can see and fix its own compile/type error on the same turn it
+  introduced it — the passive between-turns delivery still applies
+  regardless. `pkg/tools/lsp.Manager` gains `DidChange` and
+  `DiagnosticsForFile`; `pkg/tools/fs` gains the `LSPSyncSink` interface
+  (mirrors `CheckpointSink`'s nil-safe injection shape). PRD:
+  `docs/roadmap/PRD/edit-diagnostics-sync.md`.
 - **Structured output for headless runs** (`docs/roadmap/PRD/structured-output-tool.md`).
   An SDK/CLI caller can supply a JSON schema and receive the agent's final
   answer as JSON matching it, instead of scraping prose:

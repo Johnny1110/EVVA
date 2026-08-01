@@ -72,6 +72,28 @@ was consolidated into v1.3.0-beta.1 — the first beta cut after v1.1.0.
   existing selector must read rather than replacing its judgment. See
   `docs/roadmap/PRD/memory-semantic-recall.md` §0.
 
+- **`pkg/worktree` — the public git-worktree surface.** Provision a persistent,
+  deterministically-named worktree per long-lived agent; probe how far
+  ahead/behind it is; merge its committed work back under the abort-on-conflict
+  contract (a conflict aborts the merge and returns the conflicted paths — the
+  base branch is never left half-merged).
+
+  These primitives already existed and were already shared between the
+  single-agent `enter_worktree` / `exit_worktree` tools and the swarm, but they
+  lived in `internal/` and the swarm reached them by importing it directly — a
+  standing violation of the invariant that everything under `internal/swarm`
+  reaches the runtime only through `pkg/*` (`scripts/depcheck.sh`, red on `dev`
+  for some time). That rule exists so anything the multi-agent layer needs is
+  by construction available to a downstream module building its own; a facade
+  nobody outside could use would satisfy the linter and defeat the point, so
+  `examples/full-host` — a **separate Go module**, where `internal/*` imports
+  are compile errors — now exercises the full lifecycle as a compile-time proof.
+
+  The types are **aliases**, not copies, so there is exactly one
+  `WorktreeSession` in the process and no conversion at the boundary. The
+  implementation stays in `internal/tools/mode` for now; relocating it drags ten
+  unexported helpers out of a 700-line tool file and belongs in its own change.
+
 - **Context engine (CTX-1..7).** evva's context story was binary: the transcript
   grew verbatim until the compaction threshold, then one LLM call rewrote the
   whole history into a brief. Everything between "it fits" and "summarize the

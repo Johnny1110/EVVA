@@ -2,7 +2,7 @@
 
 > **Audience:** senior engineers implementing this wave.
 > **Status:** ✅ **BUILT** — MEM-1..7 implemented 2026-08-01.
-> **Audited:** 2026-08-01 at `dev @ e8f8089` + CTX (W5). Audit pass per
+> **Audited:** 2026-08-01 at `dev @ e8f8089` + CTX (W5, since merged as `c02eb8e`). Audit pass per
 > [../long-range.md](../long-range.md) §1 step 2 — **read §0 first.** The
 > draft's stated premise turned out to be false, and one work item was
 > specified backwards, so §1 below is preserved only as the historical
